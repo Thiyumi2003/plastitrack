@@ -50,6 +50,64 @@ async function initDatabase() {
     await connection.query(createOtpTableQuery);
     console.log("✓ OTP codes table created or already exists");
 
+    // Create images table
+    const createImagesTableQuery = `
+      CREATE TABLE IF NOT EXISTS images (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        image_name VARCHAR(255) NOT NULL,
+        model_type VARCHAR(100),
+        status ENUM('pending', 'in_progress', 'completed', 'approved', 'rejected') DEFAULT 'pending',
+        assigned_to INT,
+        annotator_id INT,
+        tester_id INT,
+        objects_count INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (assigned_to) REFERENCES users(id),
+        FOREIGN KEY (annotator_id) REFERENCES users(id),
+        FOREIGN KEY (tester_id) REFERENCES users(id)
+      )
+    `;
+    await connection.query(createImagesTableQuery);
+    console.log("✓ Images table created or already exists");
+
+    // Create tasks table
+    const createTasksTableQuery = `
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        image_id INT NOT NULL,
+        user_id INT NOT NULL,
+        task_type ENUM('annotation', 'validation', 'testing') DEFAULT 'annotation',
+        status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
+        assigned_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_date TIMESTAMP,
+        FOREIGN KEY (image_id) REFERENCES images(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `;
+    await connection.query(createTasksTableQuery);
+    console.log("✓ Tasks table created or already exists");
+
+    // Create payments table
+    const createPaymentsTableQuery = `
+      CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL,
+        model_type VARCHAR(100),
+        images_completed INT DEFAULT 0,
+        status ENUM('pending', 'approved', 'paid', 'rejected') DEFAULT 'pending',
+        payment_method VARCHAR(100),
+        payment_date TIMESTAMP,
+        approved_date TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `;
+    await connection.query(createPaymentsTableQuery);
+    console.log("✓ Payments table created or already exists");
+
     // Create a sample admin user if it doesn't exist
     const [existingAdmin] = await connection.query(
       "SELECT id FROM users WHERE email = 'tharuka@gmail.com'"
@@ -68,22 +126,22 @@ async function initDatabase() {
       // Insert all users
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Admin User", "tharuka@gmail.com", adminPassword, "admin"]
+        ["Tharuka Sadaruwan", "tharuka@gmail.com", adminPassword, "admin"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Super Admin User", "dineshasanka@gmail.com", superAdminPassword, "super_admin"]
+        ["Dinesh Asanka", "dineshasanka@gmail.com", superAdminPassword, "super_admin"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Annotator User", "thiyumiupasari2003@gmail.com", annotatorPassword, "annotator"]
+        ["Thiyumi Upasari", "thiyumiupasari2003@gmail.com", annotatorPassword, "annotator"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Tester User", "nipunjayakody110@gmail.com", testerPassword, "tester"]
+        ["Nipun Jayakody", "nipunjayakody110@gmail.com", testerPassword, "tester"]
       );
       
       await connection.query(
