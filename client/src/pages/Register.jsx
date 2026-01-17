@@ -77,7 +77,7 @@ export default function Register() {
         <div className="pt-form-content">
           <img src={logo} alt="Logo" className="pt-logo" />
           <h1 className="pt-title">Register</h1>
-          <p className="pt-subtitle">Create your account</p>
+          <p className="pt-subtitle">Enter your user name, email address, role and password to access your account.</p>
 
           {error && <div className="pt-error">{error}</div>}
 

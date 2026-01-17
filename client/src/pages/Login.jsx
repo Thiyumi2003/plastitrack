@@ -76,7 +76,7 @@ export default function Login() {
         <div className="auth-form-content">
           <img src={logo} alt="Logo" className="auth-logo" />
           <h1 className="auth-title">Log-in</h1>
-          <p className="auth-subtitle">Welcome back to PlastiTrack</p>
+          <p className="auth-subtitle">Enter your user name and password to access your panel.</p>
 
         {error && <div className="auth-error">{error}</div>}
         {success && <div className="auth-success">{success}</div>}
