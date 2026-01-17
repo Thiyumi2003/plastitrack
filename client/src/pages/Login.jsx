@@ -1,28 +1,69 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
-import './auth.css';
+import { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import axios from "axios";
+import { Mail, Lock, Shield } from "lucide-react";
+import "./auth.css";
+import logo from "../images/logo (2).png";
+import loginImg from "../images/register.png";
 
 export default function Login() {
-  const [formData, setFormData] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    role: "user",
+    remember: false,
+  });
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(location.state?.message || "");
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-    setError('');
+    const { name, value, type, checked } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
+    setError("");
+    setSuccess("");
   };
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setError("");
+
+    // Validation
+    if (!formData.email.trim()) {
+      setError("Email is required");
+      return;
+    }
+    if (!formData.password) {
+      setError("Password is required");
+      return;
+    }
+
     setLoading(true);
+
     try {
-      const response = await axios.post('/api/auth/login', formData);
-      localStorage.setItem('token', response.data.token);
-      navigate('/admin'); // Redirect to appropriate dashboard
+      const response = await axios.post("http://localhost:5000/api/auth/login", {
+        email: formData.email,
+        password: formData.password,
+      });
+
+      // Store token and user info
+      localStorage.setItem("token", response.data.token);
+      localStorage.setItem("user", JSON.stringify(response.data.user));
+
+      // Remember me
+      if (formData.remember) {
+        localStorage.setItem("rememberEmail", formData.email);
+      }
+
+      // Navigate to dashboard
+      navigate("/dashboard", { state: { message: "Login successful!" } });
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed');
+      setError(err.response?.data?.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -30,52 +71,112 @@ export default function Login() {
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
-        <div className="auth-header">
-          <h1>Welcome Back</h1>
-          <p>Sign in to your account</p>
-        </div>
+      {/* Left Form Section */}
+      <div className="auth-form-section">
+        <div className="auth-form-content">
+          <img src={logo} alt="Logo" className="auth-logo" />
+          <h1 className="auth-title">Log-in</h1>
+          <p className="auth-subtitle">Welcome back to PlastiTrack</p>
 
-        <form onSubmit={handleSubmit} className="auth-form">
-          {error && <div className="error-message">{error}</div>}
+        {error && <div className="auth-error">{error}</div>}
+        {success && <div className="auth-success">{success}</div>}
 
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
+        <form onSubmit={handleLogin}>
+          {/* Email Field */}
+          <div className="auth-form-group">
+            <div className="auth-input-wrapper">
+              <Mail className="auth-input-icon" size={18} />
+              <input
+                id="email"
+                type="email"
+                name="email"
+                placeholder="Username or Email"
+                value={formData.email}
+                onChange={handleChange}
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          {/* Role Field */}
+          <div className="auth-form-group">
+            <div className="auth-input-wrapper">
+              <Shield className="auth-input-icon" size={18} />
+              <select
+                id="role"
+                name="role"
+                value={formData.role}
+                onChange={handleChange}
+                disabled={loading}
+                className="auth-select"
+              >
+                <option value="">Select Role</option>
+                <option value="annotator">Annotator</option>
+                <option value="tester">Tester</option>
+                <option value="admin">Admin</option>
+                <option value="super_admin">Super Admin</option>
+                <option value="melbourne_user">Melbourne User</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Password Field */}
+          <div className="auth-form-group">
+            <div className="auth-input-wrapper">
+              <Lock className="auth-input-icon" size={18} />
+              <input
+                id="password"
+                type="password"
+                name="password"
+                placeholder="Password"
+                value={formData.password}
+                onChange={handleChange}
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          {/* Remember Me & Forgot Password */}
+          <label className="auth-checkbox">
             <input
-              type="email"
-              id="email"
-              name="email"
-              placeholder="Enter your email"
-              value={formData.email}
+              type="checkbox"
+              name="remember"
+              checked={formData.remember}
               onChange={handleChange}
-              required
+              disabled={loading}
             />
-          </div>
+            <span>Remember me</span>
+          </label>
 
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              placeholder="Enter your password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-            />
-          </div>
+          <a
+            onClick={() => navigate("/forgot")}
+            className="auth-link"
+            style={{ cursor: "pointer" }}
+          >
+            Forgot Password?
+          </a>
 
-          <div className="form-options">
-            <Link to="/forgot" className="forgot-password">Forgot Password?</Link>
-          </div>
-
-          <button type="submit" className="btn-submit" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
+          {/* Button Group */}
+          <button
+            type="submit"
+            className="auth-button auth-button-primary"
+            disabled={loading}
+          >
+            {loading ? "Signing in..." : "Log-in"}
           </button>
         </form>
 
-        <div className="auth-footer">
-          <p>Don't have an account? <Link to="/register">Register here</Link></p>
+        <p className="auth-footer-text">
+          Don't have an account?{" "}
+          <a onClick={() => navigate("/register")} style={{ cursor: "pointer" }}>
+            Register
+          </a>
+        </p>
+        </div>
+
+        {/* Right Image Section */}
+        <div className="auth-image-section">
+          <img src={loginImg} alt="Login" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </div>
       </div>
     </div>
