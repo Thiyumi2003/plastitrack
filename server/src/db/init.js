@@ -52,38 +52,38 @@ async function initDatabase() {
 
     // Create a sample admin user if it doesn't exist
     const [existingAdmin] = await connection.query(
-      "SELECT id FROM users WHERE email = 'admin@plastitrack.com'"
+      "SELECT id FROM users WHERE email = 'tharuka@gmail.com'"
     );
 
     if (existingAdmin.length === 0) {
       const bcrypt = require("bcryptjs");
       
       // Hash passwords for all users
-      const adminPassword = await bcrypt.hash("admin123", 10);
-      const superAdminPassword = await bcrypt.hash("superadmin123", 10);
-      const annotatorPassword = await bcrypt.hash("annotator123", 10);
-      const testerPassword = await bcrypt.hash("tester123", 10);
+      const adminPassword = await bcrypt.hash("tharuka123", 10);
+      const superAdminPassword = await bcrypt.hash("dinesh123", 10);
+      const annotatorPassword = await bcrypt.hash("thiyumi123", 10);
+      const testerPassword = await bcrypt.hash("nipun123", 10);
       const melbournePassword = await bcrypt.hash("melbourne123", 10);
 
       // Insert all users
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Admin User", "admin@plastitrack.com", adminPassword, "admin"]
+        ["Admin User", "tharuka@gmail.com", adminPassword, "admin"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Super Admin User", "superadmin@plastitrack.com", superAdminPassword, "super_admin"]
+        ["Super Admin User", "dineshasanka@gmail.com", superAdminPassword, "super_admin"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Annotator User", "annotator@plastitrack.com", annotatorPassword, "annotator"]
+        ["Annotator User", "thiyumiupasari2003@gmail.com", annotatorPassword, "annotator"]
       );
       
       await connection.query(
         "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Tester User", "tester@plastitrack.com", testerPassword, "tester"]
+        ["Tester User", "nipunjayakody110@gmail.com", testerPassword, "tester"]
       );
       
       await connection.query(
@@ -92,10 +92,10 @@ async function initDatabase() {
       );
 
       console.log("✓ Sample users created:");
-      console.log("  - Admin: admin@plastitrack.com / admin123");
-      console.log("  - Super Admin: superadmin@plastitrack.com / superadmin123");
-      console.log("  - Annotator: annotator@plastitrack.com / annotator123");
-      console.log("  - Tester: tester@plastitrack.com / tester123");
+      console.log("  - Admin: tharuka@gmail.com / tharuka123");
+      console.log("  - Super Admin: dineshasanka@gmail.com / dinesh123");
+      console.log("  - Annotator: thiyumiupasari2003@gmail.com / thiyumi123");
+      console.log("  - Tester: nipunjayakody110@gmail.com / nipun123");
       console.log("  - Melbourne User: melbourne@plastitrack.com / melbourne123");
     }
 
