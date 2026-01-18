@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, User, Wallet, LogOut } from "lucide-react";
+import { Menu, X, LayoutDashboard, User, Wallet, LogOut, History } from "lucide-react";
 import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
 
@@ -12,6 +12,7 @@ export default function TesterSidebar() {
 
   const menuItems = [
     { label: "Dashboard", icon: LayoutDashboard, path: "/tester/dashboard" },
+    { label: "Task History", icon: History, path: "/tester/task-history" },
     { label: "Profile", icon: User, path: "/tester/profile" },
     { label: "Payments", icon: Wallet, path: "/tester/payments" },
   ];

@@ -1125,9 +1125,9 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
 
     const connection = await pool.getConnection();
 
-    // Get the image_id from the task
+    // Get the image_id and task details from the task
     const [taskResult] = await connection.execute(
-      `SELECT image_id FROM tasks WHERE id = ? AND user_id = ?`,
+      `SELECT image_id, task_type FROM tasks WHERE id = ? AND user_id = ?`,
       [id, userId]
     );
 
@@ -1137,8 +1137,9 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
     }
 
     const imageId = taskResult[0].image_id;
+    console.log(`Tester ${userId} reviewing task ${id} with status ${status}`);
 
-    // Update task status
+    // Update task status and set completed_date
     await connection.execute(
       `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW(), completed_date = NOW() 
        WHERE id = ? AND user_id = ?`,
@@ -1151,6 +1152,7 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
       [status, imageId]
     );
 
+    console.log(`Task ${id} and image ${imageId} updated to status: ${status}`);
     await connection.release();
     res.json({ message: "Review submitted successfully" });
   } catch (err) {
@@ -1201,6 +1203,45 @@ router.get("/tester/payments", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Tester payments error:", err);
     res.status(500).json({ error: "Failed to fetch payment data" });
+  }
+});
+
+// GET Tester Task History
+router.get("/tester/task-history", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [tasks] = await connection.execute(
+      `SELECT 
+        t.id,
+        t.task_id,
+        i.image_name,
+        i.objects_count,
+        t.status,
+        t.task_type,
+        t.assigned_date,
+        t.completed_date,
+        t.notes,
+        u.name as assigned_by_name
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN users u ON t.assigned_by = u.id
+      WHERE t.user_id = ? AND (t.task_type = 'testing' OR t.task_type IS NULL)
+      ORDER BY t.assigned_date DESC`,
+      [userId]
+    );
+
+    console.log(`Tester ${userId} task history: ${tasks.length} tasks found`);
+    await connection.release();
+    res.json(tasks);
+  } catch (err) {
+    console.error("Tester task history error:", err);
+    res.status(500).json({ error: "Failed to fetch task history" });
   }
 });
 

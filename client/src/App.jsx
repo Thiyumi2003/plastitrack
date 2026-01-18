@@ -21,6 +21,7 @@ import AnnotatorTaskHistory from "./pages/annotator/AnnotatorTaskHistory";
 import TesterDashboard from "./pages/tester/TesterDashboard";
 import TesterProfile from "./pages/tester/TesterProfile";
 import TesterPayments from "./pages/tester/TesterPayments";
+import TesterTaskHistory from "./pages/tester/TesterTaskHistory";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -183,6 +184,14 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="tester">
               <TesterDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tester/task-history"
+          element={
+            <ProtectedRoute requiredRole="tester">
+              <TesterTaskHistory />
             </ProtectedRoute>
           }
         />

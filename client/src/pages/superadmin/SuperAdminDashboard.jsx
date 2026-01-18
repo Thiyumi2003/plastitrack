@@ -173,8 +173,8 @@ export default function SuperAdminDashboard() {
                 <tr>
                   <th>Image ID</th>
                   <th>Image Name</th>
-                  <th>Assigned To</th>
-                  <th>Role</th>
+                  <th>Annotator</th>
+                  <th>Tester</th>
                   <th>Status</th>
                   <th>Objects</th>
                   <th>Created Date</th>
@@ -185,11 +185,8 @@ export default function SuperAdminDashboard() {
                   <tr key={report.id}>
                     <td>#{report.id}</td>
                     <td>{report.image_name}</td>
-                    <td>{report.assigned_to || report.annotator || "Unassigned"}</td>
-                    <td>
-                      {report.annotator && "Annotator"}
-                      {report.tester && "Tester"}
-                    </td>
+                    <td>{report.annotator || "-"}</td>
+                    <td>{report.tester || "-"}</td>
                     <td>
                       <span className={`status-badge status-${report.status}`}>
                         {report.status}

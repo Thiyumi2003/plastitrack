@@ -169,12 +169,16 @@ export default function ManageImages() {
               )}
 
               {img.status === "in_progress" && (
-                <div className="assigned-user">{img.annotator_name}</div>
+                <div className="assigned-info">
+                  <div className="assigned-user">📝 Annotator: {img.annotator_name}</div>
+                </div>
               )}
 
               {img.status === "completed" && (
                 <>
-                  <div className="assigned-user">{img.annotator_name}</div>
+                  <div className="assigned-info">
+                    <div className="assigned-user">📝 Annotator: {img.annotator_name}</div>
+                  </div>
                   <div className="image-actions">
                     <select
                       className="assign-select"
@@ -194,7 +198,10 @@ export default function ManageImages() {
 
               {img.status === "approved" && (
                 <>
-                  <div className="assigned-user">{img.tester_name || img.annotator_name}</div>
+                  <div className="assigned-info">
+                    <div className="assigned-user">📝 Annotator: {img.annotator_name}</div>
+                    <div className="assigned-user">✓ Approved by: {img.tester_name}</div>
+                  </div>
                   {img.feedback && (
                     <div className="feedback-box">
                       <strong>Feedback:</strong>
