@@ -61,6 +61,9 @@ async function initDatabase() {
         annotator_id INT,
         tester_id INT,
         objects_count INT DEFAULT 0,
+        file_size BIGINT DEFAULT 0,
+        filepath VARCHAR(255),
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (assigned_to) REFERENCES users(id),
@@ -70,6 +73,25 @@ async function initDatabase() {
     `;
     await connection.query(createImagesTableQuery);
     console.log("✓ Images table created or already exists");
+
+    // Ensure new columns exist for legacy tables (compatible with older MySQL)
+    const ensureColumn = async (table, column, definition) => {
+      try {
+        await connection.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      } catch (err) {
+        if (err.code === "ER_DUP_FIELDNAME") {
+          return;
+        }
+        console.error(`Alter table failed for ${table}.${column}:`, err);
+        throw err;
+      }
+    };
+
+    await ensureColumn("images", "file_size", "BIGINT DEFAULT 0");
+    await ensureColumn("images", "filepath", "VARCHAR(255)");
+    await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    await ensureColumn("images", "melbourne_user_id", "INT");
+    await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
 
     // Create tasks table
     const createTasksTableQuery = `

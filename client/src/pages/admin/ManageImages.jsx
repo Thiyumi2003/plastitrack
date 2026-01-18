@@ -9,7 +9,8 @@ export default function ManageImages() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
+  const [newImageName, setNewImageName] = useState("");
+  const [newImageSize, setNewImageSize] = useState("");
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -78,28 +79,27 @@ export default function ManageImages() {
     }
   };
 
-  const handleUploadImage = async () => {
-    if (!uploadFile) {
-      alert("Please select an image file");
+  const handleAddImage = async () => {
+    if (!newImageName.trim()) {
+      alert("Please enter an image name");
       return;
     }
 
-    const formData = new FormData();
-    formData.append("image", uploadFile);
+    const fileSizeMB = Number(newImageSize) || 0;
 
     try {
-      await axios.post("http://localhost:5000/api/dashboard/admin/images/upload", formData, {
-        headers: {
-          ...getAuthHeader(),
-          "Content-Type": "multipart/form-data",
-        },
-      });
+      await axios.post(
+        "http://localhost:5000/api/dashboard/admin/images/add",
+        { filename: newImageName.trim(), fileSizeMB },
+        { headers: getAuthHeader() }
+      );
       setShowUploadModal(false);
-      setUploadFile(null);
+      setNewImageName("");
+      setNewImageSize("");
       fetchData();
-      alert("Image uploaded successfully");
+      alert("Image added successfully");
     } catch (err) {
-      alert(err.response?.data?.error || "Failed to upload image");
+      alert(err.response?.data?.error || "Failed to add image");
     }
   };
 
@@ -135,10 +135,18 @@ export default function ManageImages() {
             <div key={img.id} className="image-card">
               <div className="image-icon">📷</div>
               <div className="image-info">
-                <h3>{img.filename}</h3>
+                <h3>{img.image_name || img.filename || "Unnamed"}</h3>
                 <div className="image-meta">
-                  <span>{(img.file_size / (1024 * 1024)).toFixed(1)}MB</span>
-                  <span>{new Date(img.uploaded_at).toLocaleDateString()}</span>
+                  <span>
+                    {img.file_size ? (img.file_size / (1024 * 1024)).toFixed(1) : "-"}MB
+                  </span>
+                  <span>
+                    {img.uploaded_at
+                      ? new Date(img.uploaded_at).toLocaleDateString()
+                      : img.created_at
+                      ? new Date(img.created_at).toLocaleDateString()
+                      : ""}
+                  </span>
                 </div>
               </div>
               <div className="image-status">{getStatusBadge(img.status)}</div>
@@ -216,19 +224,31 @@ export default function ManageImages() {
         {showUploadModal && (
           <div className="modal-overlay" onClick={() => setShowUploadModal(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-              <h2>Upload Image</h2>
+              <h2>Add Image (name only)</h2>
+              <label className="input-label">Image name</label>
               <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => setUploadFile(e.target.files[0])}
-                className="file-input"
+                type="text"
+                value={newImageName}
+                onChange={(e) => setNewImageName(e.target.value)}
+                className="text-input"
+                placeholder="e.g. PET_01_9001_9200"
+              />
+              <label className="input-label">File size (MB, optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={newImageSize}
+                onChange={(e) => setNewImageSize(e.target.value)}
+                className="text-input"
+                placeholder="e.g. 2.4"
               />
               <div className="modal-actions">
                 <button className="btn-secondary" onClick={() => setShowUploadModal(false)}>
                   Cancel
                 </button>
-                <button className="btn-primary" onClick={handleUploadImage}>
-                  Upload
+                <button className="btn-primary" onClick={handleAddImage}>
+                  Save
                 </button>
               </div>
             </div>

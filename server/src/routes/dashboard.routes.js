@@ -487,7 +487,7 @@ router.post("/admin/images/upload", verifyToken, upload.single("image"), async (
     const fileSize = req.file.size;
 
     await connection.execute(
-      "INSERT INTO images (filename, filepath, file_size, status) VALUES (?, ?, ?, ?)",
+      "INSERT INTO images (image_name, filepath, file_size, status, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
       [filename, filepath, fileSize, "pending"]
     );
 
@@ -497,6 +497,33 @@ router.post("/admin/images/upload", verifyToken, upload.single("image"), async (
   } catch (err) {
     console.error("Upload image error:", err);
     res.status(500).json({ error: "Failed to upload image" });
+  }
+});
+
+// POST Add image by name only (no file upload)
+router.post("/admin/images/add", verifyToken, async (req, res) => {
+  try {
+    const { filename, fileSizeMB } = req.body;
+
+    if (!filename) {
+      return res.status(400).json({ error: "Filename is required" });
+    }
+
+    const sizeBytes = Math.max(0, Number(fileSizeMB) || 0) * 1024 * 1024;
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      "INSERT INTO images (image_name, file_size, status, uploaded_at) VALUES (?, ?, ?, NOW())",
+      [filename, sizeBytes, "pending"]
+    );
+
+    await connection.release();
+
+    res.status(201).json({ message: "Image added successfully" });
+  } catch (err) {
+    console.error("Add image error:", err);
+    res.status(500).json({ error: "Failed to add image" });
   }
 });
 
