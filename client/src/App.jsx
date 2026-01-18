@@ -18,6 +18,9 @@ import AnnotatorDashboard from "./pages/annotator/AnnotatorDashboard";
 import AnnotatorProfile from "./pages/annotator/AnnotatorProfile";
 import AnnotatorPayments from "./pages/annotator/AnnotatorPayments";
 import AnnotatorTaskHistory from "./pages/annotator/AnnotatorTaskHistory";
+import TesterDashboard from "./pages/tester/TesterDashboard";
+import TesterProfile from "./pages/tester/TesterProfile";
+import TesterPayments from "./pages/tester/TesterPayments";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -36,6 +39,8 @@ function ProtectedRoute({ children, requiredRole }) {
       return <Navigate to="/dashboard" />;
     } else if (user.role === "annotator") {
       return <Navigate to="/annotator/dashboard" />;
+    } else if (user.role === "tester") {
+      return <Navigate to="/tester/dashboard" />;
     } else {
       return <Navigate to="/" />;
     }
@@ -172,7 +177,34 @@ export default function App() {
           }
         />
 
+        {/* Tester Dashboard Routes */}
+        <Route
+          path="/tester/dashboard"
+          element={
+            <ProtectedRoute requiredRole="tester">
+              <TesterDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tester/profile"
+          element={
+            <ProtectedRoute requiredRole="tester">
+              <TesterProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tester/payments"
+          element={
+            <ProtectedRoute requiredRole="tester">
+              <TesterPayments />
+            </ProtectedRoute>
+          }
+        />
+
         <Route path="*" element={<Navigate to="/" />} />
+
       </Routes>
     </BrowserRouter>
   );

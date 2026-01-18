@@ -56,7 +56,7 @@ async function initDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         image_name VARCHAR(255) NOT NULL,
         model_type VARCHAR(100),
-        status ENUM('pending', 'in_progress', 'completed', 'approved', 'rejected') DEFAULT 'pending',
+        status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending',
         assigned_to INT,
         annotator_id INT,
         tester_id INT,
@@ -92,16 +92,22 @@ async function initDatabase() {
     await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await ensureColumn("images", "melbourne_user_id", "INT");
     await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
+    // Ensure images status enum supports review flow
+    try {
+      await connection.query(`ALTER TABLE images MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
+    } catch (err) {
+      // Ignore if already migrated
+    }
     await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
     await ensureColumn("tasks", "assigned_by", "INT");
     await ensureColumn("tasks", "notes", "TEXT");
     await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
     
-    // Update tasks status enum to include pending_review if it doesn't exist
+    // Update tasks status enum to include review outcomes
     try {
-      await connection.query(`ALTER TABLE tasks MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review') DEFAULT 'pending'`);
+      await connection.query(`ALTER TABLE tasks MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
     } catch (err) {
-      // Ignore if already exists
+      // Ignore if already migrated
     }
     await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
     await ensureColumn("tasks", "assigned_by", "INT");
@@ -117,7 +123,7 @@ async function initDatabase() {
         user_id INT NOT NULL,
         assigned_by INT,
         task_type ENUM('annotation', 'validation', 'testing') DEFAULT 'annotation',
-        status ENUM('pending', 'in_progress', 'completed', 'pending_review') DEFAULT 'pending',
+        status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending',
         notes TEXT,
         assigned_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_date TIMESTAMP,

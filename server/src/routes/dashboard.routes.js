@@ -123,32 +123,35 @@ router.get("/reports", verifyToken, async (req, res) => {
   try {
     const connection = await pool.getConnection();
 
-    // Progress over time (last 7 days)
+    // Progress over time (last 30 days)
     const [progressData] = await connection.execute(`
       SELECT 
-        DATE(created_at) as date,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        DATE(uploaded_at) as date,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM images
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      GROUP BY DATE(created_at)
-      ORDER BY date
+      GROUP BY DATE(uploaded_at)
+      ORDER BY date DESC
+      LIMIT 30
     `);
 
-    // User contributions
+    // User contributions (including testers)
     const [userContributions] = await connection.execute(`
       SELECT 
         u.name,
         u.email,
-        COUNT(i.id) as images_count,
-        SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed_count
+        u.role,
+        COUNT(DISTINCT i.id) as images_count,
+        SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approved_count,
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejected_count
       FROM users u
-      LEFT JOIN images i ON u.id = i.annotator_id
+      LEFT JOIN images i ON u.id = i.annotator_id OR u.id = i.tester_id
       WHERE u.role IN ('annotator', 'tester')
-      GROUP BY u.id
+      GROUP BY u.id, u.name, u.email, u.role
       ORDER BY images_count DESC
       LIMIT 10
     `);
@@ -641,14 +644,38 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-        const insertResult = await connection.execute(
-          `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, status, assigned_date)
-           VALUES (?, ?, ?, ?, 'pending', NOW())`,
+        await connection.execute(
+          `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
+           VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
           [taskId, id, annotatorId, adminId]
         );
         console.log(`Task created: ${taskId} for annotator ${annotatorId}`);
       } catch (taskErr) {
-        console.error("Failed to create task:", taskErr);
+        console.error("Failed to create annotator task:", taskErr);
+        // Don't fail the whole request if task creation fails
+      }
+    }
+
+    // Create task if assigning to tester
+    if (testerId) {
+      try {
+        const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+        const [existingTesterTask] = await connection.execute(
+          `SELECT id FROM tasks WHERE image_id = ? AND user_id = ? AND task_type = 'testing' LIMIT 1`,
+          [id, testerId]
+        );
+
+        if (existingTesterTask.length === 0) {
+          await connection.execute(
+            `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
+             VALUES (?, ?, ?, ?, 'testing', 'pending_review', NOW())`,
+            [taskId, id, testerId, adminId]
+          );
+          console.log(`Task created: ${taskId} for tester ${testerId}`);
+        }
+      } catch (taskErr) {
+        console.error("Failed to create tester task:", taskErr);
         // Don't fail the whole request if task creation fails
       }
     }
@@ -986,6 +1013,248 @@ router.put("/annotator/change-password", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Change password error:", err);
     res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
+// ===================== TESTER ROUTES =====================
+
+// GET Tester Dashboard
+router.get("/tester/dashboard", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Get today's approved count
+    const [approvedToday] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks 
+       WHERE user_id = ? AND status = 'approved' 
+       AND DATE(updated_at) = CURDATE()`,
+      [userId]
+    );
+
+    // Get today's rejected count
+    const [rejectedToday] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks 
+       WHERE user_id = ? AND status = 'rejected' 
+       AND DATE(updated_at) = CURDATE()`,
+      [userId]
+    );
+
+    // Get pending reviews count for tester
+    const [pendingReviews] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks 
+       WHERE user_id = ? AND task_type = 'testing' AND status IN ('pending', 'pending_review', 'completed')`,
+      [userId]
+    );
+
+    // Get total earnings
+    const [totalEarnings] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total 
+       FROM payments WHERE user_id = ?`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      approvedToday: approvedToday[0].count,
+      rejectedToday: rejectedToday[0].count,
+      pendingReviews: pendingReviews[0].count,
+      totalEarnings: totalEarnings[0].total,
+    });
+  } catch (err) {
+    console.error("Tester dashboard error:", err);
+    res.status(500).json({ error: "Failed to fetch tester dashboard data" });
+  }
+});
+
+// GET Tester Pending Tasks (Image Sets to Review)
+router.get("/tester/tasks", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [tasks] = await connection.execute(
+      `SELECT 
+        t.id,
+        t.task_id,
+        i.image_name,
+        i.objects_count,
+        t.status,
+        t.assigned_date,
+        t.notes,
+        u.name as assigned_by_name
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN users u ON t.assigned_by = u.id
+      WHERE t.user_id = ? AND t.task_type = 'testing' AND t.status IN ('pending', 'pending_review', 'completed')
+      ORDER BY t.assigned_date ASC`,
+      [userId]
+    );
+
+    await connection.release();
+    res.json(tasks);
+  } catch (err) {
+    console.error("Tester tasks error:", err);
+    res.status(500).json({ error: "Failed to fetch tester tasks" });
+  }
+});
+
+// PUT Tester Review Task (Approve/Reject)
+router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, feedback } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!status || !['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "Valid status (approved/rejected) is required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Get the image_id from the task
+    const [taskResult] = await connection.execute(
+      `SELECT image_id FROM tasks WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+
+    if (taskResult.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    const imageId = taskResult[0].image_id;
+
+    // Update task status
+    await connection.execute(
+      `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW(), completed_date = NOW() 
+       WHERE id = ? AND user_id = ?`,
+      [status, feedback || null, id, userId]
+    );
+
+    // Also update the corresponding image status
+    await connection.execute(
+      `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
+      [status, imageId]
+    );
+
+    await connection.release();
+    res.json({ message: "Review submitted successfully" });
+  } catch (err) {
+    console.error("Tester review error:", err);
+    res.status(500).json({ error: "Failed to submit review" });
+  }
+});
+
+// GET Tester Payments
+router.get("/tester/payments", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [paymentDue] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'pending'`,
+      [userId]
+    );
+
+    const [totalEarnings] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ?`,
+      [userId]
+    );
+
+    const [paymentHistory] = await connection.execute(
+      `SELECT 
+        DATE_FORMAT(payment_date, '%Y-%m-%d') as date,
+        images_completed as image_sets,
+        amount,
+        status
+      FROM payments 
+      WHERE user_id = ?
+      ORDER BY payment_date DESC`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      paymentDue: paymentDue[0].total,
+      totalEarnings: totalEarnings[0].total,
+      paymentHistory,
+    });
+  } catch (err) {
+    console.error("Tester payments error:", err);
+    res.status(500).json({ error: "Failed to fetch payment data" });
+  }
+});
+
+// GET Tester Profile
+router.get("/tester/profile", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [user] = await connection.execute(
+      `SELECT id, name, email, role, created_at FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    await connection.release();
+
+    if (!user || !user[0]) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(user[0]);
+  } catch (err) {
+    console.error("Tester profile error:", err);
+    res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+// PUT Update Tester Profile
+router.put("/tester/profile", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { name, email, phone } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Check if phone column exists, if not we'll skip it
+    await connection.execute(
+      `UPDATE users SET name = ?, email = ? WHERE id = ?`,
+      [name, email, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Update tester profile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
   }
 });
 

@@ -68,6 +68,8 @@ export default function Login() {
         navigate("/admin/dashboard", { state: { message: "Login successful!" } });
       } else if (userRole === "annotator") {
         navigate("/annotator/dashboard", { state: { message: "Login successful!" } });
+      } else if (userRole === "tester") {
+        navigate("/tester/dashboard", { state: { message: "Login successful!" } });
       } else {
         navigate("/", { state: { message: "Login successful!" } });
       }
