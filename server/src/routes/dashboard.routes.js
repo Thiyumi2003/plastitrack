@@ -3,37 +3,8 @@ const pool = require("../db/pool");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const jwt = require("jsonwebtoken");
 const router = express.Router();
-
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "../../uploads");
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}_${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  },
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|bmp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed"));
-    }
-  },
-});
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -41,8 +12,14 @@ const verifyToken = (req, res, next) => {
   if (!token) {
     return res.status(401).json({ error: "No token provided" });
   }
-  // Token verification would go here - for now we trust the frontend passed valid token
-  next();
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret123");
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
 };
 
 // GET KPIs - Dashboard summary cards
@@ -473,33 +450,6 @@ router.post("/admins", verifyToken, async (req, res) => {
   }
 });
 
-// POST Upload image (Admin)
-router.post("/admin/images/upload", verifyToken, upload.single("image"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No image file provided" });
-    }
-
-    const connection = await pool.getConnection();
-
-    const filename = req.file.originalname;
-    const filepath = req.file.path;
-    const fileSize = req.file.size;
-
-    await connection.execute(
-      "INSERT INTO images (image_name, filepath, file_size, status, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
-      [filename, filepath, fileSize, "pending"]
-    );
-
-    await connection.release();
-
-    res.status(201).json({ message: "Image uploaded successfully" });
-  } catch (err) {
-    console.error("Upload image error:", err);
-    res.status(500).json({ error: "Failed to upload image" });
-  }
-});
-
 // POST Add image by name only (no file upload)
 router.post("/admin/images/add", verifyToken, async (req, res) => {
   try {
@@ -642,6 +592,11 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { annotatorId, testerId, melbourneUserId, status, feedback } = req.body;
+    const adminId = req.user?.id;
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin user not authenticated" });
+    }
 
     const connection = await pool.getConnection();
 
@@ -679,9 +634,27 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     params.push(id);
 
     await connection.execute(query, params);
-    await connection.release();
+    console.log(`Image ${id} updated with fields:`, fields);
 
-    res.json({ message: "Image updated successfully" });
+    // Create task if assigning to annotator
+    if (annotatorId) {
+      try {
+        const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+        const insertResult = await connection.execute(
+          `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, status, assigned_date)
+           VALUES (?, ?, ?, ?, 'pending', NOW())`,
+          [taskId, id, annotatorId, adminId]
+        );
+        console.log(`Task created: ${taskId} for annotator ${annotatorId}`);
+      } catch (taskErr) {
+        console.error("Failed to create task:", taskErr);
+        // Don't fail the whole request if task creation fails
+      }
+    }
+
+    await connection.release();
+    res.json({ message: "Image assigned successfully" });
   } catch (err) {
     console.error("Assign image error:", err);
     res.status(500).json({ error: "Failed to assign image" });
@@ -731,6 +704,288 @@ router.get("/admin/payments", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Get payments error:", err);
     res.status(500).json({ error: "Failed to load payments" });
+  }
+});
+
+// ========== ANNOTATOR ROUTES ==========
+
+// GET Annotator KPIs
+router.get("/annotator/kpis", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+    const connection = await pool.getConnection();
+
+    const [assignedImages] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status IN ('pending', 'in_progress')`,
+      [userId]
+    );
+
+    const [inProgress] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'in_progress'`,
+      [userId]
+    );
+
+    const [completed] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'completed'`,
+      [userId]
+    );
+
+    const [pendingReview] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'pending_review'`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      assignedImages: assignedImages[0].count,
+      inProgress: inProgress[0].count,
+      completed: completed[0].count,
+      pendingReview: pendingReview[0].count,
+    });
+  } catch (err) {
+    console.error("Annotator KPIs error:", err);
+    res.status(500).json({ error: "Failed to fetch KPIs" });
+  }
+});
+
+// GET Annotator Tasks
+router.get("/annotator/tasks", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [tasks] = await connection.execute(`
+      SELECT 
+        t.id,
+        t.task_id,
+        i.image_name,
+        t.status,
+        u.name as assigned_by,
+        t.notes,
+        t.assigned_date
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN users u ON t.assigned_by = u.id
+      WHERE t.user_id = ?
+      AND t.status IN ('pending', 'in_progress', 'pending_review', 'completed')
+      ORDER BY t.assigned_date ASC
+    `, [userId]);
+
+    await connection.release();
+    res.json(tasks);
+  } catch (err) {
+    console.error("Annotator tasks error:", err);
+    res.status(500).json({ error: "Failed to fetch tasks" });
+  }
+});
+
+// PUT Update Task Status
+router.put("/annotator/tasks/:id/status", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!status) {
+      return res.status(400).json({ error: "Status is required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // First, get the image_id from the task
+    const [taskResult] = await connection.execute(
+      `SELECT image_id FROM tasks WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+
+    if (taskResult.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    const imageId = taskResult[0].image_id;
+
+    // Update task status
+    await connection.execute(
+      `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+      [status, notes || null, id, userId]
+    );
+
+    // Also update the corresponding image status
+    await connection.execute(
+      `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
+      [status, imageId]
+    );
+
+    await connection.release();
+    res.json({ message: "Task status updated successfully" });
+  } catch (err) {
+    console.error("Update task status error:", err);
+    res.status(500).json({ error: "Failed to update task status" });
+  }
+});
+
+// GET Annotator Task History
+router.get("/annotator/task-history", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+    const connection = await pool.getConnection();
+
+    const [tasks] = await connection.execute(`
+      SELECT 
+        t.id,
+        t.task_id,
+        i.image_name,
+        t.status,
+        t.assigned_date,
+        t.completed_date
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      WHERE t.user_id = ?
+      ORDER BY t.assigned_date DESC
+    `, [userId]);
+
+    await connection.release();
+    res.json(tasks);
+  } catch (err) {
+    console.error("Task history error:", err);
+    res.status(500).json({ error: "Failed to fetch task history" });
+  }
+});
+
+// GET Annotator Payments
+router.get("/annotator/payments", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+    const connection = await pool.getConnection();
+
+    const [paymentDue] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'pending'`,
+      [userId]
+    );
+
+    const [tasksCompleted] = await connection.execute(
+      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'completed'`,
+      [userId]
+    );
+
+    const [totalAmountDue] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ?`,
+      [userId]
+    );
+
+    const [completedAmount] = await connection.execute(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'paid'`,
+      [userId]
+    );
+
+    const [paymentHistory] = await connection.execute(
+      `SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      paymentDue: paymentDue[0].total,
+      tasksCompleted: tasksCompleted[0].count,
+      totalAmountDue: totalAmountDue[0].total,
+      completedAmount: completedAmount[0].total,
+      previousAmount: completedAmount[0].total > 0 ? completedAmount[0].total - 1000 : 0,
+      paymentHistory: paymentHistory,
+    });
+  } catch (err) {
+    console.error("Annotator payments error:", err);
+    res.status(500).json({ error: "Failed to fetch payments" });
+  }
+});
+
+// PUT Update Annotator Profile
+router.put("/annotator/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email, phone } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`,
+      [name, email, phone || null, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// PUT Change Annotator Password
+router.put("/annotator/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
   }
 });
 

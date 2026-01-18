@@ -14,6 +14,10 @@ import ManageImages from "./pages/admin/ManageImages";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminReports from "./pages/admin/AdminReports";
 import AdminPayments from "./pages/admin/AdminPayments";
+import AnnotatorDashboard from "./pages/annotator/AnnotatorDashboard";
+import AnnotatorProfile from "./pages/annotator/AnnotatorProfile";
+import AnnotatorPayments from "./pages/annotator/AnnotatorPayments";
+import AnnotatorTaskHistory from "./pages/annotator/AnnotatorTaskHistory";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -30,6 +34,8 @@ function ProtectedRoute({ children, requiredRole }) {
       return <Navigate to="/admin/dashboard" />;
     } else if (user.role === "super_admin") {
       return <Navigate to="/dashboard" />;
+    } else if (user.role === "annotator") {
+      return <Navigate to="/annotator/dashboard" />;
     } else {
       return <Navigate to="/" />;
     }
@@ -128,6 +134,40 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="admin">
               <AdminPayments />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Annotator Dashboard Routes */}
+        <Route
+          path="/annotator/dashboard"
+          element={
+            <ProtectedRoute requiredRole="annotator">
+              <AnnotatorDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/annotator/profile"
+          element={
+            <ProtectedRoute requiredRole="annotator">
+              <AnnotatorProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/annotator/task-history"
+          element={
+            <ProtectedRoute requiredRole="annotator">
+              <AnnotatorTaskHistory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/annotator/payments"
+          element={
+            <ProtectedRoute requiredRole="annotator">
+              <AnnotatorPayments />
             </ProtectedRoute>
           }
         />

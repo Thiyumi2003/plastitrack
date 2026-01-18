@@ -60,8 +60,17 @@ export default function Login() {
         localStorage.setItem("rememberEmail", formData.email);
       }
 
-      // Navigate to dashboard
-      navigate("/dashboard", { state: { message: "Login successful!" } });
+      // Navigate to appropriate dashboard based on role
+      const userRole = response.data.user.role;
+      if (userRole === "super_admin") {
+        navigate("/dashboard", { state: { message: "Login successful!" } });
+      } else if (userRole === "admin") {
+        navigate("/admin/dashboard", { state: { message: "Login successful!" } });
+      } else if (userRole === "annotator") {
+        navigate("/annotator/dashboard", { state: { message: "Login successful!" } });
+      } else {
+        navigate("/", { state: { message: "Login successful!" } });
+      }
     } catch (err) {
       setError(err.response?.data?.message || "Login failed");
     } finally {
