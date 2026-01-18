@@ -9,6 +9,11 @@ import ManageAdmins from "./pages/superadmin/ManageAdmins";
 import ViewAllUsers from "./pages/superadmin/ViewAllUsers";
 import Reports from "./pages/superadmin/Reports";
 import ManagePayments from "./pages/superadmin/ManagePayments";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import ManageImages from "./pages/admin/ManageImages";
+import AdminUsers from "./pages/admin/AdminUsers";
+import AdminReports from "./pages/admin/AdminReports";
+import AdminPayments from "./pages/admin/AdminPayments";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -20,7 +25,14 @@ function ProtectedRoute({ children, requiredRole }) {
   }
 
   if (requiredRole && user.role !== requiredRole) {
-    return <Navigate to="/" />;
+    // Redirect to appropriate dashboard based on actual role
+    if (user.role === "admin") {
+      return <Navigate to="/admin/dashboard" />;
+    } else if (user.role === "super_admin") {
+      return <Navigate to="/dashboard" />;
+    } else {
+      return <Navigate to="/" />;
+    }
   }
 
   return children;
@@ -74,6 +86,48 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="super_admin">
               <ManagePayments />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin Dashboard Routes */}
+        <Route
+          path="/admin/dashboard"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/images"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <ManageImages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminUsers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/reports"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminReports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/payments"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminPayments />
             </ProtectedRoute>
           }
         />

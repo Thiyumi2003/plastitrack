@@ -1,6 +1,39 @@
 const express = require("express");
 const pool = require("../db/pool");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 const router = express.Router();
+
+// Configure multer for image uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "../../uploads");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}_${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|bmp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname && mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed"));
+    }
+  },
+});
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -437,6 +470,240 @@ router.post("/admins", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Add admin error:", err);
     res.status(500).json({ error: "Failed to add admin" });
+  }
+});
+
+// POST Upload image (Admin)
+router.post("/admin/images/upload", verifyToken, upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No image file provided" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const filename = req.file.originalname;
+    const filepath = req.file.path;
+    const fileSize = req.file.size;
+
+    await connection.execute(
+      "INSERT INTO images (filename, filepath, file_size, status) VALUES (?, ?, ?, ?)",
+      [filename, filepath, fileSize, "pending"]
+    );
+
+    await connection.release();
+
+    res.status(201).json({ message: "Image uploaded successfully" });
+  } catch (err) {
+    console.error("Upload image error:", err);
+    res.status(500).json({ error: "Failed to upload image" });
+  }
+});
+
+// ===== ADMIN SPECIFIC ROUTES =====
+
+// GET Admin Dashboard - KPIs
+// (reuses existing /kpis endpoint but we can add admin-specific data here if needed)
+
+// GET Admin Reports with filtered data
+router.get("/admin/reports", verifyToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    // Status distribution
+    const [statusDistribution] = await connection.execute(
+      "SELECT status, COUNT(*) as count FROM images GROUP BY status"
+    );
+
+    // User contributions (annotators and testers only)
+    const [userContributions] = await connection.execute(
+      `SELECT u.id, u.name, u.email, u.role,
+              COUNT(DISTINCT i.id) as images_count,
+              SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed_count
+       FROM users u
+       LEFT JOIN images i ON u.id = i.annotator_id OR u.id = i.tester_id
+       WHERE u.role IN ('annotator', 'tester')
+       GROUP BY u.id, u.name, u.email, u.role
+       ORDER BY images_count DESC`
+    );
+
+    // Progress over time
+    const [progressOverTime] = await connection.execute(
+      `SELECT DATE(uploaded_at) as date,
+              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+              SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+              SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+              SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+              SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM images
+       GROUP BY DATE(uploaded_at)
+       ORDER BY date DESC
+       LIMIT 30`
+    );
+
+    await connection.release();
+
+    res.json({
+      statusDistribution,
+      userContributions,
+      progressOverTime,
+    });
+  } catch (err) {
+    console.error("Admin reports error:", err);
+    res.status(500).json({ error: "Failed to load reports" });
+  }
+});
+
+// GET Admin Images list
+router.get("/admin/images", verifyToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    const [images] = await connection.execute(
+      `SELECT i.*, 
+              u_ann.name as annotator_name,
+              u_test.name as tester_name,
+              u_mel.name as melbourne_name
+       FROM images i
+       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
+       LEFT JOIN users u_test ON i.tester_id = u_test.id
+       LEFT JOIN users u_mel ON i.melbourne_user_id = u_mel.id
+       ORDER BY i.uploaded_at DESC`
+    );
+
+    await connection.release();
+
+    res.json(images);
+  } catch (err) {
+    console.error("Get images error:", err);
+    res.status(500).json({ error: "Failed to load images" });
+  }
+});
+
+// GET Admin Filtered Users (annotators and testers only)
+router.get("/admin/users-filtered", verifyToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    const [annotators] = await connection.execute(
+      "SELECT id, name, email, role, created_at FROM users WHERE role = 'annotator' ORDER BY name"
+    );
+
+    const [testers] = await connection.execute(
+      "SELECT id, name, email, role, created_at FROM users WHERE role = 'tester' ORDER BY name"
+    );
+
+    const [melbourneUsers] = await connection.execute(
+      "SELECT id, name, email, role, created_at FROM users WHERE role = 'melbourne_user' ORDER BY name"
+    );
+
+    await connection.release();
+
+    res.json({
+      annotators,
+      testers,
+      melbourneUsers,
+    });
+  } catch (err) {
+    console.error("Get filtered users error:", err);
+    res.status(500).json({ error: "Failed to load users" });
+  }
+});
+
+// PUT Assign image to users
+router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { annotatorId, testerId, melbourneUserId, status, feedback } = req.body;
+
+    const connection = await pool.getConnection();
+
+    let query = "UPDATE images SET ";
+    let params = [];
+    let fields = [];
+
+    if (annotatorId) {
+      fields.push("annotator_id = ?");
+      params.push(annotatorId);
+    }
+    if (testerId) {
+      fields.push("tester_id = ?");
+      params.push(testerId);
+    }
+    if (melbourneUserId) {
+      fields.push("melbourne_user_id = ?");
+      params.push(melbourneUserId);
+    }
+    if (status) {
+      fields.push("status = ?");
+      params.push(status);
+    }
+    if (feedback) {
+      fields.push("feedback = ?");
+      params.push(feedback);
+    }
+
+    if (fields.length === 0) {
+      await connection.release();
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    query += fields.join(", ") + " WHERE id = ?";
+    params.push(id);
+
+    await connection.execute(query, params);
+    await connection.release();
+
+    res.json({ message: "Image updated successfully" });
+  } catch (err) {
+    console.error("Assign image error:", err);
+    res.status(500).json({ error: "Failed to assign image" });
+  }
+});
+
+// GET Admin Payments
+router.get("/admin/payments", verifyToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    // Get total earned and hours for this admin
+    const [payments] = await connection.execute(
+      `SELECT 
+              SUM(amount) as totalEarned,
+              SUM(hours) as totalHours,
+              AVG(amount/hours) as perHourRate
+       FROM payments
+       WHERE user_id = (SELECT id FROM users WHERE email = ? LIMIT 1)`,
+      ["tharuka@gmail.com"] // In real app, get from token
+    );
+
+    // Get payment history
+    const [history] = await connection.execute(
+      `SELECT date, description, type, amount, hours 
+       FROM payments
+       WHERE user_id = (SELECT id FROM users WHERE email = ? LIMIT 1)
+       ORDER BY date DESC
+       LIMIT 20`,
+      ["tharuka@gmail.com"]
+    );
+
+    await connection.release();
+
+    const totalEarned = payments[0]?.totalEarned || 0;
+    const totalHours = payments[0]?.totalHours || 0;
+    const perHourRate = payments[0]?.perHourRate || 10;
+    const monthlyTotal = totalEarned; // Could be filtered by date
+
+    res.json({
+      totalEarned,
+      totalHours,
+      perHourRate,
+      history: history || [],
+      monthlyTotal,
+    });
+  } catch (err) {
+    console.error("Get payments error:", err);
+    res.status(500).json({ error: "Failed to load payments" });
   }
 });
 
