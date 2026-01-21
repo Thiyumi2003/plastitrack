@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, User, Clock, Wallet, LogOut } from "lucide-react";import Notifications from "../../components/Notifications";import logo from "../../images/logo (2).png";
+import { Menu, X, LayoutDashboard, User, LogOut } from "lucide-react";
+import Notifications from "../../components/Notifications";
+import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
 
-export default function AnnotatorSidebar() {
+export default function MelbourneSidebar() {
   const [isOpen, setIsOpen] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   const menuItems = [
-    { label: "Dashboard", icon: LayoutDashboard, path: "/annotator/dashboard" },
-    { label: "Profile", icon: User, path: "/annotator/profile" },
-    { label: "Task History", icon: Clock, path: "/annotator/task-history" },
-    { label: "Payments", icon: Wallet, path: "/annotator/payments" },
+    { label: "Dashboard", icon: LayoutDashboard, path: "/melbourne/dashboard" },
+    { label: "Manage Images", icon: LayoutDashboard, path: "/melbourne/images" },
+    { label: "Profile", icon: User, path: "/melbourne/profile" },
   ];
 
   const handleLogout = () => {
@@ -39,10 +40,12 @@ export default function AnnotatorSidebar() {
             <div className="user-avatar">{user.name?.charAt(0).toUpperCase()}</div>
             <div className="user-info">
               <div className="user-name">{user.name}</div>
-              <div className="user-role">{user.role}</div>
-            </div>            <div className="sidebar-notifications">
+              <div className="user-email">{user.email}</div>
+            </div>
+            <div className="sidebar-notifications">
               <Notifications />
-            </div>          </div>
+            </div>
+          </div>
 
           <nav className="sidebar-nav">
             {menuItems.map((item) => {

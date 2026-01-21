@@ -457,9 +457,14 @@ router.post("/admins", verifyToken, async (req, res) => {
 router.post("/admin/images/add", verifyToken, async (req, res) => {
   try {
     const { filename, fileSizeMB } = req.body;
+    const adminId = req.user?.id;
 
     if (!filename) {
       return res.status(400).json({ error: "Filename is required" });
+    }
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
     }
 
     const sizeBytes = Math.max(0, Number(fileSizeMB) || 0) * 1024 * 1024;
@@ -467,8 +472,8 @@ router.post("/admin/images/add", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     await connection.execute(
-      "INSERT INTO images (image_name, file_size, status, uploaded_at) VALUES (?, ?, ?, NOW())",
-      [filename, sizeBytes, "pending"]
+      "INSERT INTO images (image_name, file_size, status, assigned_to, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
+      [filename, sizeBytes, "pending", adminId]
     );
 
     await connection.release();
@@ -540,22 +545,37 @@ router.get("/admin/images", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [images] = await connection.execute(
-      `SELECT i.*, 
-              u_ann.name as annotator_name,
-              u_test.name as tester_name,
-              u_mel.name as melbourne_name
+      `SELECT 
+        i.id,
+        i.image_name,
+        i.status,
+        i.objects_count,
+        i.uploaded_at,
+        i.created_at,
+        i.file_size,
+        i.assigned_to,
+        i.annotator_id,
+        i.tester_id,
+        i.melbourne_user_id,
+        u_admin.name as admin_name,
+        u_ann.name as annotator_name,
+        u_test.name as tester_name,
+        u_mel.name as melbourne_name
        FROM images i
+       LEFT JOIN users u_admin ON i.assigned_to = u_admin.id
        LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
        LEFT JOIN users u_test ON i.tester_id = u_test.id
        LEFT JOIN users u_mel ON i.melbourne_user_id = u_mel.id
-       ORDER BY i.uploaded_at DESC`
+       ORDER BY i.created_at DESC`
     );
+
+    console.log("Admin images endpoint - Images retrieved:", images.length);
 
     await connection.release();
 
     res.json(images);
   } catch (err) {
-    console.error("Get images error:", err);
+    console.error("Get admin images error:", err);
     res.status(500).json({ error: "Failed to load images" });
   }
 });
@@ -644,15 +664,31 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+        // Get image name for notification
+        const [imageData] = await connection.execute(
+          `SELECT image_name FROM images WHERE id = ?`,
+          [id]
+        );
+        const imageName = imageData[0]?.image_name || `Image #${id}`;
+
         await connection.execute(
           `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
            VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
           [taskId, id, annotatorId, adminId]
         );
+        
+        // Create notification for annotator
+        await createNotification(
+          connection,
+          annotatorId,
+          'image_assigned_annotator',
+          `New image set assigned: ${imageName}`,
+          id
+        );
+        
         console.log(`Task created: ${taskId} for annotator ${annotatorId}`);
       } catch (taskErr) {
         console.error("Failed to create annotator task:", taskErr);
-        // Don't fail the whole request if task creation fails
       }
     }
 
@@ -667,16 +703,32 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
         );
 
         if (existingTesterTask.length === 0) {
+          // Get image name for notification
+          const [imageData] = await connection.execute(
+            `SELECT image_name FROM images WHERE id = ?`,
+            [id]
+          );
+          const imageName = imageData[0]?.image_name || `Image #${id}`;
+
           await connection.execute(
             `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
              VALUES (?, ?, ?, ?, 'testing', 'pending_review', NOW())`,
             [taskId, id, testerId, adminId]
           );
+          
+          // Create notification for tester
+          await createNotification(
+            connection,
+            testerId,
+            'image_assigned_tester',
+            `New image set for review: ${imageName}`,
+            id
+          );
+          
           console.log(`Task created: ${taskId} for tester ${testerId}`);
         }
       } catch (taskErr) {
         console.error("Failed to create tester task:", taskErr);
-        // Don't fail the whole request if task creation fails
       }
     }
 
@@ -1125,9 +1177,12 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
 
     const connection = await pool.getConnection();
 
-    // Get the image_id and task details from the task
+    // Get the image_id, task details, and annotator from the task
     const [taskResult] = await connection.execute(
-      `SELECT image_id, task_type FROM tasks WHERE id = ? AND user_id = ?`,
+      `SELECT t.image_id, t.task_type, i.image_name, i.annotator_id
+       FROM tasks t
+       LEFT JOIN images i ON t.image_id = i.id
+       WHERE t.id = ? AND t.user_id = ?`,
       [id, userId]
     );
 
@@ -1137,6 +1192,8 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
     }
 
     const imageId = taskResult[0].image_id;
+    const imageName = taskResult[0].image_name || `Image #${imageId}`;
+    const annotatorId = taskResult[0].annotator_id;
     console.log(`Tester ${userId} reviewing task ${id} with status ${status}`);
 
     // Update task status and set completed_date
@@ -1151,6 +1208,37 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
       `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
       [status, imageId]
     );
+
+    // Create notifications
+    const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
+    const notificationMessage = status === 'approved' 
+      ? `Image "${imageName}" approved by tester` 
+      : `Image "${imageName}" rejected by tester`;
+
+    // Notify annotator about the review result
+    if (annotatorId) {
+      await createNotification(
+        connection,
+        annotatorId,
+        notificationType,
+        notificationMessage,
+        imageId
+      );
+    }
+
+    // Notify all admins
+    const [admins] = await connection.execute(
+      `SELECT id FROM users WHERE role = 'admin'`
+    );
+    for (const admin of admins) {
+      await createNotification(
+        connection,
+        admin.id,
+        notificationType,
+        `Tester ${status} image: "${imageName}"`,
+        imageId
+      );
+    }
 
     console.log(`Task ${id} and image ${imageId} updated to status: ${status}`);
     await connection.release();
@@ -1296,6 +1384,348 @@ router.put("/tester/profile", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Update tester profile error:", err);
     res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// ===================== MELBOURNE USER ROUTES =====================
+
+// GET Melbourne User Dashboard
+router.get("/melbourne/dashboard", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Get pending review count (tester approved datasets)
+    const [pendingReview] = await connection.execute(
+      `SELECT COUNT(*) as count FROM images WHERE status = 'approved' AND melbourne_user_id IS NULL`
+    );
+
+    // Get approved count (by Melbourne user)
+    const [approved] = await connection.execute(
+      `SELECT COUNT(*) as count FROM images WHERE melbourne_user_id = ? AND status = 'approved'`,
+      [userId]
+    );
+
+    // Get rejected count (by Melbourne user)
+    const [rejected] = await connection.execute(
+      `SELECT COUNT(*) as count FROM images WHERE melbourne_user_id = ? AND status = 'rejected'`,
+      [userId]
+    );
+
+    // Progress over time
+    const [progressOverTime] = await connection.execute(
+      `SELECT DATE(updated_at) as date,
+              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+              SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+              SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM images
+       WHERE melbourne_user_id = ? OR status = 'approved'
+       GROUP BY DATE(updated_at)
+       ORDER BY date DESC
+       LIMIT 30`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      pendingReview: pendingReview[0].count,
+      approved: approved[0].count,
+      rejected: rejected[0].count,
+      progressOverTime,
+    });
+  } catch (err) {
+    console.error("Melbourne dashboard error:", err);
+    res.status(500).json({ error: "Failed to fetch Melbourne dashboard data" });
+  }
+});
+
+// GET Melbourne User Datasets for Review
+router.get("/melbourne/datasets", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Get all tester-approved datasets
+    const [datasets] = await connection.execute(
+      `SELECT 
+        i.id,
+        i.image_name,
+        i.status,
+        i.objects_count,
+        i.uploaded_at,
+        i.updated_at,
+        u_ann.name as annotator_name,
+        u_test.name as tester_name,
+        t.notes as tester_feedback,
+        t.completed_date as tester_review_date
+      FROM images i
+      LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
+      LEFT JOIN users u_test ON i.tester_id = u_test.id
+      LEFT JOIN tasks t ON i.id = t.image_id AND t.task_type = 'testing' AND t.status = 'approved'
+      WHERE i.status = 'approved'
+      ORDER BY i.updated_at DESC`
+    );
+
+    await connection.release();
+    res.json(datasets);
+  } catch (err) {
+    console.error("Melbourne datasets error:", err);
+    res.status(500).json({ error: "Failed to fetch datasets" });
+  }
+});
+
+// PUT Melbourne User Review Dataset
+router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, feedback } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!status || !['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "Valid status (approved/rejected) is required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Get image details
+    const [imageResult] = await connection.execute(
+      `SELECT image_name, annotator_id, tester_id FROM images WHERE id = ?`,
+      [id]
+    );
+
+    if (imageResult.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Dataset not found" });
+    }
+
+    const imageName = imageResult[0].image_name || `Dataset #${id}`;
+    const annotatorId = imageResult[0].annotator_id;
+    const testerId = imageResult[0].tester_id;
+
+    // Update image with Melbourne review
+    await connection.execute(
+      `UPDATE images SET 
+        melbourne_user_id = ?,
+        status = ?,
+        updated_at = NOW()
+       WHERE id = ?`,
+      [userId, status, id]
+    );
+
+    // Store feedback if provided
+    if (feedback) {
+      await connection.execute(
+        `UPDATE images SET feedback = ? WHERE id = ?`,
+        [feedback, id]
+      );
+    }
+
+    // Create notifications
+    const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
+    const notificationMessage = status === 'approved' 
+      ? `Dataset "${imageName}" approved by Melbourne user for production` 
+      : `Dataset "${imageName}" rejected by Melbourne user`;
+
+    // Notify annotator
+    if (annotatorId) {
+      await createNotification(
+        connection,
+        annotatorId,
+        notificationType,
+        notificationMessage,
+        id
+      );
+    }
+
+    // Notify tester
+    if (testerId) {
+      await createNotification(
+        connection,
+        testerId,
+        notificationType,
+        notificationMessage,
+        id
+      );
+    }
+
+    // Notify all admins
+    const [admins] = await connection.execute(
+      `SELECT id FROM users WHERE role IN ('admin', 'super_admin')`
+    );
+    for (const admin of admins) {
+      await createNotification(
+        connection,
+        admin.id,
+        notificationType,
+        `Melbourne user ${status} dataset: "${imageName}"`,
+        id
+      );
+    }
+
+    console.log(`Melbourne user ${userId} ${status} dataset ${id}`);
+    await connection.release();
+    res.json({ message: "Review submitted successfully" });
+  } catch (err) {
+    console.error("Melbourne review error:", err);
+    res.status(500).json({ error: "Failed to submit review" });
+  }
+});
+
+// GET Melbourne User Recent Reviews
+router.get("/melbourne/recent-reviews", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [reviews] = await connection.execute(
+      `SELECT 
+        i.id,
+        i.image_name,
+        i.status,
+        i.objects_count,
+        i.feedback,
+        i.updated_at,
+        u_ann.name as annotator_name,
+        u_test.name as tester_name
+      FROM images i
+      LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
+      LEFT JOIN users u_test ON i.tester_id = u_test.id
+      WHERE i.melbourne_user_id = ?
+      ORDER BY i.updated_at DESC
+      LIMIT 10`,
+      [userId]
+    );
+
+    await connection.release();
+    res.json(reviews);
+  } catch (err) {
+    console.error("Melbourne recent reviews error:", err);
+    res.status(500).json({ error: "Failed to fetch recent reviews" });
+  }
+});
+
+// ===================== NOTIFICATIONS ROUTES =====================
+
+// Helper function to create notifications
+const createNotification = async (connection, userId, type, message, imageId = null) => {
+  try {
+    await connection.execute(
+      `INSERT INTO notifications (user_id, type, message, image_id, read_status, created_at)
+       VALUES (?, ?, ?, ?, FALSE, NOW())`,
+      [userId, type, message, imageId]
+    );
+  } catch (err) {
+    console.error(`Failed to create notification for user ${userId}:`, err);
+  }
+};
+
+// GET User Notifications
+router.get("/notifications", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [notifications] = await connection.execute(
+      `SELECT 
+        id,
+        type,
+        message,
+        image_id,
+        read_status,
+        created_at
+      FROM notifications
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 50`,
+      [userId]
+    );
+
+    // Get unread count
+    const [unreadCount] = await connection.execute(
+      `SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read_status = FALSE`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      notifications,
+      unreadCount: unreadCount[0].count,
+    });
+  } catch (err) {
+    console.error("Get notifications error:", err);
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
+// PUT Mark notification as read
+router.put("/notifications/:id/read", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE notifications SET read_status = TRUE, updated_at = NOW() 
+       WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Notification marked as read" });
+  } catch (err) {
+    console.error("Mark notification read error:", err);
+    res.status(500).json({ error: "Failed to mark notification" });
+  }
+});
+
+// PUT Mark all notifications as read
+router.put("/notifications/mark-all-read", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE notifications SET read_status = TRUE, updated_at = NOW() 
+       WHERE user_id = ? AND read_status = FALSE`,
+      [userId]
+    );
+
+    await connection.release();
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error("Mark all notifications read error:", err);
+    res.status(500).json({ error: "Failed to mark notifications" });
   }
 });
 

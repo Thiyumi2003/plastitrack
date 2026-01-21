@@ -130,6 +130,25 @@
   font-size: 20px;
 }
 
+/* Chart Section */
+.chart-section {
+  margin-top: 30px;
+  margin-bottom: 30px;
+}
+
+.chart-section h2 {
+  color: #333;
+  margin-bottom: 20px;
+  font-size: 20px;
+}
+
+.chart-container {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .table-container {
   background: white;
   border-radius: 8px;
@@ -263,6 +282,24 @@
   margin-bottom: 20px;
 }
 
+.modal-info {
+  background-color: #f8f9fa;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.modal-info p {
+  margin: 8px 0;
+  color: #555;
+  font-size: 14px;
+}
+
+.modal-info strong {
+  color: #333;
+  margin-right: 8px;
+}
+
 .status-options {
   margin-bottom: 20px;
 }
@@ -274,11 +311,18 @@
   border: 1px solid #ddd;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s;
 }
 
 .radio-label:hover {
   background-color: #f8f9fa;
+  border-color: #667eea;
+}
+
+.radio-label.selected {
+  background-color: #e8eaf6;
+  border-color: #667eea;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
 }
 
 .radio-label input[type="radio"] {

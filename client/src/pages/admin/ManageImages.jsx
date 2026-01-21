@@ -27,11 +27,12 @@ export default function ManageImages() {
         axios.get("http://localhost:5000/api/dashboard/admin/images", { headers: getAuthHeader() }),
         axios.get("http://localhost:5000/api/dashboard/admin/users-filtered", { headers: getAuthHeader() }),
       ]);
+      console.log("Admin manage images - Fetched data:", imagesRes.data);
       setImages(imagesRes.data);
       setUsers(usersRes.data);
     } catch (err) {
+      console.error("Admin manage images error:", err);
       setError(err.response?.data?.error || "Failed to load data");
-      console.error("Error:", err);
     } finally {
       setLoading(false);
     }
@@ -128,7 +129,7 @@ export default function ManageImages() {
           </button>
         </div>
 
-        {error && <div className="error-message">{error}</div>}
+        {error && <div style={{ padding: "12px", backgroundColor: "#fee2e2", borderLeft: "4px solid #ef4444", color: "#991b1b", marginBottom: "20px", borderRadius: "4px" }}>{error}</div>}
 
         <div className="images-grid">
           {images.map((img) => (

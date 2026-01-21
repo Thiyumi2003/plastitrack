@@ -22,6 +22,10 @@ import TesterDashboard from "./pages/tester/TesterDashboard";
 import TesterProfile from "./pages/tester/TesterProfile";
 import TesterPayments from "./pages/tester/TesterPayments";
 import TesterTaskHistory from "./pages/tester/TesterTaskHistory";
+import MelbourneDashboard from "./pages/melbourne/MelbourneDashboard";
+import MelbourneProfile from "./pages/melbourne/MelbourneProfile";
+import MelbourneAdminDashboard from "./pages/melbourne/MelbourneAdminDashboard";
+import MelbourneManageImages from "./pages/melbourne/MelbourneManageImages";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -42,6 +46,8 @@ function ProtectedRoute({ children, requiredRole }) {
       return <Navigate to="/annotator/dashboard" />;
     } else if (user.role === "tester") {
       return <Navigate to="/tester/dashboard" />;
+    } else if (user.role === "melbourne_user") {
+      return <Navigate to="/melbourne/dashboard" />;
     } else {
       return <Navigate to="/" />;
     }
@@ -208,6 +214,40 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="tester">
               <TesterPayments />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Melbourne User Dashboard Routes */}
+        <Route
+          path="/melbourne/dashboard"
+          element={
+            <ProtectedRoute requiredRole="melbourne_user">
+              <MelbourneDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/melbourne/admin-dashboard"
+          element={
+            <ProtectedRoute requiredRole="melbourne_user">
+              <MelbourneAdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/melbourne/images"
+          element={
+            <ProtectedRoute requiredRole="melbourne_user">
+              <MelbourneManageImages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/melbourne/profile"
+          element={
+            <ProtectedRoute requiredRole="melbourne_user">
+              <MelbourneProfile />
             </ProtectedRoute>
           }
         />

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Menu, X, LayoutDashboard, Users, BarChart3, CreditCard, Settings, LogOut } from "lucide-react";
+import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "./sidebar.css";
 
@@ -42,6 +43,9 @@ export default function Sidebar() {
             <div className="user-info">
               <div className="user-name">{user.name}</div>
               <div className="user-role">{user.role}</div>
+            </div>
+            <div className="sidebar-notifications">
+              <Notifications />
             </div>
           </div>
 

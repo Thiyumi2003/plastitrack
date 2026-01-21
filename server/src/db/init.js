@@ -61,6 +61,7 @@ async function initDatabase() {
         annotator_id INT,
         tester_id INT,
         objects_count INT DEFAULT 0,
+        feedback TEXT,
         file_size BIGINT DEFAULT 0,
         filepath VARCHAR(255),
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -91,6 +92,7 @@ async function initDatabase() {
     await ensureColumn("images", "filepath", "VARCHAR(255)");
     await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await ensureColumn("images", "melbourne_user_id", "INT");
+    await ensureColumn("images", "feedback", "TEXT");
     await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
     // Ensure images status enum supports review flow
     try {
@@ -155,6 +157,26 @@ async function initDatabase() {
     `;
     await connection.query(createPaymentsTableQuery);
     console.log("✓ Payments table created or already exists");
+
+    // Create notifications table
+    const createNotificationsTableQuery = `
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        image_id INT,
+        type ENUM('image_added', 'image_assigned_annotator', 'image_assigned_tester', 'image_completed', 'image_approved', 'image_rejected', 'task_updated', 'system') DEFAULT 'system',
+        message TEXT NOT NULL,
+        read_status BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (image_id) REFERENCES images(id),
+        INDEX idx_user_read (user_id, read_status),
+        INDEX idx_created_at (created_at)
+      )
+    `;
+    await connection.query(createNotificationsTableQuery);
+    console.log("✓ Notifications table created or already exists");
 
     // Create a sample admin user if it doesn't exist
     const [existingAdmin] = await connection.query(
