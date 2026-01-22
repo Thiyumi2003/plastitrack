@@ -51,8 +51,8 @@ export default function MelbourneManageImages() {
   };
 
   const handleSubmitReview = async () => {
-    if (!reviewForm.status || !reviewForm.feedback.trim()) {
-      alert("Please select an action and provide feedback");
+    if (!reviewForm.status) {
+      alert("Please select an action (Approve or Reject)");
       return;
     }
 
@@ -62,7 +62,7 @@ export default function MelbourneManageImages() {
         `http://localhost:5000/api/dashboard/melbourne/datasets/${selectedImage.id}/review`,
         {
           status: reviewForm.status,
-          feedback: reviewForm.feedback
+          feedback: reviewForm.feedback.trim() || null
         },
         { headers: getAuthHeader() }
       );
@@ -293,13 +293,12 @@ export default function MelbourneManageImages() {
 
                   {/* Feedback Textarea */}
                   <div className="form-group">
-                    <label>Feedback *</label>
+                    <label>Feedback <span style={{ color: "#999", fontWeight: "normal" }}>(optional)</span></label>
                     <textarea
                       value={reviewForm.feedback}
                       onChange={(e) => setReviewForm({ ...reviewForm, feedback: e.target.value })}
-                      placeholder="Provide detailed feedback for your decision..."
+                      placeholder="Add any feedback or comments (optional)..."
                       rows={5}
-                      required
                       style={{ width: "100%", padding: "10px", fontSize: "14px", fontFamily: "inherit", borderRadius: "4px", border: "1px solid #ddd" }}
                     />
                   </div>
@@ -316,7 +315,7 @@ export default function MelbourneManageImages() {
                     <button
                       className="btn-save"
                       onClick={handleSubmitReview}
-                      disabled={!reviewForm.status || !reviewForm.feedback.trim() || submitting}
+                      disabled={!reviewForm.status || submitting}
                     >
                       {submitting ? "Submitting..." : "Submit Review"}
                     </button>

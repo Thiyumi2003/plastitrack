@@ -7,7 +7,7 @@ export default function AnnotatorTaskHistory() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("completed");  // Show completed by default
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -45,7 +45,7 @@ export default function AnnotatorTaskHistory() {
       <div className="dashboard-main">
         <div className="dashboard-header">
           <h1>Task History</h1>
-          <p>View all your completed and assigned tasks</p>
+          <div className="header-date">{new Date().toLocaleDateString()}</div>
         </div>
 
         {error && <div className="dashboard-error">{error}</div>}
@@ -86,6 +86,7 @@ export default function AnnotatorTaskHistory() {
                 <th>STATUS</th>
                 <th>ASSIGNED DATE</th>
                 <th>COMPLETED DATE</th>
+                <th>FEEDBACK</th>
               </tr>
             </thead>
             <tbody>
@@ -119,11 +120,18 @@ export default function AnnotatorTaskHistory() {
                         ? new Date(task.completed_date).toLocaleDateString()
                         : "-"}
                     </td>
+                    <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
+                      {task.notes ? (
+                        <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
+                      ) : (
+                        <span style={{ color: "#999" }}>-</span>
+                      )}
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="5" className="no-data">
+                  <td colSpan="6" className="no-data">
                     No tasks found
                   </td>
                 </tr>

@@ -62,9 +62,6 @@ async function initDatabase() {
         tester_id INT,
         objects_count INT DEFAULT 0,
         feedback TEXT,
-        file_size BIGINT DEFAULT 0,
-        filepath VARCHAR(255),
-        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (assigned_to) REFERENCES users(id),
@@ -130,13 +127,46 @@ async function initDatabase() {
         assigned_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_date TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (image_id) REFERENCES images(id),
+        FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (assigned_by) REFERENCES users(id)
       )
     `;
     await connection.query(createTasksTableQuery);
     console.log("✓ Tasks table created or already exists");
+
+    // Fix foreign key constraint for cascade delete if it exists
+    try {
+      // Try to drop and recreate the constraint
+      const [constraints] = await connection.query(`
+        SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+        WHERE TABLE_NAME = 'tasks' AND COLUMN_NAME = 'image_id' AND REFERENCED_TABLE_NAME = 'images'
+      `);
+      
+      if (constraints.length > 0) {
+        const constraintName = constraints[0].CONSTRAINT_NAME;
+        if (constraintName !== 'PRIMARY') {
+          await connection.query(`ALTER TABLE tasks DROP FOREIGN KEY ${constraintName}`);
+          console.log(`✓ Dropped old foreign key constraint: ${constraintName}`);
+        }
+      }
+      
+      // Add the new constraint with CASCADE DELETE
+      await connection.query(`
+        ALTER TABLE tasks 
+        ADD CONSTRAINT tasks_image_cascade 
+        FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+      `);
+      console.log("✓ Updated tasks foreign key to use CASCADE DELETE");
+    } catch (err) {
+      if (err.code === 'ER_DUP_KEYNAME') {
+        console.log("✓ CASCADE DELETE constraint already exists");
+      } else if (err.message.includes("Constraint already exists")) {
+        console.log("✓ CASCADE DELETE constraint already exists");
+      } else {
+        console.warn("Could not update CASCADE DELETE (may already be set):", err.code);
+      }
+    }
 
     // Create payments table
     const createPaymentsTableQuery = `

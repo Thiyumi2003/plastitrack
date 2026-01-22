@@ -64,18 +64,27 @@ export default function Notifications() {
       case "image_added":
         return "📷";
       case "image_assigned_annotator":
-        return "📋";
+        return "🎯";
       case "image_assigned_tester":
         return "🔍";
       case "image_completed":
         return "✓";
       case "image_approved":
-        return "👍";
+        return "✅";
       case "image_rejected":
         return "❌";
       default:
         return "📢";
     }
+  };
+
+  const parseNotificationMessage = (message) => {
+    // Split message by | to extract main message and action
+    const parts = message.split(" | ");
+    return {
+      main: parts[0],
+      action: parts[1] || null
+    };
   };
 
   const getNotificationColor = (type) => {
@@ -105,20 +114,21 @@ export default function Notifications() {
       </button>
 
       {isOpen && (
-        <div className="notification-dropdown">
-          <div className="notification-header">
-            <h3>Notifications</h3>
-            {unreadCount > 0 && (
+        <div className="notification-overlay" onClick={() => setIsOpen(false)}>
+          <div className="notification-dropdown" onClick={(e) => e.stopPropagation()}>
+            <div className="notification-header">
+              <h3>Notifications</h3>
+              {unreadCount > 0 && (
+                <button
+                  className="mark-all-read"
+                  onClick={handleMarkAllAsRead}
+                >
+                  Mark all as read
+                </button>
+              )}
               <button
-                className="mark-all-read"
-                onClick={handleMarkAllAsRead}
-              >
-                Mark all as read
-              </button>
-            )}
-            <button
-              className="close-btn"
-              onClick={() => setIsOpen(false)}
+                className="close-btn"
+                onClick={() => setIsOpen(false)}
             >
               <X size={18} />
             </button>
@@ -130,39 +140,48 @@ export default function Notifications() {
                 <p>No notifications yet</p>
               </div>
             ) : (
-              notifications.map((notif) => (
-                <div
-                  key={notif.id}
-                  className={`notification-item ${
-                    !notif.read_status ? "unread" : ""
-                  } ${getNotificationColor(notif.type)}`}
-                >
-                  <div className="notification-content">
-                    <span className="notification-icon">
-                      {getNotificationIcon(notif.type)}
-                    </span>
-                    <div className="notification-text">
-                      <p className="notification-message">{notif.message}</p>
-                      <small className="notification-time">
-                        {new Date(notif.created_at).toLocaleDateString()}{" "}
-                        {new Date(notif.created_at).toLocaleTimeString()}
-                      </small>
+              notifications.map((notif) => {
+                const { main, action } = parseNotificationMessage(notif.message);
+                return (
+                  <div
+                    key={notif.id}
+                    className={`notification-item ${
+                      !notif.read_status ? "unread" : ""
+                    } ${getNotificationColor(notif.type)}`}
+                  >
+                    <div className="notification-content">
+                      <span className="notification-icon">
+                        {getNotificationIcon(notif.type)}
+                      </span>
+                      <div className="notification-text">
+                        <p className="notification-message">{main}</p>
+                        {action && (
+                          <div className="notification-action">
+                            <strong>→ {action}</strong>
+                          </div>
+                        )}
+                        <small className="notification-time">
+                          {new Date(notif.created_at).toLocaleDateString()}{" "}
+                          {new Date(notif.created_at).toLocaleTimeString()}
+                        </small>
+                      </div>
                     </div>
-                  </div>
 
-                  {!notif.read_status && (
-                    <button
-                      className="mark-read-btn"
-                      onClick={() => handleMarkAsRead(notif.id)}
-                      title="Mark as read"
-                    >
-                      <Check size={16} />
-                    </button>
-                  )}
-                </div>
-              ))
+                    {!notif.read_status && (
+                      <button
+                        className="mark-read-btn"
+                        onClick={() => handleMarkAsRead(notif.id)}
+                        title="Mark as read"
+                      >
+                        <Check size={16} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
+        </div>
         </div>
       )}
     </div>

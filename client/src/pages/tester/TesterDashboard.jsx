@@ -115,6 +115,7 @@ export default function TesterDashboard() {
                   <th>STATUS</th>
                   <th>ASSIGNED DATE</th>
                   <th>ASSIGNED BY</th>
+                  <th>FEEDBACK</th>
                   <th>ACTION</th>
                 </tr>
               </thead>
@@ -140,6 +141,13 @@ export default function TesterDashboard() {
                     </td>
                     <td>{task.assigned_date ? new Date(task.assigned_date).toLocaleDateString() : "-"}</td>
                     <td>{task.assigned_by_name || "-"}</td>
+                    <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
+                      {task.notes ? (
+                        <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
+                      ) : (
+                        <span style={{ color: "#999" }}>-</span>
+                      )}
+                    </td>
                     <td>
                       <button
                         className="action-btn"

@@ -75,6 +75,9 @@ export default function AnnotatorDashboard() {
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
+  // Separate active tasks from history
+  const activeTasks = tasks.filter(t => t.status === "pending" || t.status === "in_progress");
+
   return (
     <div className="dashboard-container">
       <AnnotatorSidebar />
@@ -109,8 +112,9 @@ export default function AnnotatorDashboard() {
           </div>
         </div>
 
+        {/* Current Assigned Tasks */}
         <div className="tasks-section">
-          <h2>Your Tasks</h2>
+          <h2>📌 Assigned Images for You</h2>
           <div className="table-container">
             <table className="tasks-table">
               <thead>
@@ -120,41 +124,57 @@ export default function AnnotatorDashboard() {
                   <th>STATUS</th>
                   <th>ASSIGNED DATE</th>
                   <th>ASSIGNED BY</th>
+                  <th>FEEDBACK</th>
                   <th>ACTION</th>
                 </tr>
               </thead>
               <tbody>
-                {tasks.map((task) => (
-                  <tr key={task.id}>
-                    <td>
-                      <div className="task-image-col">
-                        {task.image_name}
-                      </div>
-                    </td>
-                    <td>{task.task_id}</td>
-                    <td>
-                      <span
-                        className={`status-badge status-${task.status?.replace("_", "-")}`}
-                      >
-                        {task.status === "in_progress"
-                          ? "In Progress"
-                          : task.status === "pending_review"
-                          ? "Pending Review"
-                          : task.status?.charAt(0).toUpperCase() + task.status?.slice(1)}
-                      </span>
-                    </td>
-                    <td>{task.assigned_date ? new Date(task.assigned_date).toLocaleDateString() : "-"}</td>
-                    <td>{task.assigned_by}</td>
-                    <td>
-                      <button
-                        className="action-btn"
-                        onClick={() => openStatusModal(task)}
-                      >
-                        Review & Update
-                      </button>
+                {activeTasks.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="no-data">
+                      No assigned images currently
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  activeTasks.map((task) => (
+                    <tr key={task.id}>
+                      <td>
+                        <div className="task-image-col">
+                          {task.image_name}
+                        </div>
+                      </td>
+                      <td>{task.task_id}</td>
+                      <td>
+                        <span
+                          className={`status-badge status-${task.status?.replace("_", "-")}`}
+                        >
+                          {task.status === "in_progress"
+                            ? "In Progress"
+                            : task.status === "pending_review"
+                            ? "Pending Review"
+                            : task.status?.charAt(0).toUpperCase() + task.status?.slice(1)}
+                        </span>
+                      </td>
+                      <td>{task.assigned_date ? new Date(task.assigned_date).toLocaleDateString() : "-"}</td>
+                      <td>{task.assigned_by}</td>
+                      <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
+                        {task.notes ? (
+                          <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
+                        ) : (
+                          <span style={{ color: "#999" }}>-</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="action-btn"
+                          onClick={() => openStatusModal(task)}
+                        >
+                          Review & Update
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -165,6 +185,13 @@ export default function AnnotatorDashboard() {
         <div className="modal-overlay">
           <div className="modal-content">
             <h2>Task Status</h2>
+
+            {selectedTask?.notes && (
+              <div style={{ marginBottom: "20px", padding: "15px", backgroundColor: "#f3f4f6", borderRadius: "6px", borderLeft: "4px solid #667eea" }}>
+                <strong style={{ display: "block", marginBottom: "8px" }}>Previous Feedback:</strong>
+                <p style={{ margin: 0, color: "#555", whiteSpace: "pre-wrap" }}>{selectedTask.notes}</p>
+              </div>
+            )}
 
             <div className="status-options">
               <label className="radio-label">

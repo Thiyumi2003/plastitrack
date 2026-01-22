@@ -453,10 +453,10 @@ router.post("/admins", verifyToken, async (req, res) => {
   }
 });
 
-// POST Add image by name only (no file upload)
+// POST Add image with object count
 router.post("/admin/images/add", verifyToken, async (req, res) => {
   try {
-    const { filename, fileSizeMB } = req.body;
+    const { filename, objectsCount } = req.body;
     const adminId = req.user?.id;
 
     if (!filename) {
@@ -467,13 +467,13 @@ router.post("/admin/images/add", verifyToken, async (req, res) => {
       return res.status(401).json({ error: "Admin not authenticated" });
     }
 
-    const sizeBytes = Math.max(0, Number(fileSizeMB) || 0) * 1024 * 1024;
+    const objectCount = Math.max(0, Number(objectsCount) || 0);
 
     const connection = await pool.getConnection();
 
     await connection.execute(
-      "INSERT INTO images (image_name, file_size, status, assigned_to, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
-      [filename, sizeBytes, "pending", adminId]
+      "INSERT INTO images (image_name, status, assigned_to, objects_count, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
+      [filename, "pending", adminId, objectCount]
     );
 
     await connection.release();
@@ -482,6 +482,75 @@ router.post("/admin/images/add", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Add image error:", err);
     res.status(500).json({ error: "Failed to add image" });
+  }
+});
+
+// DELETE image by ID (deletes related tasks due to CASCADE DELETE)
+router.delete("/admin/images/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      // Check if image exists
+      const [imageResult] = await connection.execute(
+        "SELECT id, image_name FROM images WHERE id = ?",
+        [id]
+      );
+
+      if (imageResult.length === 0) {
+        await connection.release();
+        return res.status(404).json({ error: "Image not found" });
+      }
+
+      const imageName = imageResult[0].image_name;
+
+      // Temporarily disable foreign key checks to allow deletion
+      await connection.execute("SET FOREIGN_KEY_CHECKS = 0");
+
+      try {
+        // Delete all tasks related to this image first
+        const [deleteTasksResult] = await connection.execute(
+          "DELETE FROM tasks WHERE image_id = ?",
+          [id]
+        );
+        console.log(`Deleted ${deleteTasksResult.affectedRows} tasks for image ${id}`);
+
+        // Delete the image
+        const [deleteImageResult] = await connection.execute(
+          "DELETE FROM images WHERE id = ?",
+          [id]
+        );
+        console.log(`Deleted image ${id} (${imageName})`);
+
+        // Re-enable foreign key checks
+        await connection.execute("SET FOREIGN_KEY_CHECKS = 1");
+
+        console.log(`Image ${id} (${imageName}) and related tasks deleted by user ${userId}`);
+        await connection.release();
+        res.json({ message: "Image and related tasks deleted successfully", deletedTasks: deleteTasksResult.affectedRows });
+      } catch (err) {
+        // Re-enable foreign key checks even on error
+        try {
+          await connection.execute("SET FOREIGN_KEY_CHECKS = 1");
+        } catch (e) {
+          console.error("Failed to re-enable FK checks:", e);
+        }
+        throw err;
+      }
+    } catch (err) {
+      await connection.release();
+      throw err;
+    }
+  } catch (err) {
+    console.error("Delete image error:", err);
+    res.status(500).json({ error: "Failed to delete image: " + (err.message || JSON.stringify(err)) });
   }
 });
 
@@ -664,12 +733,17 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-        // Get image name for notification
+        // Get image name and admin name for notification
         const [imageData] = await connection.execute(
           `SELECT image_name FROM images WHERE id = ?`,
           [id]
         );
+        const [adminData] = await connection.execute(
+          `SELECT name FROM users WHERE id = ?`,
+          [adminId]
+        );
         const imageName = imageData[0]?.image_name || `Image #${id}`;
+        const adminName = adminData[0]?.name || 'Admin';
 
         await connection.execute(
           `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
@@ -677,12 +751,12 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
           [taskId, id, annotatorId, adminId]
         );
         
-        // Create notification for annotator
+        // Create notification for annotator with clear action instruction
         await createNotification(
           connection,
           annotatorId,
           'image_assigned_annotator',
-          `New image set assigned: ${imageName}`,
+          `🎯 ${adminName} assigned "​${imageName}" to you for annotation | ACTION: Open Dashboard → Click image → Start annotating`,
           id
         );
         
@@ -703,12 +777,17 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
         );
 
         if (existingTesterTask.length === 0) {
-          // Get image name for notification
+          // Get image name and admin name for notification
           const [imageData] = await connection.execute(
             `SELECT image_name FROM images WHERE id = ?`,
             [id]
           );
+          const [adminData] = await connection.execute(
+            `SELECT name FROM users WHERE id = ?`,
+            [adminId]
+          );
           const imageName = imageData[0]?.image_name || `Image #${id}`;
+          const adminName = adminData[0]?.name || 'Admin';
 
           await connection.execute(
             `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
@@ -716,12 +795,12 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
             [taskId, id, testerId, adminId]
           );
           
-          // Create notification for tester
+          // Create notification for tester with clear action instruction
           await createNotification(
             connection,
             testerId,
             'image_assigned_tester',
-            `New image set for review: ${imageName}`,
+            `🔍 ${adminName} assigned "​${imageName}" to you for review/testing | ACTION: Open Dashboard → Click image → Approve or Reject`,
             id
           );
           
@@ -1211,9 +1290,15 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
 
     // Create notifications
     const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
+    const [testerData] = await connection.execute(
+      `SELECT name FROM users WHERE id = ?`,
+      [userId]
+    );
+    const testerName = testerData[0]?.name || 'Tester';
+
     const notificationMessage = status === 'approved' 
-      ? `Image "${imageName}" approved by tester` 
-      : `Image "${imageName}" rejected by tester`;
+      ? `✅ ${testerName} approved "​${imageName}" | ACTION: Check your Dashboard for next steps` 
+      : `❌ ${testerName} rejected "​${imageName}" | ACTION: Review feedback and resubmit if needed`;
 
     // Notify annotator about the review result
     if (annotatorId) {
@@ -1228,14 +1313,14 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
 
     // Notify all admins
     const [admins] = await connection.execute(
-      `SELECT id FROM users WHERE role = 'admin'`
+      `SELECT id, name FROM users WHERE role = 'admin'`
     );
     for (const admin of admins) {
       await createNotification(
         connection,
         admin.id,
         notificationType,
-        `Tester ${status} image: "${imageName}"`,
+        `📋 ${testerName} ${status} image: "​${imageName}" | Assigned by: ${admin.name} | ACTION: Check Dashboard for details`,
         imageId
       );
     }
@@ -1535,9 +1620,15 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
 
     // Create notifications
     const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
+    const [melbourneUserData] = await connection.execute(
+      `SELECT name FROM users WHERE id = ?`,
+      [userId]
+    );
+    const melbourneName = melbourneUserData[0]?.name || 'Melbourne User';
+
     const notificationMessage = status === 'approved' 
-      ? `Dataset "${imageName}" approved by Melbourne user for production` 
-      : `Dataset "${imageName}" rejected by Melbourne user`;
+      ? `✅ ${melbourneName} approved "​${imageName}" for production | ACTION: Dataset is ready for use` 
+      : `❌ ${melbourneName} rejected "​${imageName}" | ACTION: Review feedback in Dashboard`;
 
     // Notify annotator
     if (annotatorId) {
@@ -1563,14 +1654,14 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
 
     // Notify all admins
     const [admins] = await connection.execute(
-      `SELECT id FROM users WHERE role IN ('admin', 'super_admin')`
+      `SELECT id, name FROM users WHERE role IN ('admin', 'super_admin')`
     );
     for (const admin of admins) {
       await createNotification(
         connection,
         admin.id,
         notificationType,
-        `Melbourne user ${status} dataset: "${imageName}"`,
+        `📊 ${melbourneName} ${status} dataset: "​${imageName}" | ACTION: Check Dashboard for final status`,
         id
       );
     }
