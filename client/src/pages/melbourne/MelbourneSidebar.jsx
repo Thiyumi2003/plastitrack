@@ -40,7 +40,7 @@ export default function MelbourneSidebar() {
             <div className="user-avatar">{user.name?.charAt(0).toUpperCase()}</div>
             <div className="user-info">
               <div className="user-name">{user.name}</div>
-              <div className="user-email">{user.email}</div>
+              <div className="user-role">{user.role || "melbourne_user"}</div>
             </div>
             <div className="sidebar-notifications">
               <Notifications />
