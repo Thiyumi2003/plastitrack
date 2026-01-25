@@ -9,11 +9,14 @@ import ManageAdmins from "./pages/superadmin/ManageAdmins";
 import ViewAllUsers from "./pages/superadmin/ViewAllUsers";
 import Reports from "./pages/superadmin/Reports";
 import ManagePayments from "./pages/superadmin/ManagePayments";
+import ManageAdminWorkHours from "./pages/superadmin/ManageAdminWorkHours";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ManageImages from "./pages/admin/ManageImages";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminReports from "./pages/admin/AdminReports";
 import AdminPayments from "./pages/admin/AdminPayments";
+import PaymentEligibility from "./pages/admin/PaymentEligibility";
+import AdminWorkHours from "./pages/admin/AdminWorkHours";
 import AnnotatorDashboard from "./pages/annotator/AnnotatorDashboard";
 import AnnotatorProfile from "./pages/annotator/AnnotatorProfile";
 import AnnotatorPayments from "./pages/annotator/AnnotatorPayments";
@@ -26,6 +29,7 @@ import MelbourneDashboard from "./pages/melbourne/MelbourneDashboard";
 import MelbourneProfile from "./pages/melbourne/MelbourneProfile";
 import MelbourneAdminDashboard from "./pages/melbourne/MelbourneAdminDashboard";
 import MelbourneManageImages from "./pages/melbourne/MelbourneManageImages";
+import MelbourneReports from "./pages/melbourne/MelbourneReports";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -107,6 +111,14 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/admin-work-hours"
+          element={
+            <ProtectedRoute requiredRole="super_admin">
+              <ManageAdminWorkHours />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Admin Dashboard Routes */}
         <Route
@@ -146,6 +158,22 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="admin">
               <AdminPayments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/payment-eligibility"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <PaymentEligibility />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/work-hours"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminWorkHours />
             </ProtectedRoute>
           }
         />
@@ -240,6 +268,14 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="melbourne_user">
               <MelbourneManageImages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/melbourne/reports"
+          element={
+            <ProtectedRoute requiredRole="melbourne_user">
+              <MelbourneReports />
             </ProtectedRoute>
           }
         />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut } from "lucide-react";
+import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, DollarSign, Clock } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
@@ -23,6 +23,8 @@ export default function AdminSidebar() {
     { name: "Users", icon: Users, path: "/admin/users" },
     { name: "Reports", icon: FileText, path: "/admin/reports" },
     { name: "Payments", icon: Wallet, path: "/admin/payments" },
+    { name: "Payment Eligibility", icon: DollarSign, path: "/admin/payment-eligibility" },
+    { name: "My Work Hours", icon: Clock, path: "/admin/work-hours" },
   ];
 
   return (

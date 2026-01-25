@@ -97,7 +97,7 @@ router.get("/users", verifyToken, async (req, res) => {
     const { role } = req.query;
     const connection = await pool.getConnection();
 
-    let query = "SELECT id, name, email, role, created_at FROM users WHERE role != 'super_admin'";
+    let query = "SELECT id, name, email, role, is_active, created_at FROM users WHERE role != 'super_admin'";
     const params = [];
 
     if (role) {
@@ -115,6 +115,128 @@ router.get("/users", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Users list error:", err);
     res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// PUT Edit user details
+router.put("/users/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, role, hourly_rate } = req.body;
+
+    const allowedRoles = ["super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    if (!name || !email || !role) {
+      return res.status(400).json({ error: "Name, email, and role are required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Check if email is already taken by another user
+    const [existingUser] = await connection.execute(
+      "SELECT id FROM users WHERE email = ? AND id != ?",
+      [email, id]
+    );
+
+    if (existingUser.length > 0) {
+      await connection.release();
+      return res.status(400).json({ error: "Email already in use by another user" });
+    }
+
+    // Build update query
+    let query = "UPDATE users SET name = ?, email = ?, role = ?";
+    const params = [name, email, role];
+
+    if (hourly_rate !== undefined && role === "admin") {
+      query += ", hourly_rate = ?";
+      params.push(hourly_rate);
+    }
+
+    query += " WHERE id = ?";
+    params.push(id);
+
+    await connection.execute(query, params);
+    await connection.release();
+
+    res.json({ message: "User updated successfully" });
+  } catch (err) {
+    console.error("Update user error:", err);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
+// PUT Toggle user active status (enable/disable)
+router.put("/users/:id/status", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    const allowedRoles = ["super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    if (is_active === undefined) {
+      return res.status(400).json({ error: "is_active status is required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      "UPDATE users SET is_active = ? WHERE id = ?",
+      [is_active, id]
+    );
+
+    await connection.release();
+
+    res.json({ 
+      message: is_active ? "User account activated" : "User account disabled",
+      is_active 
+    });
+  } catch (err) {
+    console.error("Toggle user status error:", err);
+    res.status(500).json({ error: "Failed to update user status" });
+  }
+});
+
+// DELETE User (super admin only)
+router.delete("/users/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const allowedRoles = ["super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Check if user exists and is not super admin
+    const [user] = await connection.execute(
+      "SELECT role FROM users WHERE id = ?",
+      [id]
+    );
+
+    if (user.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user[0].role === "super_admin") {
+      await connection.release();
+      return res.status(403).json({ error: "Cannot delete super admin" });
+    }
+
+    await connection.execute("DELETE FROM users WHERE id = ?", [id]);
+    await connection.release();
+
+    res.json({ message: "User deleted successfully" });
+  } catch (err) {
+    console.error("Delete user error:", err);
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
 
@@ -173,14 +295,19 @@ router.get("/reports", verifyToken, async (req, res) => {
         u1.name as assigned_to,
         u2.name as annotator,
         u3.name as tester,
+        u4.name as melbourne_user,
         i.status,
         i.created_at,
         i.updated_at,
-        i.objects_count
+        i.objects_count,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
+        i.feedback as melbourne_feedback
       FROM images i
       LEFT JOIN users u1 ON i.assigned_to = u1.id
       LEFT JOIN users u2 ON i.annotator_id = u2.id
       LEFT JOIN users u3 ON i.tester_id = u3.id
+      LEFT JOIN users u4 ON i.melbourne_user_id = u4.id
       ORDER BY i.created_at DESC
       LIMIT 50
     `);
@@ -196,6 +323,220 @@ router.get("/reports", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Reports error:", err);
     res.status(500).json({ error: "Failed to fetch reports" });
+  }
+});
+
+// GET Performance overview for annotators/testers with date filters
+router.get("/performance/users", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { role, startDate, endDate, period } = req.query;
+
+    // Default to current month if period=month and no explicit dates
+    let start = startDate;
+    let end = endDate;
+    if (!start && period === "month") {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      start = first.toISOString().slice(0, 10);
+    }
+
+    const connection = await pool.getConnection();
+
+    // Build query with filters
+    let whereClause = "WHERE u.role IN ('annotator', 'tester')";
+    const params = [];
+
+    if (role && ["annotator", "tester"].includes(role)) {
+      whereClause += " AND u.role = ?";
+      params.push(role);
+    }
+
+    let taskFilter = "";
+    if (start) {
+      taskFilter += " AND t.updated_at >= ?";
+      params.push(start);
+    }
+    if (end) {
+      taskFilter += " AND t.updated_at <= ?";
+      params.push(end);
+    }
+
+    const query = `
+      SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        COALESCE(COUNT(DISTINCT t.id), 0) as tasks_total,
+        COALESCE(SUM(CASE WHEN t.status IN ('pending','pending_review','in_progress') THEN 1 ELSE 0 END), 0) as tasks_active,
+        COALESCE(SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END), 0) as tasks_completed,
+        COALESCE(SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END), 0) as tasks_approved,
+        COALESCE(SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END), 0) as tasks_rejected,
+        MAX(t.updated_at) as last_task_activity,
+        u.last_login,
+        (SELECT COUNT(*) FROM login_logs l WHERE l.user_id = u.id AND l.login_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)) as login_count
+      FROM users u
+      LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type IN ('annotation', 'testing') ${taskFilter}
+      ${whereClause}
+      GROUP BY u.id, u.name, u.email, u.role, u.last_login
+      ORDER BY tasks_approved DESC, tasks_completed DESC
+    `;
+
+    const [rows] = await connection.execute(query, params);
+    await connection.release();
+
+    res.json({
+      filters: { startDate: start || null, endDate: end || null, role: role || null },
+      users: rows,
+    });
+  } catch (err) {
+    console.error("Performance users error:", err);
+    res.status(500).json({ error: "Failed to fetch performance data" });
+  }
+});
+
+// GET System performance snapshot (lightweight, near real-time)
+router.get("/performance/system", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [statusDistribution] = await connection.execute(`
+      SELECT status, COUNT(*) as count FROM images GROUP BY status
+    `);
+
+    const [tasks24h] = await connection.execute(`
+      SELECT status, COUNT(*) as count
+      FROM tasks
+      WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      GROUP BY status
+    `);
+
+    const [logins24h] = await connection.execute(`
+      SELECT role, COUNT(*) as count
+      FROM login_logs
+      WHERE login_time >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      GROUP BY role
+    `);
+
+    const [images7d] = await connection.execute(`
+      SELECT DATE(uploaded_at) as date, COUNT(*) as total
+      FROM images
+      WHERE uploaded_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY DATE(uploaded_at)
+      ORDER BY date ASC
+    `);
+
+    await connection.release();
+
+    res.json({
+      statusDistribution,
+      tasksLast24h: tasks24h,
+      loginsLast24h: logins24h,
+      imagesLast7d: images7d,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("Performance system error:", err);
+    res.status(500).json({ error: "Failed to fetch system performance" });
+  }
+});
+
+// Export performance users as CSV
+router.get("/performance/users/export", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { role, startDate, endDate, period } = req.query;
+    let start = startDate;
+    let end = endDate;
+    if (!start && period === "month") {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      start = first.toISOString().slice(0, 10);
+    }
+
+    const whereParts = ["u.role IN ('annotator','tester')"];
+    const params = [];
+    if (role && ["annotator", "tester"].includes(role)) {
+      whereParts.push("u.role = ?");
+      params.push(role);
+    }
+
+    let taskDateClause = "";
+    let loginDateClause = "";
+    if (start) {
+      taskDateClause += " AND t.updated_at >= ?";
+      loginDateClause += " AND l.login_time >= ?";
+      taskParams.push(start);
+      loginParams.push(start);
+    }
+    if (end) {
+      taskDateClause += " AND t.updated_at <= ?";
+      loginDateClause += " AND l.login_time <= ?";
+      taskParams.push(end);
+      loginParams.push(end);
+    }
+
+    const query = `
+      SELECT 
+        u.name,
+        u.email,
+        u.role,
+        COALESCE(COUNT(t.id), 0) as tasks_total,
+        COALESCE(SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END), 0) as tasks_completed,
+        COALESCE(SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END), 0) as tasks_approved,
+        COALESCE(SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END), 0) as tasks_rejected,
+        MAX(t.updated_at) as last_task_activity,
+        (SELECT MAX(l.login_time) FROM login_logs l WHERE l.user_id = u.id ${loginDateClause}) as last_login,
+        (SELECT COUNT(*) FROM login_logs l WHERE l.user_id = u.id ${loginDateClause}) as login_count
+      FROM users u
+      LEFT JOIN tasks t ON u.id = t.user_id ${taskDateClause} AND t.task_type IN ('annotation', 'testing')
+      WHERE ${whereParts.join(" AND ")}
+      GROUP BY u.id, u.name, u.email, u.role
+      ORDER BY tasks_approved DESC, tasks_completed DESC;
+    `;
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(query, [...params, ...taskParams, ...loginParams, ...loginParams]);
+    await connection.release();
+
+    const header = ["Name", "Email", "Role", "Tasks Total", "Completed", "Approved", "Rejected", "Last Task Activity", "Last Login", "Login Count"];
+    const csvLines = [header.join(",")];
+    rows.forEach((r) => {
+      csvLines.push([
+        r.name || "",
+        r.email || "",
+        r.role || "",
+        r.tasks_total || 0,
+        r.tasks_completed || 0,
+        r.tasks_approved || 0,
+        r.tasks_rejected || 0,
+        r.last_task_activity ? new Date(r.last_task_activity).toISOString() : "",
+        r.last_login ? new Date(r.last_login).toISOString() : "",
+        r.login_count || 0,
+      ].join(","));
+    });
+
+    const csv = csvLines.join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=performance.csv");
+    res.send(csv);
+  } catch (err) {
+    console.error("Performance export error:", err);
+    res.status(500).json({ error: "Failed to export performance data" });
   }
 });
 
@@ -338,6 +679,8 @@ router.get("/model-payments", verifyToken, async (req, res) => {
 });
 
 // POST Add payment
+// Note: Payments should only be created for tasks where eligible_for_payment = TRUE
+// This ensures fairness: if work is rejected and reassigned, only the successful annotator gets paid
 router.post("/payments", verifyToken, async (req, res) => {
   try {
     const { user_id, amount, model_type, images_completed, payment_method, status } = req.body;
@@ -363,6 +706,395 @@ router.post("/payments", verifyToken, async (req, res) => {
   }
 });
 
+// ===== ADMIN WORK HOURS TRACKING =====
+
+// POST Log admin work hours
+router.post("/admin/work-hours", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    const { date, hours_worked, task_description } = req.body;
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
+    }
+
+    // Verify user is admin
+    const connection = await pool.getConnection();
+    const [userCheck] = await connection.execute(
+      "SELECT role FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    if (userCheck.length === 0 || userCheck[0].role !== "admin") {
+      await connection.release();
+      return res.status(403).json({ error: "Only admins can log work hours" });
+    }
+
+    if (!date || !hours_worked) {
+      await connection.release();
+      return res.status(400).json({ error: "Date and hours worked are required" });
+    }
+
+    if (hours_worked < 0 || hours_worked > 24) {
+      await connection.release();
+      return res.status(400).json({ error: "Hours worked must be between 0 and 24" });
+    }
+
+    // Check if entry already exists for this date (manual entries only)
+    const [existing] = await connection.execute(
+      "SELECT id, is_auto_tracked FROM work_hours WHERE admin_id = ? AND date = ? AND is_auto_tracked = FALSE",
+      [adminId, date]
+    );
+
+    if (existing.length > 0) {
+      // Update existing manual entry
+      await connection.execute(
+        "UPDATE work_hours SET hours_worked = ?, task_description = ?, updated_at = NOW() WHERE id = ?",
+        [hours_worked, task_description || null, existing[0].id]
+      );
+    } else {
+      // Insert new manual entry
+      await connection.execute(
+        "INSERT INTO work_hours (admin_id, date, hours_worked, task_description, is_auto_tracked) VALUES (?, ?, ?, ?, FALSE)",
+        [adminId, date, hours_worked, task_description || null]
+      );
+    }
+
+    await connection.release();
+
+    res.status(201).json({ message: "Work hours logged successfully" });
+  } catch (err) {
+    console.error("Log work hours error:", err);
+    res.status(500).json({ error: "Failed to log work hours" });
+  }
+});
+
+// GET Admin work hours
+router.get("/admin/work-hours", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    const { start_date, end_date, status } = req.query;
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    let query = `
+      SELECT 
+        wh.id,
+        wh.date,
+        wh.hours_worked,
+        wh.task_description,
+        wh.status,
+        wh.is_auto_tracked,
+        wh.session_start,
+        wh.session_end,
+        wh.created_at,
+        wh.updated_at,
+        u.name as approved_by_name
+      FROM work_hours wh
+      LEFT JOIN users u ON wh.approved_by = u.id
+      WHERE wh.admin_id = ?
+    `;
+    const params = [adminId];
+
+    if (start_date) {
+      query += " AND wh.date >= ?";
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      query += " AND wh.date <= ?";
+      params.push(end_date);
+    }
+
+    if (status) {
+      query += " AND wh.status = ?";
+      params.push(status);
+    }
+
+    query += " ORDER BY wh.date DESC";
+
+    const [workHours] = await connection.execute(query, params);
+
+    // Get summary
+    const [summary] = await connection.execute(
+      `SELECT 
+        COALESCE(SUM(hours_worked), 0) as total_hours,
+        COALESCE(SUM(CASE WHEN status = 'approved' THEN hours_worked ELSE 0 END), 0) as approved_hours,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN hours_worked ELSE 0 END), 0) as pending_hours
+      FROM work_hours 
+      WHERE admin_id = ?`,
+      [adminId]
+    );
+
+    await connection.release();
+
+    res.json({
+      workHours,
+      summary: summary[0],
+    });
+  } catch (err) {
+    console.error("Get work hours error:", err);
+    res.status(500).json({ error: "Failed to fetch work hours" });
+  }
+});
+
+// GET All admin work hours (Super Admin only)
+router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { start_date, end_date, status, admin_id } = req.query;
+    const connection = await pool.getConnection();
+
+    let query = `
+      SELECT 
+        wh.id,
+        wh.admin_id,
+        u.name as admin_name,
+        u.email as admin_email,
+        u.hourly_rate,
+        wh.date,
+        wh.hours_worked,
+        wh.task_description,
+        wh.status,
+        wh.created_at,
+        approver.name as approved_by_name,
+        (wh.hours_worked * u.hourly_rate) as calculated_payment
+      FROM work_hours wh
+      JOIN users u ON wh.admin_id = u.id
+      LEFT JOIN users approver ON wh.approved_by = approver.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (admin_id) {
+      query += " AND wh.admin_id = ?";
+      params.push(admin_id);
+    }
+
+    if (start_date) {
+      query += " AND wh.date >= ?";
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      query += " AND wh.date <= ?";
+      params.push(end_date);
+    }
+
+    if (status) {
+      query += " AND wh.status = ?";
+      params.push(status);
+    }
+
+    query += " ORDER BY wh.date DESC, u.name ASC";
+
+    const [workHours] = await connection.execute(query, params);
+
+    // Get summary by admin
+    const [adminSummary] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.hourly_rate,
+        COALESCE(SUM(wh.hours_worked), 0) as total_hours,
+        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked ELSE 0 END), 0) as approved_hours,
+        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked * u.hourly_rate ELSE 0 END), 0) as total_payment_due
+      FROM users u
+      LEFT JOIN work_hours wh ON u.id = wh.admin_id
+      WHERE u.role = 'admin'
+      GROUP BY u.id, u.name, u.email, u.hourly_rate
+      ORDER BY total_hours DESC`
+    );
+
+    await connection.release();
+
+    res.json({
+      workHours,
+      adminSummary,
+    });
+  } catch (err) {
+    console.error("Get all work hours error:", err);
+    res.status(500).json({ error: "Failed to fetch work hours" });
+  }
+});
+
+// PUT Approve/Reject admin work hours (Super Admin only)
+router.put("/superadmin/work-hours/:id/status", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const superAdminId = req.user?.id;
+
+    const allowedRoles = ["super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    if (!["approved", "rejected", "pending"].includes(status)) {
+      return res.status(400).json({ error: "Invalid status. Must be approved, rejected, or pending" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      "UPDATE work_hours SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?",
+      [status, superAdminId, id]
+    );
+
+    await connection.release();
+
+    res.json({ message: `Work hours ${status}` });
+  } catch (err) {
+    console.error("Update work hours status error:", err);
+    res.status(500).json({ error: "Failed to update work hours status" });
+  }
+});
+
+// DELETE Admin work hours entry
+router.delete("/admin/work-hours/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+
+    const connection = await pool.getConnection();
+
+    // Verify ownership or super admin - cannot delete auto-tracked entries
+    if (req.user?.role !== "super_admin") {
+      const [workHour] = await connection.execute(
+        "SELECT admin_id, is_auto_tracked FROM work_hours WHERE id = ?",
+        [id]
+      );
+
+      if (workHour.length === 0 || workHour[0].admin_id !== adminId) {
+        await connection.release();
+        return res.status(403).json({ error: "Not authorized to delete this entry" });
+      }
+
+      if (workHour[0].is_auto_tracked) {
+        await connection.release();
+        return res.status(403).json({ error: "Cannot delete auto-tracked entries. Please contact administrator." });
+      }
+    }
+
+    await connection.execute("DELETE FROM work_hours WHERE id = ?", [id]);
+    await connection.release();
+
+    res.json({ message: "Work hours entry deleted" });
+  } catch (err) {
+    console.error("Delete work hours error:", err);
+    res.status(500).json({ error: "Failed to delete work hours" });
+  }
+});
+
+// PUT Toggle auto-tracking for admin
+router.put("/admin/toggle-auto-tracking", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    const { auto_track_hours } = req.body;
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Verify user is admin
+    const [userCheck] = await connection.execute(
+      "SELECT role FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    if (userCheck.length === 0 || userCheck[0].role !== "admin") {
+      await connection.release();
+      return res.status(403).json({ error: "Only admins can toggle auto-tracking" });
+    }
+
+    await connection.execute(
+      "UPDATE users SET auto_track_hours = ? WHERE id = ?",
+      [auto_track_hours, adminId]
+    );
+
+    await connection.release();
+
+    res.json({ 
+      message: auto_track_hours ? "Auto-tracking enabled" : "Auto-tracking disabled",
+      auto_track_hours 
+    });
+  } catch (err) {
+    console.error("Toggle auto-tracking error:", err);
+    res.status(500).json({ error: "Failed to toggle auto-tracking" });
+  }
+});
+
+// GET Admin sessions for viewing tracking details
+router.get("/admin/sessions", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    const { start_date, end_date, limit = 50 } = req.query;
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    let query = `
+      SELECT 
+        id,
+        login_time,
+        logout_time,
+        session_duration,
+        is_processed,
+        ip_address,
+        created_at
+      FROM admin_sessions
+      WHERE admin_id = ?
+    `;
+    const params = [adminId];
+
+    if (start_date) {
+      query += " AND DATE(login_time) >= ?";
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      query += " AND DATE(login_time) <= ?";
+      params.push(end_date);
+    }
+
+    query += " ORDER BY login_time DESC LIMIT ?";
+    params.push(parseInt(limit));
+
+    const [sessions] = await connection.execute(query, params);
+
+    // Get user's auto-tracking status
+    const [user] = await connection.execute(
+      "SELECT auto_track_hours FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    await connection.release();
+
+    res.json({
+      sessions,
+      auto_track_hours: user[0]?.auto_track_hours || false,
+    });
+  } catch (err) {
+    console.error("Get sessions error:", err);
+    res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+
+// ===== END ADMIN WORK HOURS TRACKING =====
 // PUT Update payment status
 router.put("/payments/:id", verifyToken, async (req, res) => {
   try {
@@ -621,7 +1353,6 @@ router.get("/admin/images", verifyToken, async (req, res) => {
         i.objects_count,
         i.uploaded_at,
         i.created_at,
-        i.file_size,
         i.assigned_to,
         i.annotator_id,
         i.tester_id,
@@ -629,7 +1360,10 @@ router.get("/admin/images", verifyToken, async (req, res) => {
         u_admin.name as admin_name,
         u_ann.name as annotator_name,
         u_test.name as tester_name,
-        u_mel.name as melbourne_name
+        u_mel.name as melbourne_name,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
+        i.feedback as melbourne_feedback
        FROM images i
        LEFT JOIN users u_admin ON i.assigned_to = u_admin.id
        LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
@@ -688,6 +1422,13 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
 
     if (!adminId) {
       return res.status(401).json({ error: "Admin user not authenticated" });
+
+        // Get current image status to check if it's a reassignment after rejection
+        const [currentImage] = await connection.execute(
+          `SELECT status, annotator_id FROM images WHERE id = ?`,
+          [id]
+        );
+        const isRejectedReassignment = currentImage[0]?.status === 'rejected' && annotatorId;
     }
 
     const connection = await pool.getConnection();
@@ -699,6 +1440,11 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (annotatorId) {
       fields.push("annotator_id = ?");
       params.push(annotatorId);
+          // Reset status to in_progress when reassigning after rejection
+          if (isRejectedReassignment && !status) {
+            fields.push("status = ?");
+            params.push("in_progress");
+          }
     }
     if (testerId) {
       fields.push("tester_id = ?");
@@ -819,6 +1565,61 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
   }
 });
 
+// GET Payment Eligibility Report
+// Shows which annotators are eligible for payment on each task
+router.get("/admin/payment-eligibility", verifyToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    // Get all tasks with payment eligibility status
+    const [tasks] = await connection.execute(`
+      SELECT 
+        t.id,
+        t.task_id,
+        i.image_name,
+        i.id as image_id,
+        u.name as annotator_name,
+        u.email as annotator_email,
+        t.status,
+        t.eligible_for_payment,
+        t.assigned_date,
+        t.completed_date,
+        ua.name as assigned_by_name,
+        (SELECT COUNT(*) FROM tasks t2 
+         WHERE t2.image_id = i.id 
+         AND t2.task_type = 'annotation') as total_assignments
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN users u ON t.user_id = u.id
+      LEFT JOIN users ua ON t.assigned_by = ua.id
+      WHERE t.task_type = 'annotation'
+      ORDER BY i.id, t.assigned_date DESC
+    `);
+
+    // Group by image to show reassignment history
+    const imageGroups = {};
+    tasks.forEach(task => {
+      if (!imageGroups[task.image_id]) {
+        imageGroups[task.image_id] = {
+          image_name: task.image_name,
+          image_id: task.image_id,
+          assignments: []
+        };
+      }
+      imageGroups[task.image_id].assignments.push(task);
+    });
+
+    await connection.release();
+    res.json({ 
+      tasks,
+      imageGroups: Object.values(imageGroups)
+    });
+  } catch (err) {
+    console.error("Payment eligibility report error:", err);
+    res.status(500).json({ error: "Failed to fetch payment eligibility report" });
+  }
+});
+
 // GET Admin Payments
 router.get("/admin/payments", verifyToken, async (req, res) => {
   try {
@@ -928,12 +1729,14 @@ router.get("/annotator/tasks", verifyToken, async (req, res) => {
         i.image_name,
         t.status,
         u.name as assigned_by,
-        t.notes,
+        t.notes as annotator_notes,
+        i.feedback as melbourne_feedback,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
         t.assigned_date
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
       LEFT JOIN users u ON t.assigned_by = u.id
-      WHERE t.user_id = ?
+      WHERE t.user_id = ? AND t.task_type = 'annotation'
       AND t.status IN ('pending', 'in_progress', 'pending_review', 'completed')
       ORDER BY t.assigned_date ASC
     `, [userId]);
@@ -1010,11 +1813,14 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
         t.task_id,
         i.image_name,
         t.status,
+        t.notes as annotator_notes,
+        i.feedback as melbourne_feedback,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
         t.assigned_date,
         t.completed_date
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
-      WHERE t.user_id = ?
+      WHERE t.user_id = ? AND t.task_type = 'annotation'
       ORDER BY t.assigned_date DESC
     `, [userId]);
 
@@ -1040,8 +1846,10 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
       [userId]
     );
 
+    // Only count completed tasks that are eligible for payment (not from rejected work)
     const [tasksCompleted] = await connection.execute(
-      `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'completed'`,
+      `SELECT COUNT(*) as count FROM tasks 
+       WHERE user_id = ? AND status = 'completed' AND eligible_for_payment = TRUE`,
       [userId]
     );
 
@@ -1221,7 +2029,9 @@ router.get("/tester/tasks", verifyToken, async (req, res) => {
         i.objects_count,
         t.status,
         t.assigned_date,
-        t.notes,
+        t.notes as tester_notes,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
+        i.feedback as melbourne_feedback,
         u.name as assigned_by_name
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
@@ -1274,6 +2084,16 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
     const imageName = taskResult[0].image_name || `Image #${imageId}`;
     const annotatorId = taskResult[0].annotator_id;
     console.log(`Tester ${userId} reviewing task ${id} with status ${status}`);
+
+    // If rejecting, mark all previous annotation tasks for this image as ineligible for payment
+    if (status === 'rejected') {
+      await connection.execute(
+        `UPDATE tasks SET eligible_for_payment = FALSE 
+         WHERE image_id = ? AND task_type = 'annotation' AND status IN ('completed', 'pending_review', 'rejected')`,
+        [imageId]
+      );
+      console.log(`Marked previous annotation tasks for image ${imageId} as ineligible for payment`);
+    }
 
     // Update task status and set completed_date
     await connection.execute(
@@ -1399,12 +2219,14 @@ router.get("/tester/task-history", verifyToken, async (req, res) => {
         t.task_type,
         t.assigned_date,
         t.completed_date,
-        t.notes,
+        t.notes as tester_notes,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
+        i.feedback as melbourne_feedback,
         u.name as assigned_by_name
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
       LEFT JOIN users u ON t.assigned_by = u.id
-      WHERE t.user_id = ? AND (t.task_type = 'testing' OR t.task_type IS NULL)
+      WHERE t.user_id = ? AND t.task_type = 'testing'
       ORDER BY t.assigned_date DESC`,
       [userId]
     );
@@ -1550,7 +2372,9 @@ router.get("/melbourne/datasets", verifyToken, async (req, res) => {
         i.updated_at,
         u_ann.name as annotator_name,
         u_test.name as tester_name,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
         t.notes as tester_feedback,
+        i.feedback as melbourne_feedback,
         t.completed_date as tester_review_date
       FROM images i
       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
@@ -1691,10 +2515,12 @@ router.get("/melbourne/recent-reviews", verifyToken, async (req, res) => {
         i.image_name,
         i.status,
         i.objects_count,
-        i.feedback,
+        i.feedback as melbourne_feedback,
         i.updated_at,
         u_ann.name as annotator_name,
-        u_test.name as tester_name
+        u_test.name as tester_name,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback
       FROM images i
       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
       LEFT JOIN users u_test ON i.tester_id = u_test.id
@@ -1817,6 +2643,71 @@ router.put("/notifications/mark-all-read", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Mark all notifications read error:", err);
     res.status(500).json({ error: "Failed to mark notifications" });
+  }
+});
+
+// GET Annotated Images and Hours by Date (PowerBI-style detailed report)
+router.get("/detailed-annotations", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate, role } = req.query;
+
+    let whereClause = "WHERE 1=1";
+    const params = [];
+
+    if (startDate) {
+      whereClause += " AND DATE(t.updated_at) >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND DATE(t.updated_at) <= ?";
+      params.push(endDate);
+    }
+
+    if (role && role !== "all" && ["annotator", "tester"].includes(role)) {
+      whereClause += " AND u.role = ?";
+      params.push(role);
+    } else {
+      whereClause += " AND u.role IN ('annotator', 'tester')";
+    }
+
+    const query = `
+      SELECT 
+        DATE(t.updated_at) as date,
+        COUNT(DISTINCT CASE WHEN t.task_type = 'annotation' THEN t.image_id END) as annotated_images,
+        ROUND(SUM(CASE WHEN t.task_type = 'annotation' THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) / 60 ELSE 0 END), 2) as annotation_hrs,
+        ROUND(AVG(CASE WHEN t.task_type = 'annotation' THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) / 60 ELSE NULL END), 2) as avg_annotation_hrs_per_image,
+        COUNT(DISTINCT CASE WHEN t.task_type = 'testing' THEN t.image_id END) as verified_images,
+        ROUND(SUM(CASE WHEN t.task_type = 'testing' THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) / 60 ELSE 0 END), 2) as verification_hrs,
+        ROUND(AVG(CASE WHEN t.task_type = 'testing' THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) / 60 ELSE NULL END), 2) as avg_verification_hrs_per_image,
+        COUNT(DISTINCT CASE WHEN t.task_type = 'annotation' AND t.status = 'approved' THEN t.image_id END) as approved_annotations,
+        ROUND(
+          (COUNT(DISTINCT CASE WHEN t.task_type = 'annotation' AND t.status = 'approved' THEN t.image_id END) * 100.0) / 
+          NULLIF(COUNT(DISTINCT CASE WHEN t.task_type = 'annotation' THEN t.image_id END), 0), 
+          2
+        ) as annotation_approval_rate
+      FROM tasks t
+      JOIN users u ON t.user_id = u.id
+      ${whereClause}
+      GROUP BY DATE(t.updated_at)
+      ORDER BY date DESC
+    `;
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(query, params);
+    await connection.release();
+
+    res.json({
+      data: rows,
+      filters: { startDate, endDate, role },
+    });
+  } catch (err) {
+    console.error("Detailed annotations error:", err);
+    res.status(500).json({ error: "Failed to fetch annotation details" });
   }
 });
 

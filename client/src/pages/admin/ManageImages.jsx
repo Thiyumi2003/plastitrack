@@ -42,6 +42,9 @@ export default function ManageImages() {
 
   const handleAssignAnnotator = async (imageId, userId) => {
     if (!userId) return;
+      const image = images.find(img => img.id === imageId);
+      const isReassignment = image?.status === "rejected";
+      
     try {
       const selectedUser = users.annotators.find(u => u.id.toString() === userId.toString());
       // Optimistically update UI
@@ -56,6 +59,11 @@ export default function ManageImages() {
         { annotatorId: userId, status: "in_progress" },
         { headers: getAuthHeader() }
       );
+      
+            if (isReassignment) {
+              alert(`✅ Image successfully reassigned to ${selectedUser?.name}. The previous annotator will not receive payment for this work.`);
+            }
+      
       fetchData();
     } catch (err) {
       alert(err.response?.data?.error || "Failed to assign annotator");
@@ -340,6 +348,36 @@ export default function ManageImages() {
                       </select>
                     </div>
                   )}
+                </>
+              )}
+
+              {img.status === "rejected" && (
+                <>
+                  <div className="assigned-info">
+                    <div className="assigned-user">📝 Previous Annotator: {img.annotator_name || "N/A"}</div>
+                    <div className="assigned-user" style={{ color: "#ef4444" }}>❌ Rejected by: {img.tester_name || "N/A"}</div>
+                  </div>
+                  {img.feedback && (
+                    <div className="feedback-box" style={{ backgroundColor: "#fee2e2", borderColor: "#ef4444" }}>
+                      <strong>Rejection Reason:</strong>
+                      <p>{img.feedback}</p>
+                    </div>
+                  )}
+                  <div className="image-actions">
+                    <select
+                      className="assign-select"
+                      onChange={(e) => handleAssignAnnotator(img.id, e.target.value)}
+                      defaultValue=""
+                      style={{ borderColor: "#f59e0b", backgroundColor: "#fffbeb" }}
+                    >
+                      <option value="">🔄 Reassign to Annotator...</option>
+                      {users.annotators.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </>
               )}
 

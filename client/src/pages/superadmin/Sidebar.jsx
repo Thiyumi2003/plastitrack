@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, Users, BarChart3, CreditCard, Settings, LogOut } from "lucide-react";
+import { Menu, X, LayoutDashboard, Users, BarChart3, CreditCard, Settings, LogOut, Clock } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "./sidebar.css";
@@ -17,6 +17,7 @@ export default function Sidebar() {
     { label: "View All Users", icon: Users, path: "/view-users" },
     { label: "Reports", icon: BarChart3, path: "/reports" },
     { label: "Manage Payments", icon: CreditCard, path: "/payments" },
+    { label: "Admin Work Hours", icon: Clock, path: "/admin-work-hours" },
   ];
 
   const handleLogout = () => {

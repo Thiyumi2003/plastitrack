@@ -220,6 +220,11 @@
   color: #0f5132;
 }
 
+.status-inactive {
+  background-color: #e2e3e5;
+  color: #383d41;
+}
+
 .status-paid {
   background-color: #d1e7dd;
   color: #0f5132;
@@ -365,6 +370,34 @@
 
 .btn-delete:hover {
   background-color: #ffebee;
+}
+
+.btn-toggle {
+  background-color: transparent;
+  padding: 8px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.btn-disable {
+  color: #ed6c02;
+}
+
+.btn-disable:hover {
+  background-color: #fff4e5;
+}
+
+.btn-enable {
+  color: #2e7d32;
+}
+
+.btn-enable:hover {
+  background-color: #e8f5e9;
 }
 
 /* Filter Section */

@@ -85,8 +85,26 @@ async function initDatabase() {
       }
     };
 
-    await ensureColumn("images", "file_size", "BIGINT DEFAULT 0");
-    await ensureColumn("images", "filepath", "VARCHAR(255)");
+    // Safely drop a column if it exists
+    const dropColumnIfExists = async (table, column) => {
+      try {
+        // Check if column exists
+        const [rows] = await connection.query(
+          `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+          [table, column]
+        );
+        if (rows[0]?.cnt > 0) {
+          await connection.query(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+          console.log(`✓ Dropped column ${table}.${column}`);
+        }
+      } catch (err) {
+        console.warn(`Could not drop column ${table}.${column} (may not exist):`, err.code || err.message);
+      }
+    };
+
+    // Remove deprecated columns from images
+    await dropColumnIfExists("images", "file_size");
+    await dropColumnIfExists("images", "filepath");
     await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await ensureColumn("images", "melbourne_user_id", "INT");
     await ensureColumn("images", "feedback", "TEXT");
@@ -112,6 +130,8 @@ async function initDatabase() {
     await ensureColumn("tasks", "assigned_by", "INT");
     await ensureColumn("tasks", "notes", "TEXT");
     await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+    await ensureColumn("tasks", "eligible_for_payment", "BOOLEAN DEFAULT TRUE");
+    await ensureColumn("users", "last_login", "TIMESTAMP NULL");
 
     // Create tasks table
     const createTasksTableQuery = `
@@ -124,6 +144,7 @@ async function initDatabase() {
         task_type ENUM('annotation', 'validation', 'testing') DEFAULT 'annotation',
         status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending',
         notes TEXT,
+        eligible_for_payment BOOLEAN DEFAULT TRUE,
         assigned_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_date TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -207,6 +228,21 @@ async function initDatabase() {
     `;
     await connection.query(createNotificationsTableQuery);
     console.log("✓ Notifications table created or already exists");
+
+    // Create login logs table to track user logins
+    const createLoginLogsTableQuery = `
+      CREATE TABLE IF NOT EXISTS login_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL,
+        user_agent TEXT,
+        login_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `;
+    await connection.query(createLoginLogsTableQuery);
+    console.log("✓ Login logs table created or already exists");
 
     // Create a sample admin user if it doesn't exist
     const [existingAdmin] = await connection.query(

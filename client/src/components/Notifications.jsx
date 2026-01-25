@@ -40,7 +40,9 @@ export default function Notifications() {
         {},
         { headers: getAuthHeader() }
       );
-      fetchNotifications();
+      // Remove the notification from the list immediately
+      setNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+      setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
       console.error("Failed to mark notification as read:", err);
     }
@@ -53,7 +55,9 @@ export default function Notifications() {
         {},
         { headers: getAuthHeader() }
       );
-      fetchNotifications();
+      // Remove all unread notifications from the list
+      setNotifications((prev) => prev.filter((n) => n.read_status));
+      setUnreadCount(0);
     } catch (err) {
       console.error("Failed to mark all as read:", err);
     }

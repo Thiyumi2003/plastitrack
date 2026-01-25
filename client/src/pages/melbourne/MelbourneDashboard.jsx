@@ -7,6 +7,13 @@ import "../annotator/annotator.css";
 export default function MelbourneDashboard() {
   const [adminKpis, setAdminKpis] = useState(null);
   const [adminReports, setAdminReports] = useState(null);
+  const [performance, setPerformance] = useState({ users: [], filters: {} });
+  const [systemPerf, setSystemPerf] = useState(null);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [period, setPeriod] = useState("month");
+  const [perfLoading, setPerfLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -17,6 +24,45 @@ export default function MelbourneDashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    const fetchPerformance = async () => {
+      try {
+        setPerfLoading(true);
+        const params = {
+          role: roleFilter === "all" ? undefined : roleFilter,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          period,
+        };
+        const perfRes = await axios.get("http://localhost:5000/api/dashboard/performance/users", {
+          headers: getAuthHeader(),
+          params,
+        });
+        const systemRes = await axios.get("http://localhost:5000/api/dashboard/performance/system", {
+          headers: getAuthHeader(),
+        });
+        setPerformance(perfRes.data);
+        setSystemPerf(systemRes.data);
+      } catch (err) {
+        console.error("Performance fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load performance data");
+      } finally {
+        setPerfLoading(false);
+      }
+    };
+
+    fetchPerformance();
+  }, [startDate, endDate, roleFilter, period]);
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (roleFilter !== "all") params.append("role", roleFilter);
+    if (startDate) params.append("startDate", startDate);
+    if (endDate) params.append("endDate", endDate);
+    if (period) params.append("period", period);
+    window.open(`http://localhost:5000/api/dashboard/performance/users/export?${params.toString()}`, "_blank");
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -160,6 +206,83 @@ export default function MelbourneDashboard() {
             </ResponsiveContainer>
           </div>
         </div>
+
+        <div className="chart-container" style={{ marginTop: "24px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div>
+              <h3>Performance & Logins</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Annotator/Tester throughput with login activity</p>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="assign-select" style={{ minWidth: "140px" }}>
+                <option value="all">All Roles</option>
+                <option value="annotator">Annotators</option>
+                <option value="tester">Testers</option>
+              </select>
+              <select value={period} onChange={(e) => setPeriod(e.target.value)} className="assign-select" style={{ minWidth: "120px" }}>
+                <option value="month">This Month</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="text-input" style={{ padding: "8px" }} />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="text-input" style={{ padding: "8px" }} />
+              <button className="btn-primary" onClick={handleExport} style={{ whiteSpace: "nowrap" }}>Export CSV</button>
+            </div>
+          </div>
+
+          {perfLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading performance...</div>
+          ) : (
+            <div className="table-container" style={{ marginTop: "12px" }}>
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th>Completed</th>
+                    <th>Approved</th>
+                    <th>Rejected</th>
+                    <th>Active</th>
+                    <th>Last Activity</th>
+                    <th>Last Login</th>
+                    <th>Logins</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {performance.users.length === 0 ? (
+                    <tr><td colSpan="9" className="no-data">No data for selected range</td></tr>
+                  ) : (
+                    performance.users.map((u) => (
+                      <tr key={u.id}>
+                        <td>{u.name || u.email}</td>
+                        <td>{u.role}</td>
+                        <td>{u.tasks_completed || 0}</td>
+                        <td>{u.tasks_approved || 0}</td>
+                        <td>{u.tasks_rejected || 0}</td>
+                        <td>{u.tasks_active || 0}</td>
+                        <td>{u.last_task_activity ? new Date(u.last_task_activity).toLocaleString() : "-"}</td>
+                        <td>{u.last_login ? new Date(u.last_login).toLocaleString() : "-"}</td>
+                        <td>{u.login_count || 0}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {systemPerf && (
+          <div className="chart-container" style={{ marginTop: "16px" }}>
+            <h3>System Snapshot (last 24h)</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+              <div className="kpi-card"><div className="kpi-value">{systemPerf.tasksLast24h?.reduce((s, t) => s + (t.count || 0), 0) || 0}</div><div className="kpi-label">Tasks Updated</div></div>
+              <div className="kpi-card"><div className="kpi-value">{systemPerf.loginsLast24h?.reduce((s, t) => s + (t.count || 0), 0) || 0}</div><div className="kpi-label">Logins</div></div>
+              <div className="kpi-card"><div className="kpi-value">{systemPerf.statusDistribution?.find(s => s.status === 'approved')?.count || 0}</div><div className="kpi-label">Approved Images</div></div>
+              <div className="kpi-card"><div className="kpi-value">{systemPerf.imagesLast7d?.reduce((s, t) => s + (t.total || 0), 0) || 0}</div><div className="kpi-label">Uploads (7d)</div></div>
+            </div>
+            <p style={{ marginTop: "8px", color: "#888", fontSize: "12px" }}>Snapshot at {new Date(systemPerf.timestamp || Date.now()).toLocaleString()}</p>
+          </div>
+        )}
       </div>
     </div>
   );

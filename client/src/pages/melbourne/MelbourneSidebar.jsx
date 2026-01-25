@@ -14,6 +14,7 @@ export default function MelbourneSidebar() {
   const menuItems = [
     { label: "Dashboard", icon: LayoutDashboard, path: "/melbourne/dashboard" },
     { label: "Manage Images", icon: LayoutDashboard, path: "/melbourne/images" },
+    { label: "Reports", icon: LayoutDashboard, path: "/melbourne/reports" },
     { label: "Profile", icon: User, path: "/melbourne/profile" },
   ];
 
