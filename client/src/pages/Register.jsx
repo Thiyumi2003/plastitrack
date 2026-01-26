@@ -17,11 +17,29 @@ export default function Register() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [passwordValidation, setPasswordValidation] = useState({
+    minLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecialChar: false,
+  });
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
     setError("");
+
+    // Real-time password validation
+    if (name === "password") {
+      setPasswordValidation({
+        minLength: value.length >= 6,
+        hasUpperCase: /[A-Z]/.test(value),
+        hasLowerCase: /[a-z]/.test(value),
+        hasNumber: /[0-9]/.test(value),
+        hasSpecialChar: /[!@#$%^&*(),.?":{}|<>]/.test(value),
+      });
+    }
   };
 
   const handleRegister = async (e) => {
@@ -43,6 +61,22 @@ export default function Register() {
     }
     if (formData.password.length < 6) {
       setError("Password must be at least 6 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(formData.password)) {
+      setError("Password must contain at least one uppercase letter");
+      return;
+    }
+    if (!/[a-z]/.test(formData.password)) {
+      setError("Password must contain at least one lowercase letter");
+      return;
+    }
+    if (!/[0-9]/.test(formData.password)) {
+      setError("Password must contain at least one number");
+      return;
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(formData.password)) {
+      setError("Password must contain at least one special character");
       return;
     }
     if (formData.password !== formData.confirmPassword) {
@@ -148,6 +182,82 @@ export default function Register() {
               />
             </div>
           </div>
+
+          {/* Password Validation Indicators */}
+          {formData.password && (
+            <div style={{ 
+              marginTop: "-10px", 
+              marginBottom: "15px", 
+              padding: "10px", 
+              backgroundColor: "#f9f9f9", 
+              borderRadius: "6px",
+              fontSize: "13px"
+            }}>
+              <div style={{ marginBottom: "5px", fontWeight: "600", color: "#333" }}>
+                Password Requirements:
+              </div>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ 
+                  color: passwordValidation.minLength ? "#28a745" : "#dc3545",
+                  marginRight: "8px",
+                  fontWeight: "bold"
+                }}>
+                  {passwordValidation.minLength ? "✓" : "✗"}
+                </span>
+                <span style={{ color: passwordValidation.minLength ? "#28a745" : "#666" }}>
+                  At least 6 characters
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ 
+                  color: passwordValidation.hasUpperCase ? "#28a745" : "#dc3545",
+                  marginRight: "8px",
+                  fontWeight: "bold"
+                }}>
+                  {passwordValidation.hasUpperCase ? "✓" : "✗"}
+                </span>
+                <span style={{ color: passwordValidation.hasUpperCase ? "#28a745" : "#666" }}>
+                  One uppercase letter (A-Z)
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ 
+                  color: passwordValidation.hasLowerCase ? "#28a745" : "#dc3545",
+                  marginRight: "8px",
+                  fontWeight: "bold"
+                }}>
+                  {passwordValidation.hasLowerCase ? "✓" : "✗"}
+                </span>
+                <span style={{ color: passwordValidation.hasLowerCase ? "#28a745" : "#666" }}>
+                  One lowercase letter (a-z)
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ 
+                  color: passwordValidation.hasNumber ? "#28a745" : "#dc3545",
+                  marginRight: "8px",
+                  fontWeight: "bold"
+                }}>
+                  {passwordValidation.hasNumber ? "✓" : "✗"}
+                </span>
+                <span style={{ color: passwordValidation.hasNumber ? "#28a745" : "#666" }}>
+                  One number (0-9)
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <span style={{ 
+                  color: passwordValidation.hasSpecialChar ? "#28a745" : "#dc3545",
+                  marginRight: "8px",
+                  fontWeight: "bold"
+                }}>
+                  {passwordValidation.hasSpecialChar ? "✓" : "✗"}
+                </span>
+                <span style={{ color: passwordValidation.hasSpecialChar ? "#28a745" : "#666" }}>
+                  One special character (!@#$%^&*)
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Confirm Password Field */}
           <div className="pt-form-group">
