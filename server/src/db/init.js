@@ -298,8 +298,16 @@ async function initDatabase() {
   } catch (err) {
     console.error("✗ Database initialization failed:", err.message);
     if (connection) await connection.end();
-    process.exit(1);
+    // Don't exit - let the server continue
   }
 }
 
-initDatabase();
+// Call init without blocking
+console.log("🔵 Calling initDatabase...");
+initDatabase()
+  .then(() => {
+    console.log("✅ initDatabase completed successfully");
+  })
+  .catch(err => {
+    console.error("❌ Database init error:", err);
+  });

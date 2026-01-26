@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
+const axios = require("axios");
 const pool = require("../db/pool");
 
 const router = express.Router();
@@ -442,6 +443,119 @@ router.post("/verify-otp", async (req, res) => {
     console.error("OTP verify error:", err.message);
     console.error("Stack:", err.stack);
     res.status(500).json({ error: "OTP verification failed", details: err.message });
+  }
+});
+
+// Google OAuth Login
+router.post("/google-login", async (req, res) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return res.status(400).json({ error: "Google credential is required" });
+    }
+
+    console.log("🔵 Google login attempt received");
+
+    // Verify the Google token using Google's API
+    try {
+      const response = await axios.get(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`
+      );
+
+      const { email, name, picture } = response.data;
+
+      console.log("✓ Google token verified for:", email);
+
+      if (!email) {
+        return res.status(400).json({ error: "Could not retrieve email from Google" });
+      }
+
+      const connection = await pool.getConnection();
+
+      try {
+        // Check if user exists
+        const [existingUsers] = await connection.execute(
+          "SELECT * FROM users WHERE email = ?",
+          [email]
+        );
+
+        let user;
+        let isNewUser = false;
+
+        if (existingUsers.length > 0) {
+          // User exists, update last login
+          user = existingUsers[0];
+          console.log("✓ Existing user found:", email);
+          await connection.execute(
+            "UPDATE users SET last_login = NOW() WHERE id = ?",
+            [user.id]
+          );
+        } else {
+          // Create new user from Google login
+          isNewUser = true;
+          const defaultRole = "annotator"; // Default role for new users
+          const defaultPassword = "google_oauth"; // Placeholder password
+
+          console.log("⭐ Creating new user from Google OAuth:", email);
+
+          const [result] = await connection.execute(
+            "INSERT INTO users (name, email, password, role, is_active) VALUES (?, ?, ?, ?, 1)",
+            [name || "Google User", email, defaultPassword, defaultRole]
+          );
+
+          // Fetch the newly created user
+          const [newUsers] = await connection.execute(
+            "SELECT * FROM users WHERE id = ?",
+            [result.insertId]
+          );
+          user = newUsers[0];
+
+          console.log(`✓ New user created via Google OAuth: ${email}`);
+        }
+
+        // Check if account is active
+        if (user.is_active === false) {
+          await connection.release();
+          return res.status(403).json({ error: "Account is disabled. Please contact administrator." });
+        }
+
+        // Create JWT token
+        const token = jwt.sign(
+          { id: user.id, email: user.email, role: user.role },
+          process.env.JWT_SECRET || "supersecret123",
+          { expiresIn: "24h" }
+        );
+
+        // Log the login
+        await connection.execute(
+          `INSERT INTO login_logs (user_id, email, role, user_agent) VALUES (?, ?, ?, ?)`,
+          [user.id, user.email, user.role, "Google OAuth"]
+        );
+
+        console.log(`✓ Login successful for ${email} via Google OAuth`);
+
+        res.json({
+          message: isNewUser ? "User created and logged in successfully" : "Login successful",
+          token,
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            isNewUser,
+          },
+        });
+      } finally {
+        await connection.release();
+      }
+    } catch (tokenError) {
+      console.error("❌ Google token verification failed:", tokenError.message);
+      return res.status(401).json({ error: "Invalid Google token", details: tokenError.message });
+    }
+  } catch (err) {
+    console.error("❌ Google login error:", err.message);
+    res.status(500).json({ error: "Google login failed", details: err.message });
   }
 });
 

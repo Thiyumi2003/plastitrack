@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { Mail, Lock, Shield } from "lucide-react";
+import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import "./auth.css";
 import logo from "../images/logo (2).png";
 import loginImg from "../images/register.png";
@@ -77,6 +78,53 @@ export default function Login() {
       }
     } catch (err) {
       setError(err.response?.data?.message || "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async (credentialResponse) => {
+    setError("");
+    setLoading(true);
+
+    try {
+      console.log("🔵 Starting Google login with credential");
+      
+      const response = await axios.post("http://localhost:5000/api/auth/google-login", {
+        credential: credentialResponse.credential,
+      });
+
+      console.log("✓ Google login successful:", response.data);
+
+      // Store token and user info
+      localStorage.setItem("token", response.data.token);
+      localStorage.setItem("user", JSON.stringify(response.data.user));
+
+      // Show success message for new users
+      const message = response.data.user.isNewUser
+        ? "Account created successfully via Google! Welcome!"
+        : "Login successful!";
+
+      // Navigate to appropriate dashboard based on role
+      const userRole = response.data.user.role;
+      if (userRole === "super_admin") {
+        navigate("/dashboard", { state: { message } });
+      } else if (userRole === "admin") {
+        navigate("/admin/dashboard", { state: { message } });
+      } else if (userRole === "annotator") {
+        navigate("/annotator/dashboard", { state: { message } });
+      } else if (userRole === "tester") {
+        navigate("/tester/dashboard", { state: { message } });
+      } else if (userRole === "melbourne_user") {
+        navigate("/melbourne/dashboard", { state: { message } });
+      } else {
+        navigate("/", { state: { message } });
+      }
+    } catch (err) {
+      const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || "Google login failed";
+      console.error("❌ Google login failed:", errorMessage);
+      console.error("Full error:", err);
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -178,6 +226,27 @@ export default function Login() {
             {loading ? "Signing in..." : "Log-in"}
           </button>
         </form>
+
+        {/* Divider */}
+        <div style={{ margin: "20px 0", textAlign: "center", color: "#888" }}>
+          <span style={{ backgroundColor: "#fff", padding: "0 10px" }}>OR</span>
+        </div>
+
+        {/* Google Login */}
+        <GoogleOAuthProvider
+          clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}
+          language="en"
+        >
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <GoogleLogin
+              onSuccess={handleGoogleLogin}
+              onError={() => setError("Google login failed")}
+              locale="en"
+              text="signin_with"
+              size="large"
+            />
+          </div>
+        </GoogleOAuthProvider>
 
         <p className="auth-footer-text">
           Don't have an account?{" "}
