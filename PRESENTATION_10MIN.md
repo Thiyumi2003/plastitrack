@@ -155,28 +155,34 @@ ADMIN_SESSIONS (PK: id)
 **1. Authentication:**
 - ✅ JWT tokens with 24-hour expiration
 - ✅ Secure password hashing: bcryptjs (10 salt rounds)
+- ✅ OTP verification: Email-based OTP codes for account verification
+- ✅ Password reset: Forgot password flow with OTP verification
 - ✅ Session tracking: Login/logout logs in database
 - ✅ Account status verification: Only is_active = 1 users can login
 
 **2. Authorization (RBAC):**
-- ✅ Role-based route protection: ProtectedRoute component
+- ✅ Role-based access control (RBAC) with 5 roles via middleware
+- ✅ ProtectedRoute component for frontend route security
 - ✅ Backend endpoint role validation
 - ✅ Middleware: `verifyToken` checks JWT and role
 - ✅ 5 distinct roles enforced: super_admin, admin, annotator, tester, melbourne_user
+- ✅ Account status verification: Only is_active = 1 users can access
 
-**3. Data Protection:**
+**3. Access Controls:**
+- ✅ Annotators cannot view admin reports
+- ✅ Admins cannot approve payments (Super Admin only approves payments)
+- ✅ Testers can only review assigned images
+- ✅ Melbourne users can only see approved datasets
+
+**4. Data Protection:**
+- ✅ Passwords encrypted with bcryptjs (10 salt rounds)
 - ✅ Password never stored in plain text
 - ✅ Email uniqueness constraint
 - ✅ Database relationships with FK constraints
 - ✅ Payment data isolated by user_id
 
-**4. Access Controls:**
-- ✅ Annotators cannot view admin reports
-- ✅ Admins cannot approve payments (Super Admin only)
-- ✅ Testers can only review assigned images
-- ✅ Melbourne users can only see approved datasets
-
 **5. Audit & Logging:**
+- ✅ Audit logging: LOGIN_LOGS & ADMIN_SESSIONS tables track all activity
 - ✅ LOGIN_LOGS table tracks all user logins
 - ✅ ADMIN_SESSIONS tracks admin work sessions
 - ✅ Timestamps on all transactions (created_at, updated_at)
