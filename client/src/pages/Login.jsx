@@ -13,7 +13,6 @@ export default function Login() {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    role: "user",
     remember: false,
   });
   const [error, setError] = useState("");
@@ -160,26 +159,7 @@ export default function Login() {
           </div>
 
           {/* Role Field */}
-          <div className="auth-form-group">
-            <div className="auth-input-wrapper">
-              <Shield className="auth-input-icon" size={18} />
-              <select
-                id="role"
-                name="role"
-                value={formData.role}
-                onChange={handleChange}
-                disabled={loading}
-                className="auth-select"
-              >
-                <option value="">Select Role</option>
-                <option value="annotator">Annotator</option>
-                <option value="tester">Tester</option>
-                <option value="admin">Admin</option>
-                <option value="super_admin">Super Admin</option>
-                <option value="melbourne_user">Melbourne User</option>
-              </select>
-            </div>
-          </div>
+          {/* Removed - Role selection not necessary */}
 
           {/* Password Field */}
           <div className="auth-form-group">
