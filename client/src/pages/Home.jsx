@@ -7,10 +7,18 @@ export default function Home() {
     
   return (
     <div className="homepage">
+      {/* Header Bar */}
+      <header className="header-bar">
+        <div className="header-container">
+          <img src={logo} alt="PlastiTrack Logo" className="header-logo" />
+          <nav className="header-nav">
+            <a href="#home" className="nav-link">Home</a>
+            <Link to="/register" className="nav-link">Register</Link>
+            <Link to="/login" className="nav-link">Login</Link>
+          </nav>
+        </div>
+      </header>
       
-        <img src={logo} alt="PlastiTrack Logo" className="logo" />
-        
-     
       <main className="hero-section">
         <div className="container">
           <h1 className="main-title">Plastic Waste Annotation Management System</h1>
