@@ -1420,18 +1420,33 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     const { annotatorId, testerId, melbourneUserId, status, feedback } = req.body;
     const adminId = req.user?.id;
 
+    // Log incoming request for debugging
+    console.log("Assign image request:", { id, annotatorId, testerId, melbourneUserId, status, feedback, adminId });
+
     if (!adminId) {
       return res.status(401).json({ error: "Admin user not authenticated" });
+    }
 
-        // Get current image status to check if it's a reassignment after rejection
-        const [currentImage] = await connection.execute(
-          `SELECT status, annotator_id FROM images WHERE id = ?`,
-          [id]
-        );
-        const isRejectedReassignment = currentImage[0]?.status === 'rejected' && annotatorId;
+    // Validate at least one assignment field is present and is a number if provided
+    if (!annotatorId && !testerId && !melbourneUserId) {
+      return res.status(400).json({ error: "At least one of annotatorId, testerId, or melbourneUserId is required" });
+    }
+    if ((annotatorId && isNaN(Number(annotatorId))) || (testerId && isNaN(Number(testerId))) || (melbourneUserId && isNaN(Number(melbourneUserId)))) {
+      return res.status(400).json({ error: "annotatorId, testerId, and melbourneUserId must be numbers if provided" });
     }
 
     const connection = await pool.getConnection();
+
+    // Check if image exists
+    const [imageRows] = await connection.execute("SELECT status, annotator_id, image_name FROM images WHERE id = ?", [id]);
+    if (imageRows.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Image not found" });
+    }
+    const currentImage = imageRows[0];
+
+    // Define isRejectedReassignment before it is used
+    const isRejectedReassignment = currentImage.status === 'rejected' && annotatorId;
 
     let query = "UPDATE images SET ";
     let params = [];
@@ -1440,11 +1455,11 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (annotatorId) {
       fields.push("annotator_id = ?");
       params.push(annotatorId);
-          // Reset status to in_progress when reassigning after rejection
-          if (isRejectedReassignment && !status) {
-            fields.push("status = ?");
-            params.push("in_progress");
-          }
+      // Reset status to in_progress when reassigning after rejection
+      if (isRejectedReassignment && !status) {
+        fields.push("status = ?");
+        params.push("in_progress");
+      }
     }
     if (testerId) {
       fields.push("tester_id = ?");
@@ -1478,17 +1493,11 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (annotatorId) {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-        // Get image name and admin name for notification
-        const [imageData] = await connection.execute(
-          `SELECT image_name FROM images WHERE id = ?`,
-          [id]
-        );
+        const imageName = currentImage.image_name || `Image #${id}`;
         const [adminData] = await connection.execute(
           `SELECT name FROM users WHERE id = ?`,
           [adminId]
         );
-        const imageName = imageData[0]?.image_name || `Image #${id}`;
         const adminName = adminData[0]?.name || 'Admin';
 
         await connection.execute(
@@ -1496,8 +1505,7 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
            VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
           [taskId, id, annotatorId, adminId]
         );
-        
-        // Create notification for annotator with clear action instruction
+        // Create notification for annotator
         await createNotification(
           connection,
           annotatorId,
@@ -1505,7 +1513,6 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
           `🎯 ${adminName} assigned "​${imageName}" to you for annotation | ACTION: Open Dashboard → Click image → Start annotating`,
           id
         );
-        
         console.log(`Task created: ${taskId} for annotator ${annotatorId}`);
       } catch (taskErr) {
         console.error("Failed to create annotator task:", taskErr);
@@ -1516,23 +1523,16 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (testerId) {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
         const [existingTesterTask] = await connection.execute(
           `SELECT id FROM tasks WHERE image_id = ? AND user_id = ? AND task_type = 'testing' LIMIT 1`,
           [id, testerId]
         );
-
         if (existingTesterTask.length === 0) {
-          // Get image name and admin name for notification
-          const [imageData] = await connection.execute(
-            `SELECT image_name FROM images WHERE id = ?`,
-            [id]
-          );
+          const imageName = currentImage.image_name || `Image #${id}`;
           const [adminData] = await connection.execute(
             `SELECT name FROM users WHERE id = ?`,
             [adminId]
           );
-          const imageName = imageData[0]?.image_name || `Image #${id}`;
           const adminName = adminData[0]?.name || 'Admin';
 
           await connection.execute(
@@ -1540,8 +1540,7 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
              VALUES (?, ?, ?, ?, 'testing', 'pending_review', NOW())`,
             [taskId, id, testerId, adminId]
           );
-          
-          // Create notification for tester with clear action instruction
+          // Create notification for tester
           await createNotification(
             connection,
             testerId,
@@ -1549,7 +1548,6 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
             `🔍 ${adminName} assigned "​${imageName}" to you for review/testing | ACTION: Open Dashboard → Click image → Approve or Reject`,
             id
           );
-          
           console.log(`Task created: ${taskId} for tester ${testerId}`);
         }
       } catch (taskErr) {
@@ -1561,7 +1559,7 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     res.json({ message: "Image assigned successfully" });
   } catch (err) {
     console.error("Assign image error:", err);
-    res.status(500).json({ error: "Failed to assign image" });
+    res.status(500).json({ error: "Failed to assign image", details: err.message });
   }
 });
 

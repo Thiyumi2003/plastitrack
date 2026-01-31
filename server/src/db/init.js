@@ -244,6 +244,57 @@ async function initDatabase() {
     await connection.query(createLoginLogsTableQuery);
     console.log("✓ Login logs table created or already exists");
 
+    // Create work_hours table for tracking admin working hours
+    const createWorkHoursTableQuery = `
+      CREATE TABLE IF NOT EXISTS work_hours (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id INT NOT NULL,
+        date DATE NOT NULL,
+        hours_worked DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        task_description TEXT,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        approved_by INT,
+        is_auto_tracked BOOLEAN DEFAULT FALSE COMMENT 'Whether this entry was automatically tracked',
+        session_start DATETIME COMMENT 'Session start time for auto-tracked entries',
+        session_end DATETIME COMMENT 'Session end time for auto-tracked entries',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_admin_date (admin_id, date),
+        INDEX idx_status (status),
+        INDEX idx_auto_tracked (is_auto_tracked)
+      ) COMMENT 'Tracks admin working hours for payment calculation'
+    `;
+    await connection.query(createWorkHoursTableQuery);
+    console.log("✓ Work hours table created or already exists");
+
+    // Create admin_sessions table to track login/logout for automatic hour calculation
+    const createAdminSessionsTableQuery = `
+      CREATE TABLE IF NOT EXISTS admin_sessions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id INT NOT NULL,
+        login_time DATETIME NOT NULL,
+        logout_time DATETIME,
+        session_duration DECIMAL(5,2) COMMENT 'Duration in hours',
+        is_processed BOOLEAN DEFAULT FALSE COMMENT 'Whether hours have been added to work_hours',
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_admin_login (admin_id, login_time),
+        INDEX idx_is_processed (is_processed)
+      ) COMMENT 'Tracks admin login/logout sessions for automatic hour tracking'
+    `;
+    await connection.query(createAdminSessionsTableQuery);
+    console.log("✓ Admin sessions table created or already exists");
+
+    // Add hourly_rate and auto_track_hours columns to users table
+    await ensureColumn("users", "hourly_rate", "DECIMAL(10,2) DEFAULT 1000.00 COMMENT 'Hourly rate for admin payments'");
+    await ensureColumn("users", "auto_track_hours", "BOOLEAN DEFAULT TRUE COMMENT 'Auto-track working hours for admins'");
+    await ensureColumn("users", "is_active", "BOOLEAN DEFAULT TRUE COMMENT 'User account active status'");
+
     // Create a sample admin user if it doesn't exist
     const [existingAdmin] = await connection.query(
       "SELECT id FROM users WHERE email = 'tharuka@gmail.com'"

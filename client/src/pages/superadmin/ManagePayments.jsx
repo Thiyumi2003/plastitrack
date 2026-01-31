@@ -7,6 +7,7 @@ export default function ManagePayments() {
   const [paymentOverview, setPaymentOverview] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState(null);
   const [modelPayments, setModelPayments] = useState(null);
+  const [pendingPayments, setPendingPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
@@ -16,31 +17,62 @@ export default function ManagePayments() {
   });
 
   useEffect(() => {
-    const fetchPaymentData = async () => {
-      try {
-        setLoading(true);
-        const [overviewRes, historyRes, modelRes] = await Promise.all([
-          axios.get("http://localhost:5000/api/dashboard/payments", { headers: getAuthHeader() }),
-          axios.get("http://localhost:5000/api/dashboard/payment-history", {
-            headers: getAuthHeader(),
-          }),
-          axios.get("http://localhost:5000/api/dashboard/model-payments", {
-            headers: getAuthHeader(),
-          }),
-        ]);
-
-        setPaymentOverview(overviewRes.data);
-        setPaymentHistory(historyRes.data);
-        setModelPayments(modelRes.data);
-      } catch (err) {
-        setError(err.response?.data?.error || "Failed to load payment data");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchPaymentData();
   }, []);
+
+  const fetchPaymentData = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const [overviewRes, historyRes, modelRes] = await Promise.all([
+        axios.get("http://localhost:5000/api/dashboard/payments", { headers: getAuthHeader() }),
+        axios.get("http://localhost:5000/api/dashboard/payment-history", {
+          headers: getAuthHeader(),
+        }),
+        axios.get("http://localhost:5000/api/dashboard/model-payments", {
+          headers: getAuthHeader(),
+        }),
+      ]);
+
+      console.log("Payment data loaded:", { overviewRes: overviewRes.data, historyRes: historyRes.data, modelRes: modelRes.data });
+      setPaymentOverview(overviewRes.data);
+      setPaymentHistory(historyRes.data);
+      setModelPayments(modelRes.data);
+
+      // Filter pending payments from history
+      const pending = historyRes.data?.history?.filter((p) => p.status === "pending") || [];
+      setPendingPayments(pending);
+    } catch (err) {
+      console.error("Fetch payment data error:", err);
+      setError(err.response?.data?.error || "Failed to load payment data. Please try logging in again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePaymentApproval = async (id, status) => {
+    const confirmMsg =
+      status === "approved"
+        ? "Approve this payment? This will allow the payment to be processed."
+        : "Reject this payment? The payment will not be processed.";
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      await axios.put(
+        `http://localhost:5000/api/dashboard/payments/${id}`,
+        {
+          status,
+          approved_date: status === "approved" ? new Date().toISOString() : null,
+        },
+        { headers: getAuthHeader() }
+      );
+      alert(`Payment ${status} successfully`);
+      fetchPaymentData();
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to update payment");
+    }
+  };
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
@@ -105,6 +137,12 @@ export default function ManagePayments() {
               Payment Overview
             </button>
             <button
+              className={`tab ${activeTab === "pending" ? "active" : ""}`}
+              onClick={() => setActiveTab("pending")}
+            >
+              Pending Approvals ({pendingPayments.length})
+            </button>
+            <button
               className={`tab ${activeTab === "model" ? "active" : ""}`}
               onClick={() => setActiveTab("model")}
             >
@@ -145,6 +183,79 @@ export default function ManagePayments() {
                       No payment data available
                     </td>
                   </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === "pending" && (
+          <div className="table-container">
+            <h3>Pending Payment Approvals</h3>
+            <table className="payments-table">
+              <thead>
+                <tr>
+                  <th>User Name</th>
+                  <th>Amount</th>
+                  <th>Model Type</th>
+                  <th>Images</th>
+                  <th>Method</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="no-data">
+                      No pending payments
+                    </td>
+                  </tr>
+                ) : (
+                  pendingPayments.map((payment) => (
+                    <tr key={payment.id}>
+                      <td><strong>{payment.admin_name || "Unknown"}</strong></td>
+                      <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
+                      <td>{payment.model_type}</td>
+                      <td>{payment.images_completed || 0}</td>
+                      <td>{payment.payment_method || "-"}</td>
+                      <td>{new Date(payment.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <div style={{ display: "flex", gap: "5px" }}>
+                          <button
+                            className="btn-approve"
+                            onClick={() => handlePaymentApproval(payment.id, "approved")}
+                            style={{
+                              padding: "6px 12px",
+                              backgroundColor: "#10b981",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                            }}
+                          >
+                            ✓ Approve
+                          </button>
+                          <button
+                            className="btn-reject"
+                            onClick={() => handlePaymentApproval(payment.id, "rejected")}
+                            style={{
+                              padding: "6px 12px",
+                              backgroundColor: "#ef4444",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                            }}
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>

@@ -16,20 +16,24 @@ export default function ManageAdminWorkHours() {
   });
 
   useEffect(() => {
+    console.log("ManageAdminWorkHours component mounted");
     fetchWorkHours();
   }, []);
 
   const fetchWorkHours = async () => {
     try {
       setLoading(true);
+      setError("");
       const response = await axios.get(
         "http://localhost:5000/api/dashboard/superadmin/work-hours",
         { headers: getAuthHeader() }
       );
-      setWorkHours(response.data.workHours);
-      setAdminSummary(response.data.adminSummary);
+      console.log("Work hours response:", response.data);
+      setWorkHours(response.data.workHours || []);
+      setAdminSummary(response.data.adminSummary || []);
     } catch (err) {
-      setError(err.response?.data?.error || "Failed to load work hours");
+      console.error("Fetch work hours error:", err);
+      setError(err.response?.data?.error || "Failed to load work hours. Please try logging in again.");
     } finally {
       setLoading(false);
     }
@@ -71,7 +75,9 @@ export default function ManageAdminWorkHours() {
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
-  const totalPaymentDue = adminSummary.reduce((sum, admin) => sum + (admin.total_payment_due || 0), 0);
+  // Ensure adminSummary is an array
+  const adminSummaryArray = Array.isArray(adminSummary) ? adminSummary : [];
+  const totalPaymentDue = adminSummaryArray.reduce((sum, admin) => sum + (Number(admin.total_payment_due) || 0), 0);
 
   return (
     <div className="dashboard-container">
@@ -89,7 +95,7 @@ export default function ManageAdminWorkHours() {
             <div className="payment-icon">⏱️</div>
             <div className="payment-content">
               <div className="payment-value">
-                {adminSummary.reduce((sum, a) => sum + (a.total_hours || 0), 0).toFixed(1)}
+                {adminSummaryArray.reduce((sum, a) => sum + (Number(a.total_hours) || 0), 0).toFixed(1)}
               </div>
               <div className="payment-label">Total Hours Logged</div>
             </div>
@@ -99,7 +105,7 @@ export default function ManageAdminWorkHours() {
             <div className="payment-icon">✅</div>
             <div className="payment-content">
               <div className="payment-value">
-                {adminSummary.reduce((sum, a) => sum + (a.approved_hours || 0), 0).toFixed(1)}
+                {adminSummaryArray.reduce((sum, a) => sum + (Number(a.approved_hours) || 0), 0).toFixed(1)}
               </div>
               <div className="payment-label">Approved Hours</div>
             </div>
@@ -117,7 +123,7 @@ export default function ManageAdminWorkHours() {
             <div className="payment-icon">⏳</div>
             <div className="payment-content">
               <div className="payment-value">
-                {workHours.filter(w => w.status === 'pending').length}
+                {Array.isArray(workHours) ? workHours.filter(w => w.status === 'pending').length : 0}
               </div>
               <div className="payment-label">Pending Approvals</div>
             </div>
@@ -160,7 +166,7 @@ export default function ManageAdminWorkHours() {
                 </tr>
               </thead>
               <tbody>
-                {workHours.length === 0 ? (
+                {!Array.isArray(workHours) || workHours.length === 0 ? (
                   <tr>
                     <td colSpan="9" className="no-data">
                       No work hours entries yet
@@ -286,14 +292,14 @@ export default function ManageAdminWorkHours() {
                 </tr>
               </thead>
               <tbody>
-                {adminSummary.length === 0 ? (
+                {!Array.isArray(adminSummaryArray) || adminSummaryArray.length === 0 ? (
                   <tr>
                     <td colSpan="6" className="no-data">
                       No admin work hours data
                     </td>
                   </tr>
                 ) : (
-                  adminSummary.map((admin) => (
+                  adminSummaryArray.map((admin) => (
                     <tr key={admin.id}>
                       <td><strong>{admin.name}</strong></td>
                       <td>{admin.email}</td>
@@ -308,11 +314,11 @@ export default function ManageAdminWorkHours() {
                     </tr>
                   ))
                 )}
-                {adminSummary.length > 0 && (
+                {adminSummaryArray.length > 0 && (
                   <tr style={{ backgroundColor: "#f8f9fa", fontWeight: "bold" }}>
                     <td colSpan="3" style={{ textAlign: "right" }}>TOTAL:</td>
-                    <td>{adminSummary.reduce((sum, a) => sum + (a.total_hours || 0), 0).toFixed(1)} hrs</td>
-                    <td>{adminSummary.reduce((sum, a) => sum + (a.approved_hours || 0), 0).toFixed(1)} hrs</td>
+                    <td>{adminSummaryArray.reduce((sum, a) => sum + (Number(a.total_hours) || 0), 0).toFixed(1)} hrs</td>
+                    <td>{adminSummaryArray.reduce((sum, a) => sum + (Number(a.approved_hours) || 0), 0).toFixed(1)} hrs</td>
                     <td style={{ color: "#10b981", fontSize: "18px" }}>
                       ₨ {totalPaymentDue.toLocaleString()}
                     </td>
