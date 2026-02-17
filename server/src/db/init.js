@@ -108,29 +108,12 @@ async function initDatabase() {
     await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await ensureColumn("images", "melbourne_user_id", "INT");
     await ensureColumn("images", "feedback", "TEXT");
-    await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
     // Ensure images status enum supports review flow
     try {
       await connection.query(`ALTER TABLE images MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
     } catch (err) {
       // Ignore if already migrated
     }
-    await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
-    await ensureColumn("tasks", "assigned_by", "INT");
-    await ensureColumn("tasks", "notes", "TEXT");
-    await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
-    
-    // Update tasks status enum to include review outcomes
-    try {
-      await connection.query(`ALTER TABLE tasks MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
-    } catch (err) {
-      // Ignore if already migrated
-    }
-    await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
-    await ensureColumn("tasks", "assigned_by", "INT");
-    await ensureColumn("tasks", "notes", "TEXT");
-    await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
-    await ensureColumn("tasks", "eligible_for_payment", "BOOLEAN DEFAULT TRUE");
     await ensureColumn("users", "last_login", "TIMESTAMP NULL");
 
     // Create tasks table
@@ -155,6 +138,19 @@ async function initDatabase() {
     `;
     await connection.query(createTasksTableQuery);
     console.log("✓ Tasks table created or already exists");
+
+    // Update tasks status enum to include review outcomes (migration-safe)
+    try {
+      await connection.query(`ALTER TABLE tasks MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
+    } catch (err) {
+      // Ignore if already migrated
+    }
+
+    await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
+    await ensureColumn("tasks", "assigned_by", "INT");
+    await ensureColumn("tasks", "notes", "TEXT");
+    await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+    await ensureColumn("tasks", "eligible_for_payment", "BOOLEAN DEFAULT TRUE");
 
     // Fix foreign key constraint for cascade delete if it exists
     try {
@@ -208,6 +204,8 @@ async function initDatabase() {
     `;
     await connection.query(createPaymentsTableQuery);
     console.log("✓ Payments table created or already exists");
+
+    await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
 
     // Create notifications table
     const createNotificationsTableQuery = `
