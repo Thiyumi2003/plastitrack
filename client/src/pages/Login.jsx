@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock, Shield } from "lucide-react";
+import { Mail, Lock, CheckCircle } from "lucide-react";
 import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import "./auth.css";
 import logo from "../images/logo (2).png";
-import loginImg from "../images/register.png";
+import loginImg from "../images/home.png";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -131,115 +131,133 @@ export default function Login() {
 
   return (
     <div className="auth-container">
-      {/* Left Form Section */}
-      <div className="auth-form-section">
-        <div className="auth-form-content">
-          <img src={logo} alt="Logo" className="auth-logo" />
-          <h1 className="auth-title">Log-in</h1>
-          <p className="auth-subtitle">Enter your user name and password to access your panel.</p>
+      <div className="login-shell">
+        <section className="login-left">
+          <div className="login-brand">
+            <img src={logo} alt="PlastiTrack" className="login-logo" />
+            <span className="login-name">PlastiTrack</span>
+          </div>
+          <h1 className="login-title">Premium Plastic Waste Annotation Platform</h1>
+          <ul className="login-features">
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Role-based secure access
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Smart annotation workflow
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Review and approval system
+            </li>
+          </ul>
+        </section>
 
-        {error && <div className="auth-error">{error}</div>}
-        {success && <div className="auth-success">{success}</div>}
+        <div className="login-art">
+          <img src={loginImg} alt="Plastic waste" className="login-art-image" />
+        </div>
 
-        <form onSubmit={handleLogin}>
-          {/* Email Field */}
-          <div className="auth-form-group">
-            <div className="auth-input-wrapper">
-              <Mail className="auth-input-icon" size={18} />
-              <input
-                id="email"
-                type="email"
-                name="email"
-                placeholder="Username or Email"
-                value={formData.email}
-                onChange={handleChange}
+        <section className="login-right">
+          <div className="login-card">
+            <h2 className="login-card-title">Welcome Back</h2>
+            <p className="login-card-subtitle">
+              Enter your user name and password to access your panel.
+            </p>
+
+            {error && <div className="auth-error">{error}</div>}
+            {success && <div className="auth-success">{success}</div>}
+
+            <form onSubmit={handleLogin} className="login-form">
+              <label className="login-label" htmlFor="email">Email</label>
+              <div className="login-input">
+                <Mail className="login-input-icon" size={18} />
+                <input
+                  id="email"
+                  type="email"
+                  name="email"
+                  placeholder="Email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <label className="login-label" htmlFor="password">Password</label>
+              <div className="login-input">
+                <Lock className="login-input-icon" size={18} />
+                <input
+                  id="password"
+                  type="password"
+                  name="password"
+                  placeholder="Password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="login-meta">
+                <label className="login-check">
+                  <input
+                    type="checkbox"
+                    name="remember"
+                    checked={formData.remember}
+                    onChange={handleChange}
+                    disabled={loading}
+                  />
+                  <span>Remember me</span>
+                </label>
+                <button
+                  type="button"
+                  className="login-link"
+                  onClick={() => navigate("/forgot")}
+                  disabled={loading}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                className="login-button"
                 disabled={loading}
-              />
+              >
+                {loading ? "Signing in..." : "Sign In"}
+              </button>
+            </form>
+
+            <div className="login-divider">
+              <span>or</span>
             </div>
+
+            <GoogleOAuthProvider
+              clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}
+              language="en"
+            >
+              <div className="login-google">
+                <GoogleLogin
+                  onSuccess={handleGoogleLogin}
+                  onError={() => setError("Google login failed")}
+                  locale="en"
+                  text="signin_with"
+                  size="large"
+                />
+              </div>
+            </GoogleOAuthProvider>
+
+            <p className="login-footer">
+              Don't have an account?{" "}
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => navigate("/register")}
+              >
+                Create account
+              </button>
+            </p>
           </div>
-
-          {/* Role Field */}
-          {/* Removed - Role selection not necessary */}
-
-          {/* Password Field */}
-          <div className="auth-form-group">
-            <div className="auth-input-wrapper">
-              <Lock className="auth-input-icon" size={18} />
-              <input
-                id="password"
-                type="password"
-                name="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          {/* Remember Me & Forgot Password */}
-          <label className="auth-checkbox">
-            <input
-              type="checkbox"
-              name="remember"
-              checked={formData.remember}
-              onChange={handleChange}
-              disabled={loading}
-            />
-            <span>Remember me</span>
-          </label>
-
-          <a
-            onClick={() => navigate("/forgot")}
-            className="auth-link"
-            style={{ cursor: "pointer" }}
-          >
-            Forgot Password?
-          </a>
-
-          {/* Button Group */}
-          <button
-            type="submit"
-            className="auth-button auth-button-primary"
-            disabled={loading}
-          >
-            {loading ? "Signing in..." : "Log-in"}
-          </button>
-        </form>
-
-        {/* Divider */}
-        <div style={{ margin: "20px 0", textAlign: "center", color: "#888" }}>
-          <span style={{ backgroundColor: "#fff", padding: "0 10px" }}>OR</span>
-        </div>
-
-        {/* Google Login */}
-        <GoogleOAuthProvider
-          clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}
-          language="en"
-        >
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <GoogleLogin
-              onSuccess={handleGoogleLogin}
-              onError={() => setError("Google login failed")}
-              locale="en"
-              text="signin_with"
-              size="large"
-            />
-          </div>
-        </GoogleOAuthProvider>
-
-        <p className="auth-footer-text">
-          Don't have an account?{" "}
-          <a onClick={() => navigate("/register")} style={{ cursor: "pointer" }}>
-            Register
-          </a>
-        </p>
-        </div>
-
-        {/* Right Image Section */}
-        <div className="auth-image-section">
-          <img src={loginImg} alt="Login" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-        </div>
+        </section>
       </div>
     </div>
   );

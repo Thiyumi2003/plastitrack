@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock } from "lucide-react";
+import { Mail, Lock, CheckCircle } from "lucide-react";
 import "./auth.css";
 import logo from "../images/logo (2).png";
-import forgotImg from "../images/forgotpw.png";
+import forgotImg from "../images/home.png";
 
 export default function ForgotPassword() {
   const navigate = useNavigate();
@@ -76,88 +76,107 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="pt-container">
-      {/* Left Form Section */}
-      <div className="pt-form-section">
-        <div className="pt-form-content">
-          <img src={logo} alt="Logo" className="pt-logo" />
-          <h1 className="pt-title">Forgot Password</h1>
-          <p className="pt-subtitle">Enter your details to reset password</p>
-
-        {error && <div className="pt-error">{error}</div>}
-
-        <form onSubmit={handleForgotPassword}>
-          {/* Email Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Mail className="pt-input-icon" size={18} />
-              <input
-                id="email"
-                type="email"
-                name="email"
-                placeholder="Email address"
-                value={formData.email}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
+    <div className="auth-container">
+      <div className="login-shell">
+        <section className="login-left">
+          <div className="login-brand">
+            <img src={logo} alt="PlastiTrack" className="login-logo" />
+            <span className="login-name">PlastiTrack</span>
           </div>
+          <h1 className="login-title">Reset Your Password</h1>
+          <ul className="login-features">
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Secure password recovery with OTP
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Create a new strong password
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Return to your workspace quickly
+            </li>
+          </ul>
+        </section>
 
-          {/* New Password Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Lock className="pt-input-icon" size={18} />
-              <input
-                id="newPassword"
-                type="password"
-                name="newPassword"
-                placeholder="New password"
-                value={formData.newPassword}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          {/* Confirm Password Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Lock className="pt-input-icon" size={18} />
-              <input
-                id="confirmPassword"
-                type="password"
-                name="confirmPassword"
-                placeholder="Confirm password"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          {/* Button */}
-          <button
-            type="submit"
-            className="pt-button pt-button-primary"
-            disabled={loading}
-          >
-            {loading ? "Processing..." : "Continue"}
-          </button>
-        </form>
-
-        <p className="pt-footer-text">
-          Remember your password?{" "}
-          <a onClick={() => navigate("/login")} style={{ cursor: "pointer" }}>
-            Log In
-          </a>
-        </p>
+        <div className="login-art">
+          <img src={forgotImg} alt="Plastic waste" className="login-art-image" />
         </div>
 
-        {/* Right Image Section */}
-        <div className="pt-image-section">
-          <img src={forgotImg} alt="Forgot Password" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-        </div>
+        <section className="login-right">
+          <div className="login-card">
+            <h2 className="login-card-title">Forgot Password</h2>
+            <p className="login-card-subtitle">Enter your details to reset password</p>
+
+            {error && <div className="auth-error">{error}</div>}
+
+            <form onSubmit={handleForgotPassword} className="login-form">
+              <label className="login-label" htmlFor="email">Email</label>
+              <div className="login-input">
+                <Mail className="login-input-icon" size={18} />
+                <input
+                  id="email"
+                  type="email"
+                  name="email"
+                  placeholder="Email address"
+                  value={formData.email}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <label className="login-label" htmlFor="newPassword">New Password</label>
+              <div className="login-input">
+                <Lock className="login-input-icon" size={18} />
+                <input
+                  id="newPassword"
+                  type="password"
+                  name="newPassword"
+                  placeholder="New password"
+                  value={formData.newPassword}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <label className="login-label" htmlFor="confirmPassword">Confirm Password</label>
+              <div className="login-input">
+                <Lock className="login-input-icon" size={18} />
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  name="confirmPassword"
+                  placeholder="Confirm password"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="login-button"
+                disabled={loading}
+              >
+                {loading ? "Processing..." : "Continue"}
+              </button>
+            </form>
+
+            <p className="login-footer">
+              Remember your password?{" "}
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => navigate("/login")}
+              >
+                Sign In
+              </button>
+            </p>
+          </div>
+        </section>
       </div>
     </div>
   );
 }
+

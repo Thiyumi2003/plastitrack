@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { CheckCircle } from "lucide-react";
 import "./auth.css";
 import logo from "../images/logo (2).png";
-import otpImg from "../images/register.png";
+import otpImg from "../images/home.png";
 
 export default function OtpVerify() {
   const navigate = useNavigate();
@@ -84,67 +85,90 @@ export default function OtpVerify() {
   };
 
   return (
-    <div className="otp-container">
-      {/* Left Form Section */}
-      <div className="otp-form-section">
-        <div className="otp-form-content">
-          <img src={logo} alt="Logo" className="otp-logo" />
-          <h1 className="otp-title">Email Authentication</h1>
-          <p className="otp-subtitle">Enter the 4-digit code sent to your email</p>
-
-        {error && <div className="otp-error">{error}</div>}
-
-        <form onSubmit={handleVerifyOtp}>
-          {/* OTP Input Group */}
-          <div className="otp-input-group">
-            {otp.map((digit, index) => (
-              <input
-                key={index}
-                ref={(ref) => (inputRefs.current[index] = ref)}
-                type="text"
-                className="otp-input"
-                value={digit}
-                onChange={(e) => handleChange(e.target.value, index)}
-                onKeyDown={(e) => handleKeyDown(e, index)}
-                placeholder="0"
-                disabled={loading}
-                maxLength="1"
-              />
-            ))}
+    <div className="auth-container">
+      <div className="login-shell">
+        <section className="login-left">
+          <div className="login-brand">
+            <img src={logo} alt="PlastiTrack" className="login-logo" />
+            <span className="login-name">PlastiTrack</span>
           </div>
+          <h1 className="login-title">Email Authentication</h1>
+          <ul className="login-features">
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Verify your identity with a 4-digit OTP
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Secure password reset in seconds
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Return to your dashboard safely
+            </li>
+          </ul>
+        </section>
 
-          {/* Button Group */}
-          <div className="otp-button-group">
-            <button
-              type="submit"
-              className="otp-button otp-button-confirm"
-              disabled={loading || otp.join("").length !== 4}
-            >
-              {loading ? "Verifying..." : "Confirm"}
-            </button>
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="otp-button otp-button-cancel"
-              disabled={loading}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-
-        <p className="otp-subtitle" style={{ marginTop: "30px" }}>
-          Didn't receive code? Check spam or{" "}
-          <a onClick={() => navigate("/forgot")} style={{ cursor: "pointer", color: "#8B0000", fontWeight: "600" }}>
-            try again
-          </a>
-        </p>
+        <div className="login-art">
+          <img src={otpImg} alt="Plastic waste" className="login-art-image" />
         </div>
 
-        {/* Right Image Section */}
-        <div className="otp-image-section">
-          <img src={otpImg} alt="OTP" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-        </div>
+        <section className="login-right">
+          <div className="login-card">
+            <h2 className="login-card-title">Enter Verification Code</h2>
+            <p className="login-card-subtitle">Enter the 4-digit code sent to your email</p>
+
+            {error && <div className="auth-error">{error}</div>}
+
+            <form onSubmit={handleVerifyOtp} className="login-form">
+              <div className="login-otp-input-group">
+                {otp.map((digit, index) => (
+                  <input
+                    key={index}
+                    ref={(ref) => (inputRefs.current[index] = ref)}
+                    type="text"
+                    className="login-otp-input"
+                    value={digit}
+                    onChange={(e) => handleChange(e.target.value, index)}
+                    onKeyDown={(e) => handleKeyDown(e, index)}
+                    placeholder="0"
+                    disabled={loading}
+                    maxLength="1"
+                  />
+                ))}
+              </div>
+
+              <div className="login-button-group">
+                <button
+                  type="submit"
+                  className="login-button"
+                  disabled={loading || otp.join("").length !== 4}
+                >
+                  {loading ? "Verifying..." : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="login-button login-button-secondary"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+
+            <p className="login-footer">
+              Didn't receive code?{" "}
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => navigate("/forgot")}
+              >
+                Try again
+              </button>
+            </p>
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock, User, Shield } from "lucide-react";
+import { Mail, Lock, User, Shield, CheckCircle } from "lucide-react";
 import "./auth.css";
 import logo from "../images/logo (2).png";
-import registerImg from "../images/register.png";
+import registerImg from "../images/home.png";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -105,175 +105,142 @@ export default function Register() {
   };
 
   return (
-    <div className="pt-container">
-      {/* Left Form Section */}
-      <div className="pt-form-section">
-        <div className="pt-form-content">
-          <img src={logo} alt="Logo" className="pt-logo" />
-          <h1 className="pt-title">Register</h1>
-          <p className="pt-subtitle">Enter your user name, email address, role and password to access your account.</p>
-
-          {error && <div className="pt-error">{error}</div>}
-
-          <form onSubmit={handleRegister} className="pt-form">
-          {/* Name Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <User className="pt-input-icon" size={18} />
-              <input
-                id="name"
-                type="text"
-                name="name"
-                placeholder="Username"
-                value={formData.name}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
+    <div className="auth-container">
+      <div className="login-shell">
+        <section className="login-left">
+          <div className="login-brand">
+            <img src={logo} alt="PlastiTrack" className="login-logo" />
+            <span className="login-name">PlastiTrack</span>
           </div>
+          <h1 className="login-title">Create Your PlastiTrack Account</h1>
+          <ul className="login-features">
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Choose your role and get started fast
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Secure onboarding and account protection
+            </li>
+            <li>
+              <CheckCircle size={16} className="login-feature-icon" />
+              Start annotating plastic waste images
+            </li>
+          </ul>
+        </section>
 
-          {/* Email Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Mail className="pt-input-icon" size={18} />
-              <input
-                id="email"
-                type="email"
-                name="email"
-                placeholder="Email address"
-                value={formData.email}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
+        <div className="login-art">
+          <img src={registerImg} alt="Plastic waste" className="login-art-image" />
+        </div>
 
-          {/* Role Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Shield className="pt-input-icon" size={18} />
-              <select
-                id="role"
-                name="role"
-                value={formData.role}
-                onChange={handleChange}
-                disabled={loading}
-                className="pt-select"
-              >
-                <option value="">Select Role</option>
-                <option value="annotator">Annotator</option>
-                <option value="tester">Tester</option>
-              </select>
-            </div>
-          </div>
+        <section className="login-right">
+          <div className="login-card">
+            <h2 className="login-card-title">Create Account</h2>
+            <p className="login-card-subtitle">
+              Enter your user details to register your account.
+            </p>
 
-          {/* Password Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Lock className="pt-input-icon" size={18} />
-              <input
-                id="password"
-                type="password"
-                name="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
+            {error && <div className="auth-error">{error}</div>}
 
-          {/* Password Validation Indicators */}
-          {formData.password && (
-            <div style={{ 
-              marginTop: "-10px", 
-              marginBottom: "15px", 
-              padding: "10px", 
-              backgroundColor: "#f9f9f9", 
-              borderRadius: "6px",
-              fontSize: "13px"
-            }}>
-              <div style={{ marginBottom: "5px", fontWeight: "600", color: "#333" }}>
-                Password Requirements:
+            <form onSubmit={handleRegister} className="login-form">
+              <label className="login-label" htmlFor="name">Full Name</label>
+              <div className="login-input">
+                <User className="login-input-icon" size={18} />
+                <input
+                  id="name"
+                  type="text"
+                  name="name"
+                  placeholder="Full Name"
+                  value={formData.name}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
               </div>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ 
-                  color: passwordValidation.minLength ? "#28a745" : "#dc3545",
-                  marginRight: "8px",
-                  fontWeight: "bold"
-                }}>
-                  {passwordValidation.minLength ? "✓" : "✗"}
-                </span>
-                <span style={{ color: passwordValidation.minLength ? "#28a745" : "#666" }}>
-                  At least 6 characters
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ 
-                  color: passwordValidation.hasUpperCase ? "#28a745" : "#dc3545",
-                  marginRight: "8px",
-                  fontWeight: "bold"
-                }}>
-                  {passwordValidation.hasUpperCase ? "✓" : "✗"}
-                </span>
-                <span style={{ color: passwordValidation.hasUpperCase ? "#28a745" : "#666" }}>
-                  One uppercase letter (A-Z)
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ 
-                  color: passwordValidation.hasLowerCase ? "#28a745" : "#dc3545",
-                  marginRight: "8px",
-                  fontWeight: "bold"
-                }}>
-                  {passwordValidation.hasLowerCase ? "✓" : "✗"}
-                </span>
-                <span style={{ color: passwordValidation.hasLowerCase ? "#28a745" : "#666" }}>
-                  One lowercase letter (a-z)
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-                <span style={{ 
-                  color: passwordValidation.hasNumber ? "#28a745" : "#dc3545",
-                  marginRight: "8px",
-                  fontWeight: "bold"
-                }}>
-                  {passwordValidation.hasNumber ? "✓" : "✗"}
-                </span>
-                <span style={{ color: passwordValidation.hasNumber ? "#28a745" : "#666" }}>
-                  One number (0-9)
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center" }}>
-                <span style={{ 
-                  color: passwordValidation.hasSpecialChar ? "#28a745" : "#dc3545",
-                  marginRight: "8px",
-                  fontWeight: "bold"
-                }}>
-                  {passwordValidation.hasSpecialChar ? "✓" : "✗"}
-                </span>
-                <span style={{ color: passwordValidation.hasSpecialChar ? "#28a745" : "#666" }}>
-                  One special character (!@#$%^&*)
-                </span>
-              </div>
-            </div>
-          )}
 
-          {/* Confirm Password Field */}
-          <div className="pt-form-group">
-            <div className="pt-input-wrapper">
-              <Lock className="pt-input-icon" size={18} />
-              <input
-                id="confirmPassword"
-                type="password"
-                name="confirmPassword"
-                placeholder="Confirm password"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                disabled={loading}
-              />
-            </div>
-          </div>
+              <label className="login-label" htmlFor="email">Email Address</label>
+              <div className="login-input">
+                <Mail className="login-input-icon" size={18} />
+                <input
+                  id="email"
+                  type="email"
+                  name="email"
+                  placeholder="Email Address"
+                  value={formData.email}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              <label className="login-label" htmlFor="role">Select Role</label>
+              <div className="login-input">
+                <Shield className="login-input-icon" size={18} />
+                <select
+                  id="role"
+                  name="role"
+                  value={formData.role}
+                  onChange={handleChange}
+                  disabled={loading}
+                  className="login-select"
+                >
+                  <option value="">Select Role</option>
+                  <option value="annotator">Annotator</option>
+                  <option value="tester">Tester</option>
+                </select>
+              </div>
+
+              <label className="login-label" htmlFor="password">Password</label>
+              <div className="login-input">
+                <Lock className="login-input-icon" size={18} />
+                <input
+                  id="password"
+                  type="password"
+                  name="password"
+                  placeholder="Password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
+
+              {formData.password && (
+                <div className="login-password-hints">
+                  <div className="login-hint-title">Password Requirements:</div>
+                  <div className={passwordValidation.minLength ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.minLength ? "✓" : "x"}</span>
+                    At least 6 characters
+                  </div>
+                  <div className={passwordValidation.hasUpperCase ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasUpperCase ? "✓" : "x"}</span>
+                    One uppercase letter (A-Z)
+                  </div>
+                  <div className={passwordValidation.hasLowerCase ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasLowerCase ? "✓" : "x"}</span>
+                    One lowercase letter (a-z)
+                  </div>
+                  <div className={passwordValidation.hasNumber ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasNumber ? "✓" : "x"}</span>
+                    One number (0-9)
+                  </div>
+                  <div className={passwordValidation.hasSpecialChar ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasSpecialChar ? "✓" : "x"}</span>
+                    One special character (!@#$%^&*)
+                  </div>
+                </div>
+              )}
+
+              <label className="login-label" htmlFor="confirmPassword">Confirm Password</label>
+              <div className="login-input">
+                <Lock className="login-input-icon" size={18} />
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  name="confirmPassword"
+                  placeholder="Confirm Password"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  disabled={loading}
+                />
+              </div>
 
           {/* Terms Checkbox */}
           <div className="pt-checkbox">
@@ -283,31 +250,30 @@ export default function Register() {
               required
               disabled={loading}
             />
-            <label htmlFor="terms">I agree to all Terms & Condition</label>
+            <label htmlFor="terms">I agree to the <a href="#" onClick={(e) => e.preventDefault()}>Terms & Conditions</a></label>
           </div>
 
-          {/* Register Button */}
-          <button
-            type="submit"
-            className="pt-button pt-button-primary"
-            disabled={loading}
-          >
-            {loading ? "Registering..." : "Register"}
-          </button>
-        </form>
+              <button
+                type="submit"
+                className="login-button"
+                disabled={loading}
+              >
+                {loading ? "Registering..." : "Register"}
+              </button>
+            </form>
 
-        <p className="pt-footer-text">
-          Already have an account?{" "}
-          <a onClick={() => navigate("/login")} style={{ cursor: "pointer" }}>
-            Log In
-          </a>
-        </p>
-        </div>
-
-        {/* Right Image Section */}
-        <div className="pt-image-section">
-          <img src={registerImg} alt="Register" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-        </div>
+            <p className="login-footer">
+              Already have an account?{" "}
+              <button
+                type="button"
+                className="login-link"
+                onClick={() => navigate("/login")}
+              >
+                Sign In
+              </button>
+            </p>
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -1,141 +1,188 @@
 import { Link } from "react-router-dom";
-import './home.css'
-
+import { Edit3, Eye, DollarSign, Upload, CheckCircle } from "lucide-react";
+import './home.css';
 import logo from '../images/logo (2).png';
+import heroImage from '../images/home.png';
 
 export default function Home() {
-    
   return (
     <div className="homepage">
-      {/* Header Bar */}
-      <header className="header-bar">
-        <div className="header-container">
-          <img src={logo} alt="PlastiTrack Logo" className="header-logo" />
-          <nav className="header-nav">
-            <a href="#home" className="nav-link">Home</a>
-            <Link to="/register" className="nav-link">Register</Link>
-            <Link to="/login" className="nav-link">Login</Link>
+      {/* Navigation Header */}
+      <header className="site-header">
+        <div className="header-content">
+          <div className="logo-section">
+            <img src={logo} alt="PlastiTrack" className="site-logo" />
+            <span className="logo-text">PlastiTrack</span>
+          </div>
+          <nav className="main-nav">
+            <a href="#home" className="nav-item">Home</a>
+            <a href="#features" className="nav-item">Features</a>
+            <a href="#process" className="nav-item">Process</a>
+            <Link to="/login" className="nav-item">Sign In</Link>
+            <Link to="/register" className="btn-cta">Try for Free</Link>
           </nav>
         </div>
       </header>
-      
-      <main className="hero-section">
-        <div className="container">
-          <h1 className="main-title">Plastic Waste Annotation Management System</h1>
-          <p className="subtitle">
-            A platform to manage, annotate, and validate plastic waste images efficiently with role-based access for admins, annotators, testers and melbourne user.
-          </p>
-          
-          <div className="cta-buttons">
-            <Link to="/login" className="btn-primary">Login</Link>
-            <Link to="/register" className="btn-secondary">Register</Link>
-          </div>
-        </div>
-      </main>
 
-      {/* Features Section */}
-      <section className="features-section">
-        <div className="features-container">
-          <h2>Why Choose PlastiTrack?</h2>
-          
-          <div className="features-grid">
-            <div className="feature-card">
-              <div className="feature-icon">🎯</div>
-              <h3>Accurate Annotation</h3>
-              <p>Precision-focused image annotation tools for detailed plastic waste classification and tracking.</p>
+      {/* Hero Section */}
+      <section className="hero">
+        <div className="hero-content">
+          <div className="hero-text">
+            <h1 className="hero-title">Empowering Plastic<br />Waste Management</h1>
+            <p className="hero-subtitle">
+              The leading platform for annotating, reviewing,<br />
+              and managing plastic waste images.
+            </p>
+            <div className="hero-buttons">
+              <Link to="/register" className="btn-get-started">Get Started</Link>
+              <button className="btn-watch-demo">
+                <span className="demo-icon">▶</span>
+                Watch Demo
+              </button>
             </div>
-            
-            <div className="feature-card">
-              <div className="feature-icon">👥</div>
-              <h3>Role-Based Access</h3>
-              <p>Secure, customized dashboards for admins, annotators, testers, and regional managers.</p>
-            </div>
-            
-            <div className="feature-card">
-              <div className="feature-icon">📊</div>
-              <h3>Real-Time Analytics</h3>
-              <p>Track progress, view detailed reports, and monitor annotation quality metrics instantly.</p>
-            </div>
-            
-            <div className="feature-card">
-              <div className="feature-icon">⚡</div>
-              <h3>Fast & Efficient</h3>
-              <p>Streamlined workflow optimized for speed without compromising on data accuracy.</p>
-            </div>
-            
-            <div className="feature-card">
-              <div className="feature-icon">🔒</div>
-              <h3>Secure & Reliable</h3>
-              <p>Enterprise-grade security with authentication, authorization, and data protection.</p>
-            </div>
-            
-            <div className="feature-card">
-              <div className="feature-icon">🌍</div>
-              <h3>Multi-Region Support</h3>
-              <p>Manage operations across multiple locations with centralized control and monitoring.</p>
+          </div>
+          <div className="hero-visual">
+            <img src={heroImage} alt="Plastic Waste Management" className="hero-main-image" />
+            <div className="stats-overlay">
+              <div className="stat-card card-top">
+                <div className="stat-row">
+                  <div className="stat-icon">📸</div>
+                  <div className="stat-content">
+                    <div className="stat-number">17</div>
+                    <div className="stat-label">Assigned Images</div>
+                  </div>
+                </div>
+              </div>
+              <div className="stat-card card-middle">
+                <div className="stat-row">
+                  <div className="stat-icon">📊</div>
+                  <div className="stat-content">
+                    <div className="stat-number">4</div>
+                    <div className="stat-label">In Progress</div>
+                  </div>
+                </div>
+              </div>
+              <div className="stat-card card-bottom">
+                <div className="stat-row">
+                  <div className="stat-icon">✓</div>
+                  <div className="stat-content">
+                    <div className="stat-number">3</div>
+                    <div className="stat-label">Pending Review</div>
+                  </div>
+                </div>
+              </div>
+              {/* Data Table Cards */}
+              <div className="data-card data-card-1">
+                <div className="data-header">
+                  <span className="data-label">IMAGE ID</span>
+                  <span className="data-label">USER</span>
+                  <span className="data-label">ASSIGNED DATE</span>
+                  <span className="data-label">STATUS</span>
+                </div>
+                <div className="data-row">
+                  <span className="data-value">IMG-5</span>
+                  <span className="data-value">Sarah</span>
+                  <span className="data-value">Dec 13, 2025</span>
+                  <span className="status-badge status-review">Review</span>
+                </div>
+              </div>
+              <div className="data-card data-card-2">
+                <div className="data-row">
+                  <span className="data-value">IMG-7</span>
+                  <span className="data-value">O Evangelista</span>
+                  <span className="data-value">Nov 22, 2025</span>
+                  <span className="status-badge status-review">Review</span>
+                </div>
+              </div>
+              <div className="data-card data-card-3">
+                <div className="data-row">
+                  <span className="data-value">IMG-9</span>
+                  <span className="data-value">Annotator</span>
+                  <span className="data-value">Nov 22, 2025</span>
+                  <span className="status-badge status-done">Done</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* How It Works Section */}
-      <section className="how-it-works-section">
-        <div className="how-container">
-          <h2>How It Works</h2>
-          
-          <div className="steps-grid">
-            <div className="step-card">
-              <div className="step-number">1</div>
-              <h3>Register Account</h3>
-              <p>Create your account and select your role for immediate access.</p>
+      <section className="how-it-works" id="process">
+        <div className="section-container">
+          <h2 className="section-title">How It Works</h2>
+          <p className="section-subtitle">
+            A simple and effective process to annotate plastic waste images.
+          </p>
+          <div className="works-grid">
+            <div className="work-card work-card-green">
+              <div className="work-icon work-icon-green">
+                <Edit3 size={32} />
+              </div>
+              <h3>Annotate Images</h3>
+              <p>Easily label and classify plastic waste in images using our intuitive annotation tools.</p>
+              <button className="learn-more">Learn More →</button>
             </div>
-            
-            <div className="step-card">
-              <div className="step-number">2</div>
-              <h3>Access Dashboard</h3>
-              <p>Log in to view your personalized dashboard with relevant tasks and data.</p>
+            <div className="work-card work-card-orange">
+              <div className="work-icon work-icon-orange">
+                <Eye size={32} />
+              </div>
+              <h3>Review & Approve</h3>
+              <p>Seamlessly review and approve annotations with built-in feedback and approval workflows.</p>
+              <button className="learn-more">Learn More →</button>
             </div>
-            
-            <div className="step-card">
-              <div className="step-number">3</div>
-              <h3>Manage & Annotate</h3>
-              <p>Upload, review, annotate, and validate plastic waste images efficiently.</p>
-            </div>
-            
-            <div className="step-card">
-              <div className="step-number">4</div>
-              <h3>Track Progress</h3>
-              <p>Monitor performance, view analytics, and generate detailed reports for insights.</p>
+            <div className="work-card work-card-teal">
+              <div className="work-icon work-icon-teal">
+                <DollarSign size={32} />
+              </div>
+              <h3>Track Payments</h3>
+              <p>Monitor and manage payouts for completed annotations. Get rewarded for your work.</p>
+              <button className="learn-more">Learn More →</button>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="stats-section">
-        <div className="stats-container">
-          <div className="stat-item">
-            <div className="stat-number">10K+</div>
-            <p>Images Processed</p>
-          </div>
-          <div className="stat-item">
-            <div className="stat-number">500+</div>
-            <p>Active Users</p>
-          </div>
-          <div className="stat-item">
-            <div className="stat-number">99.9%</div>
-            <p>System Uptime</p>
-          </div>
-          <div className="stat-item">
-            <div className="stat-number">24/7</div>
-            <p>Support Available</p>
+      {/* Get Started Section */}
+      <section className="get-started" id="features">
+        <div className="section-container">
+          <h2 className="section-title">Get Started Today</h2>
+          <p className="section-subtitle">
+            Join PlastiTrack and start annotating plastic waste images to make a difference.
+          </p>
+          <div className="started-grid">
+            <div className="started-card started-card-green">
+              <div className="started-icon started-icon-green">
+                <Upload size={32} />
+              </div>
+              <h3>Upload</h3>
+              <p>Admins upload images of plastic waste for annotation.</p>
+              <button className="learn-more">Learn More →</button>
+            </div>
+            <div className="started-card started-card-orange">
+              <div className="started-icon started-icon-orange">
+                <Edit3 size={32} />
+              </div>
+              <h3>Annotate</h3>
+              <p>Annotators label and classify plastic waste in the images.</p>
+              <button className="learn-more">Learn More →</button>
+            </div>
+            <div className="started-card started-card-teal">
+              <div className="started-icon started-icon-teal">
+                <CheckCircle size={32} />
+              </div>
+              <h3>Review</h3>
+              <p>Reviewers ensure accuracy and approve the annotations.</p>
+              <button className="learn-more">Learn More →</button>
+            </div>
           </div>
         </div>
       </section>
 
-      <footer className="footer">
+      {/* Footer */}
+      <footer className="site-footer">
         <p>&copy; 2025 PlastiTrack. All rights reserved.</p>
       </footer>
     </div>
-  )
+  );
 }

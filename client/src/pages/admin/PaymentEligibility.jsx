@@ -54,13 +54,13 @@ export default function PaymentEligibility() {
           marginBottom: "20px"
         }}>
           <h3 style={{ margin: "0 0 10px 0", color: "#1976d2" }}>📋 Payment Fairness Policy</h3>
-          <p style={{ margin: "5px 0", fontSize: "14px" }}>
+          <p style={{ margin: "5px 0", fontSize: "14px", color: "#333" }}>
             ✅ <strong>Eligible for Payment:</strong> Annotators whose work was accepted or is currently being reviewed
           </p>
-          <p style={{ margin: "5px 0", fontSize: "14px" }}>
+          <p style={{ margin: "5px 0", fontSize: "14px", color: "#333" }}>
             ❌ <strong>Not Eligible for Payment:</strong> Annotators whose work was rejected and the task was reassigned to someone else
           </p>
-          <p style={{ margin: "5px 0", fontSize: "14px", fontStyle: "italic", color: "#666" }}>
+          <p style={{ margin: "5px 0", fontSize: "14px", fontStyle: "italic", color: "#333" }}>
             When an image set is rejected and reassigned, only the annotator who successfully completes the work receives payment.
           </p>
         </div>
@@ -72,7 +72,8 @@ export default function PaymentEligibility() {
               border: "1px solid #e0e0e0",
               borderRadius: "8px",
               padding: "20px",
-              marginBottom: "20px"
+              marginBottom: "20px",
+              color: "#333"
             }}>
               <h3 style={{ margin: "0 0 15px 0", color: "#333" }}>
                 🖼️ {group.image_name}
