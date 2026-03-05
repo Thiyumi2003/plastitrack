@@ -84,7 +84,7 @@ export default function ManageImages() {
       
       await axios.put(
         `http://localhost:5000/api/dashboard/admin/images/${imageId}/assign`,
-        { testerId: userId },
+        { testerId: userId, status: "pending_review" },
         { headers: getAuthHeader() }
       );
       fetchData();

@@ -9,6 +9,7 @@ export default function TesterProfile() {
     lastName: "",
     email: "",
     phone: "",
+    profilePicture: null,
   });
   const [password, setPassword] = useState({
     current: "",
@@ -17,6 +18,7 @@ export default function TesterProfile() {
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -29,6 +31,7 @@ export default function TesterProfile() {
       lastName: user.name?.split(" ").slice(1).join(" ") || "",
       email: user.email || "",
       phone: user.phone || "",
+      profilePicture: user.profile_picture || null,
     });
   }, []);
 
@@ -40,6 +43,53 @@ export default function TesterProfile() {
   const handlePasswordChange = (e) => {
     const { name, value } = e.target;
     setPassword((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfilePictureUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      setMessage("Only JPG, PNG, or GIF files are allowed");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setMessage("File size must be less than 2MB");
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("profilePicture", file);
+
+    try {
+      const response = await axios.post(
+        "http://localhost:5000/api/dashboard/profile-picture",
+        formData,
+        {
+          headers: {
+            ...getAuthHeader(),
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+
+      const newPicturePath = response.data.profilePicture;
+      setProfile((prev) => ({ ...prev, profilePicture: newPicturePath }));
+
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      user.profile_picture = newPicturePath;
+      localStorage.setItem("user", JSON.stringify(user));
+
+      setMessage("Profile picture uploaded successfully!");
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      setMessage(err.response?.data?.error || "Failed to upload profile picture");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -122,10 +172,26 @@ export default function TesterProfile() {
         <div className="profile-section">
           <h2>Profile Picture</h2>
           <div className="profile-picture-box">
-            <div className="avatar-large">{profile.firstName?.charAt(0) || "T"}</div>
+            {profile.profilePicture ? (
+              <img
+                src={`http://localhost:5000${profile.profilePicture}`}
+                alt="Profile"
+                className="avatar-large"
+                style={{ objectFit: "cover" }}
+              />
+            ) : (
+              <div className="avatar-large">{profile.firstName?.charAt(0) || "T"}</div>
+            )}
             <div className="upload-info">
               <p>Upload a new profile picture</p>
               <p className="small-text">JPG, PNG or GIF. Max size 2MB</p>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/gif"
+                onChange={handleProfilePictureUpload}
+                disabled={uploading}
+                style={{ marginTop: "10px" }}
+              />
             </div>
           </div>
         </div>

@@ -153,7 +153,8 @@ router.post("/login", async (req, res) => {
         email: user.email, 
         name: user.name, 
         role: user.role,
-        auto_track_hours: user.auto_track_hours 
+        auto_track_hours: user.auto_track_hours,
+        profile_picture: user.profile_picture || null,
       },
     });
   } catch (err) {
@@ -544,6 +545,7 @@ router.post("/google-login", async (req, res) => {
             name: user.name,
             role: user.role,
             isNewUser,
+            profile_picture: user.profile_picture || null,
           },
         });
       } finally {

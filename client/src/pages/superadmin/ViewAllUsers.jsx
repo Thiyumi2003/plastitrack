@@ -18,6 +18,8 @@ export default function ViewAllUsers() {
     email: "",
     role: "",
     hourly_rate: "",
+    annotator_rate: "",
+    tester_rate: "",
   });
 
   const getAuthHeader = () => ({
@@ -68,6 +70,8 @@ export default function ViewAllUsers() {
       email: user.email,
       role: user.role,
       hourly_rate: user.hourly_rate || "",
+      annotator_rate: user.annotator_rate || "",
+      tester_rate: user.tester_rate || "",
     });
     setShowEditModal(true);
   };
@@ -273,6 +277,34 @@ export default function ViewAllUsers() {
                   value={editForm.hourly_rate}
                   onChange={(e) => setEditForm({ ...editForm, hourly_rate: e.target.value })}
                   placeholder="e.g., 1000"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+            )}
+
+            {editForm.role === "annotator" && (
+              <div className="form-group">
+                <label>Annotator Rate (₨ per object)</label>
+                <input
+                  type="number"
+                  value={editForm.annotator_rate}
+                  onChange={(e) => setEditForm({ ...editForm, annotator_rate: e.target.value })}
+                  placeholder="e.g., 5"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+            )}
+
+            {editForm.role === "tester" && (
+              <div className="form-group">
+                <label>Tester Rate (₨ per object)</label>
+                <input
+                  type="number"
+                  value={editForm.tester_rate}
+                  onChange={(e) => setEditForm({ ...editForm, tester_rate: e.target.value })}
+                  placeholder="e.g., 3"
                   min="0"
                   step="0.01"
                 />

@@ -1,3 +1,4 @@
+
 const express = require("express");
 const pool = require("../db/pool");
 const multer = require("multer");
@@ -21,6 +22,155 @@ const verifyToken = (req, res, next) => {
     return res.status(401).json({ error: "Invalid token" });
   }
 };
+
+const isSuperAdmin = (req) => req.user?.role === "super_admin";
+
+const getModelSummary = async (connection, modelType) => {
+  const [rows] = await connection.execute(
+    `SELECT 
+      COUNT(*) as total_images,
+      SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END) as finalized_images,
+      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_images,
+      SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_images
+     FROM images
+     WHERE model_type = ?`,
+    [modelType]
+  );
+
+  const summary = rows?.[0] || {};
+  const totalImages = Number(summary.total_images || 0);
+  const finalizedImages = Number(summary.finalized_images || 0);
+  const approvedImages = Number(summary.approved_images || 0);
+  const rejectedImages = Number(summary.rejected_images || 0);
+
+  return {
+    modelType,
+    totalImages,
+    finalizedImages,
+    approvedImages,
+    rejectedImages,
+    isComplete: totalImages > 0 && finalizedImages === totalImages,
+  };
+};
+
+const getApprovedImageCount = async (connection, modelType, role, userId) => {
+  if (role === "annotator") {
+    const [rows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM images
+       WHERE model_type = ? AND status = 'approved' AND annotator_id = ?`,
+      [modelType, userId]
+    );
+    return Number(rows?.[0]?.count || 0);
+  }
+
+  if (role === "tester") {
+    const [rows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM images
+       WHERE model_type = ? AND status = 'approved' AND tester_id = ?`,
+      [modelType, userId]
+    );
+    return Number(rows?.[0]?.count || 0);
+  }
+
+  return 0;
+};
+
+const profilePicturesDir = path.join(
+  __dirname,
+  "..",
+  "..",
+  "uploads",
+  "profile-pictures"
+);
+
+fs.mkdirSync(profilePicturesDir, { recursive: true });
+
+const profileUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, profilePicturesDir);
+    },
+    filename: (req, file, cb) => {
+      const extMap = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+      };
+      const fallbackExt = path.extname(file.originalname).toLowerCase() || ".jpg";
+      const extension = extMap[file.mimetype] || fallbackExt;
+      const safeId = req.user?.id || "user";
+      cb(null, `profile-${safeId}-${Date.now()}${extension}`);
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "image/gif"];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new Error("Only JPG, PNG, or GIF images are allowed"));
+    }
+    return cb(null, true);
+  },
+});
+
+router.post("/profile-picture", verifyToken, (req, res) => {
+  profileUpload.single("profilePicture")(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const relativePath = `/uploads/profile-pictures/${req.file.filename}`;
+    let connection;
+
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.execute(
+        "SELECT profile_picture FROM users WHERE id = ?",
+        [userId]
+      );
+
+      await connection.execute(
+        "UPDATE users SET profile_picture = ? WHERE id = ?",
+        [relativePath, userId]
+      );
+
+      const oldPath = rows?.[0]?.profile_picture;
+      if (oldPath) {
+        const absoluteOldPath = path.join(
+          __dirname,
+          "..",
+          "..",
+          oldPath.replace(/^\/+/, "")
+        );
+        if (fs.existsSync(absoluteOldPath)) {
+          fs.unlinkSync(absoluteOldPath);
+        }
+      }
+
+      return res.json({
+        message: "Profile picture updated successfully",
+        profilePicture: relativePath,
+      });
+    } catch (uploadErr) {
+      console.error("Profile picture upload error:", uploadErr);
+      return res.status(500).json({ error: "Failed to upload profile picture" });
+    } finally {
+      if (connection) {
+        await connection.release();
+      }
+    }
+  });
+});
 
 // GET KPIs - Dashboard summary cards
 router.get("/kpis", verifyToken, async (req, res) => {
@@ -97,7 +247,7 @@ router.get("/users", verifyToken, async (req, res) => {
     const { role } = req.query;
     const connection = await pool.getConnection();
 
-    let query = "SELECT id, name, email, role, is_active, created_at FROM users WHERE role != 'super_admin'";
+    let query = "SELECT id, name, email, role, is_active, hourly_rate, annotator_rate, tester_rate, created_at FROM users WHERE role != 'super_admin'";
     const params = [];
 
     if (role) {
@@ -122,7 +272,7 @@ router.get("/users", verifyToken, async (req, res) => {
 router.put("/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, role, hourly_rate } = req.body;
+    const { name, email, role, hourly_rate, annotator_rate, tester_rate } = req.body;
 
     const allowedRoles = ["super_admin"];
     if (!allowedRoles.includes(req.user?.role)) {
@@ -153,6 +303,16 @@ router.put("/users/:id", verifyToken, async (req, res) => {
     if (hourly_rate !== undefined && role === "admin") {
       query += ", hourly_rate = ?";
       params.push(hourly_rate);
+    }
+
+    if (annotator_rate !== undefined && role === "annotator") {
+      query += ", annotator_rate = ?";
+      params.push(annotator_rate);
+    }
+
+    if (tester_rate !== undefined && role === "tester") {
+      query += ", tester_rate = ?";
+      params.push(tester_rate);
     }
 
     query += " WHERE id = ?";
@@ -323,6 +483,472 @@ router.get("/reports", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Reports error:", err);
     res.status(500).json({ error: "Failed to fetch reports" });
+  }
+});
+
+// GET Annotation Summary Report with date/role filters
+router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate, role } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE t.task_type = 'annotation'";
+    const params = [];
+
+    if (role && ["annotator", "tester"].includes(role)) {
+      whereClause += " AND u.role = ?";
+      params.push(role);
+    }
+    if (startDate) {
+      whereClause += " AND t.assigned_date >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND t.assigned_date <= ?";
+      params.push(endDate);
+    }
+
+    const [summaryRows] = await connection.execute(
+      `SELECT 
+        COUNT(DISTINCT t.image_id) as totalImageSets,
+        COUNT(t.id) as totalAssigned,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completedAnnotations,
+        SUM(CASE WHEN t.status IN ('pending', 'in_progress', 'pending_review') THEN 1 ELSE 0 END) as pendingAnnotations,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejectedAnnotations
+       FROM tasks t
+       LEFT JOIN users u ON t.user_id = u.id
+       ${whereClause}`,
+      params
+    );
+
+    const [approvalRows] = await connection.execute(
+      `SELECT 
+        SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approvedCount,
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejectedCount
+       FROM images i
+       INNER JOIN (
+         SELECT DISTINCT t.image_id
+         FROM tasks t
+         LEFT JOIN users u ON t.user_id = u.id
+         ${whereClause}
+       ) x ON x.image_id = i.id`,
+      params
+    );
+
+    const [performanceRows] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        COUNT(t.id) as assigned,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed
+       FROM tasks t
+       LEFT JOIN users u ON t.user_id = u.id
+       ${whereClause}
+       GROUP BY u.id, u.name
+       ORDER BY completed DESC, assigned DESC
+       LIMIT 10`,
+      params
+    );
+
+    await connection.release();
+
+    const summary = summaryRows[0] || {};
+    const approved = Number(approvalRows[0]?.approvedCount || 0);
+    const rejected = Number(approvalRows[0]?.rejectedCount || 0);
+    const approvalRate = approved + rejected > 0 ? (approved / (approved + rejected)) * 100 : 0;
+
+    res.json({
+      filters: { startDate: startDate || null, endDate: endDate || null, role: role || null },
+      summary: {
+        totalImageSets: Number(summary.totalImageSets || 0),
+        totalAssigned: Number(summary.totalAssigned || 0),
+        completedAnnotations: Number(summary.completedAnnotations || 0),
+        pendingAnnotations: Number(summary.pendingAnnotations || 0),
+        rejectedAnnotations: Number(summary.rejectedAnnotations || 0),
+        approvalRate: Number(approvalRate.toFixed(2)),
+      },
+      pie: [
+        { name: "Completed", value: Number(summary.completedAnnotations || 0) },
+        { name: "Pending", value: Number(summary.pendingAnnotations || 0) },
+      ],
+      performance: performanceRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        assigned: Number(row.assigned || 0),
+        completed: Number(row.completed || 0),
+      })),
+    });
+  } catch (err) {
+    console.error("Annotation summary error:", err);
+    res.status(500).json({ error: "Failed to fetch annotation summary" });
+  }
+});
+
+// GET Annotator Performance Report with date filters
+router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate } = req.query;
+    const connection = await pool.getConnection();
+
+    let taskWhere = "WHERE u.role = 'annotator'";
+    const taskParams = [];
+    if (startDate) {
+      taskWhere += " AND t.assigned_date >= ?";
+      taskParams.push(startDate);
+    }
+    if (endDate) {
+      taskWhere += " AND t.assigned_date <= ?";
+      taskParams.push(endDate);
+    }
+
+    const [taskRows] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        COUNT(t.id) as total_assigned,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN t.status IN ('pending','in_progress','pending_review') THEN 1 ELSE 0 END) as pending,
+        AVG(TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at))) as avg_completion_minutes
+       FROM users u
+       LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type = 'annotation'
+       ${taskWhere}
+       GROUP BY u.id, u.name
+       ORDER BY completed DESC, total_assigned DESC`,
+      taskParams
+    );
+
+    let imageWhere = "WHERE i.annotator_id IS NOT NULL";
+    const imageParams = [];
+    if (startDate) {
+      imageWhere += " AND i.updated_at >= ?";
+      imageParams.push(startDate);
+    }
+    if (endDate) {
+      imageWhere += " AND i.updated_at <= ?";
+      imageParams.push(endDate);
+    }
+
+    const [approvalRows] = await connection.execute(
+      `SELECT 
+        i.annotator_id as annotator_id,
+        SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM images i
+       ${imageWhere}
+       GROUP BY i.annotator_id`,
+      imageParams
+    );
+
+    await connection.release();
+
+    const approvalMap = new Map();
+    approvalRows.forEach((row) => {
+      approvalMap.set(row.annotator_id, {
+        approved: Number(row.approved || 0),
+        rejected: Number(row.rejected || 0),
+      });
+    });
+
+    const rows = taskRows.map((row) => {
+      const approval = approvalMap.get(row.id) || { approved: 0, rejected: 0 };
+      const totalReviewed = approval.approved + approval.rejected;
+      const accuracyRate = totalReviewed > 0 ? (approval.approved / totalReviewed) * 100 : 0;
+      const avgMinutes = Number(row.avg_completion_minutes || 0);
+      const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+      return {
+        id: row.id,
+        name: row.name,
+        totalAssigned: Number(row.total_assigned || 0),
+        completed: Number(row.completed || 0),
+        pending: Number(row.pending || 0),
+        approved: approval.approved,
+        rejected: approval.rejected,
+        accuracyRate: Number(accuracyRate.toFixed(2)),
+        avgCompletionMinutes: Number(safeAvgMinutes.toFixed(2)),
+      };
+    });
+
+    res.json({
+      filters: { startDate: startDate || null, endDate: endDate || null },
+      rows,
+    });
+  } catch (err) {
+    console.error("Annotator performance error:", err);
+    res.status(500).json({ error: "Failed to fetch annotator performance" });
+  }
+});
+
+// GET Tester Review Report with date filters
+router.get("/reports/tester-review", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE t.task_type = 'testing'";
+    const params = [];
+    if (startDate) {
+      whereClause += " AND t.assigned_date >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND t.assigned_date <= ?";
+      params.push(endDate);
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT 
+        COUNT(*) as totalReviewed,
+        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approvedCount,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejectedCount,
+        AVG(TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at))) as avgReviewMinutes
+       FROM tasks t
+       ${whereClause}
+       AND t.status IN ('approved','rejected')`,
+      params
+    );
+
+    let joinClause = "LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type = 'testing'";
+    const testerParams = [];
+    if (startDate) {
+      joinClause += " AND t.assigned_date >= ?";
+      testerParams.push(startDate);
+    }
+    if (endDate) {
+      joinClause += " AND t.assigned_date <= ?";
+      testerParams.push(endDate);
+    }
+
+    const [testerRows] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        COUNT(t.id) as assignedCount,
+        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approvedCount,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejectedCount,
+        AVG(CASE WHEN t.status IN ('approved', 'rejected') 
+            THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) 
+            ELSE NULL END) as avgReviewMinutes
+       FROM users u
+       ${joinClause}
+       WHERE u.role = 'tester'
+       GROUP BY u.id, u.name
+       ORDER BY assignedCount DESC, approvedCount DESC`,
+      testerParams
+    );
+
+    await connection.release();
+
+    const summary = rows[0] || {};
+    const approved = Number(summary.approvedCount || 0);
+    const rejected = Number(summary.rejectedCount || 0);
+    const totalReviewed = Number(summary.totalReviewed || 0);
+    const rejectionRate = approved + rejected > 0 ? (rejected / (approved + rejected)) * 100 : 0;
+    const avgMinutes = Number(summary.avgReviewMinutes || 0);
+    const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+
+    res.json({
+      filters: { startDate: startDate || null, endDate: endDate || null },
+      summary: {
+        totalReviewed,
+        approvedCount: approved,
+        rejectedCount: rejected,
+        avgReviewMinutes: Number(safeAvgMinutes.toFixed(2)),
+        rejectionRate: Number(rejectionRate.toFixed(2)),
+      },
+      testers: testerRows.map((row) => {
+        const approved = Number(row.approvedCount || 0);
+        const rejected = Number(row.rejectedCount || 0);
+        const completed = approved + rejected;
+        const accuracyRate = completed > 0 ? (approved / completed) * 100 : 0;
+        const avgMinutes = Number(row.avgReviewMinutes || 0);
+        const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+        
+        return {
+          id: row.id,
+          name: row.name,
+          assignedCount: Number(row.assignedCount || 0),
+          approvedCount: approved,
+          rejectedCount: rejected,
+          accuracyRate: Number(accuracyRate.toFixed(2)),
+          avgReviewMinutes: Number(safeAvgMinutes.toFixed(2)),
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("Tester review error:", err);
+    res.status(500).json({ error: "Failed to fetch tester review report" });
+  }
+});
+
+// GET Image Set Allocation Report
+router.get("/reports/image-set-allocation", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE 1=1";
+    const params = [];
+    if (startDate) {
+      whereClause += " AND i.created_at >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND i.created_at <= ?";
+      params.push(endDate);
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT 
+        i.id,
+        i.image_name,
+        i.status,
+        i.created_at as assignedDate,
+        i.updated_at as completionDate,
+        a.name as annotatorName,
+        t.name as testerName
+       FROM images i
+       LEFT JOIN users a ON i.annotator_id = a.id
+       LEFT JOIN users t ON i.tester_id = t.id
+       ${whereClause}
+       ORDER BY i.created_at DESC`,
+      params
+    );
+
+    await connection.release();
+
+    const imageSets = rows.map((row) => ({
+      id: row.id,
+      imageName: row.image_name,
+      annotatorName: row.annotatorName || "Not assigned",
+      testerName: row.testerName || "Not assigned",
+      status: row.status,
+      assignedDate: row.assignedDate,
+      completionDate: row.status === 'approved' || row.status === 'rejected' ? row.completionDate : null,
+    }));
+
+    res.json({
+      filters: { startDate: startDate || null, endDate: endDate || null },
+      imageSets,
+      totalSets: imageSets.length,
+    });
+  } catch (err) {
+    console.error("Image set allocation error:", err);
+    res.status(500).json({ error: "Failed to fetch image set allocation report" });
+  }
+});
+
+// GET Payment Report
+router.get("/reports/payment-report", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate, status: statusFilter } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE 1=1";
+    const params = [];
+    if (startDate) {
+      whereClause += " AND p.created_at >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND p.created_at <= ?";
+      params.push(endDate);
+    }
+    if (statusFilter && statusFilter !== 'all') {
+      whereClause += " AND p.status = ?";
+      params.push(statusFilter);
+    }
+
+    // Get payment data with user information
+    const [rows] = await connection.execute(
+      `SELECT 
+        p.id,
+        p.user_id,
+        u.name as annotatorName,
+        u.email as annotatorEmail,
+        p.images_completed as completedTasks,
+        p.amount,
+        p.status,
+        p.payment_date,
+        p.approved_date,
+        p.created_at,
+        p.model_type,
+        approver.name as approvedBy
+       FROM payments p
+       INNER JOIN users u ON p.user_id = u.id
+       LEFT JOIN users approver ON p.approved_by = approver.id
+       ${whereClause}
+       ORDER BY p.created_at DESC`,
+      params
+    );
+
+    await connection.release();
+
+    const payments = rows.map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      annotatorName: row.annotatorName,
+      annotatorEmail: row.annotatorEmail,
+      completedTasks: row.completedTasks || 0,
+      amount: Number(row.amount || 0).toFixed(2),
+      status: row.status,
+      paymentDate: row.payment_date,
+      approvedDate: row.approved_date,
+      approvedBy: row.approvedBy || 'Pending',
+      modelType: row.model_type,
+      createdAt: row.created_at,
+    }));
+
+    // Calculate summary statistics
+    const totalAmount = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const pendingCount = payments.filter(p => p.status === 'pending').length;
+    const approvedCount = payments.filter(p => p.status === 'approved').length;
+    const paidCount = payments.filter(p => p.status === 'paid').length;
+    const rejectedCount = payments.filter(p => p.status === 'rejected').length;
+
+    res.json({
+      filters: { 
+        startDate: startDate || null, 
+        endDate: endDate || null,
+        status: statusFilter || 'all'
+      },
+      payments,
+      summary: {
+        totalPayments: payments.length,
+        totalAmount: totalAmount.toFixed(2),
+        pendingCount,
+        approvedCount,
+        paidCount,
+        rejectedCount,
+      }
+    });
+  } catch (err) {
+    console.error("Payment report error:", err);
+    res.status(500).json({ error: "Failed to fetch payment report" });
   }
 });
 
@@ -540,6 +1166,111 @@ router.get("/performance/users/export", verifyToken, async (req, res) => {
   }
 });
 
+// GET Model completion summary for payment eligibility (super admin only)
+router.get("/payments/eligible-models", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [rows] = await connection.execute(
+      `SELECT 
+        model_type,
+        COUNT(*) as total_images,
+        SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END) as finalized_images,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_images,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_images
+       FROM images
+       WHERE model_type IS NOT NULL AND model_type <> ''
+       GROUP BY model_type
+       ORDER BY model_type`
+    );
+
+    await connection.release();
+
+    const models = rows.map((row) => {
+      const totalImages = Number(row.total_images || 0);
+      const finalizedImages = Number(row.finalized_images || 0);
+      const approvedImages = Number(row.approved_images || 0);
+      const rejectedImages = Number(row.rejected_images || 0);
+      return {
+        modelType: row.model_type,
+        totalImages,
+        finalizedImages,
+        approvedImages,
+        rejectedImages,
+        isComplete: totalImages > 0 && finalizedImages === totalImages,
+      };
+    });
+
+    res.json({ models });
+  } catch (err) {
+    console.error("Eligible models error:", err);
+    res.status(500).json({ error: "Failed to fetch eligible models" });
+  }
+});
+
+// GET Eligible users for model-based payments (super admin only)
+router.get("/payments/eligible-users", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { modelType } = req.query;
+    if (!modelType) {
+      return res.status(400).json({ error: "modelType is required" });
+    }
+
+    const connection = await pool.getConnection();
+    const modelSummary = await getModelSummary(connection, modelType);
+
+    const [annotators] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        COUNT(i.id) as approved_images
+       FROM images i
+       INNER JOIN users u ON i.annotator_id = u.id
+       WHERE i.model_type = ? AND i.status = 'approved'
+       GROUP BY u.id, u.name, u.email, u.role
+       ORDER BY approved_images DESC`,
+      [modelType]
+    );
+
+    const [testers] = await connection.execute(
+      `SELECT 
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        COUNT(i.id) as approved_images
+       FROM images i
+       INNER JOIN users u ON i.tester_id = u.id
+       WHERE i.model_type = ? AND i.status = 'approved'
+       GROUP BY u.id, u.name, u.email, u.role
+       ORDER BY approved_images DESC`,
+      [modelType]
+    );
+
+    await connection.release();
+
+    res.json({
+      modelType,
+      modelSummary,
+      annotators,
+      testers,
+    });
+  } catch (err) {
+    console.error("Eligible users error:", err);
+    res.status(500).json({ error: "Failed to fetch eligible users" });
+  }
+});
+
 // GET Payments overview
 router.get("/payments", verifyToken, async (req, res) => {
   try {
@@ -598,19 +1329,72 @@ router.get("/payment-history", verifyToken, async (req, res) => {
     const [paymentHistory] = await connection.execute(`
       SELECT 
         p.id,
+        p.user_id,
         u.name as admin_name,
+        u.role as user_role,
         p.amount,
         p.model_type,
         p.images_completed,
         p.status,
         p.payment_method,
         p.payment_date,
-        p.created_at
+        p.created_at,
+        approver.name as approved_by
       FROM payments p
       LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN users approver ON p.approved_by = approver.id
       ORDER BY p.created_at DESC
       LIMIT 100
     `);
+
+    // For each payment, get annotator and tester details
+    const paymentsWithDetails = await Promise.all(
+      paymentHistory.map(async (payment) => {
+        // Get annotators who worked on this user's images (for admin payments)
+        const [annotators] = await connection.execute(`
+          SELECT DISTINCT
+            a.id,
+            a.name as annotator_name,
+            COUNT(DISTINCT i.id) as images_annotated,
+            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved
+          FROM images i
+          INNER JOIN users a ON i.annotator_id = a.id
+          WHERE i.assigned_to = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
+          GROUP BY a.id, a.name
+        `, [payment.user_id, payment.user_id]);
+
+        // Get testers who reviewed images
+        const [testers] = await connection.execute(`
+          SELECT DISTINCT
+            t.id,
+            t.name as tester_name,
+            COUNT(DISTINCT i.id) as images_reviewed,
+            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved,
+            SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as images_rejected
+          FROM images i
+          INNER JOIN users t ON i.tester_id = t.id
+          WHERE i.assigned_to = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
+          GROUP BY t.id, t.name
+        `, [payment.user_id, payment.user_id]);
+
+        // Get admin's own work if they're an annotator
+        const [adminWork] = await connection.execute(`
+          SELECT 
+            COUNT(DISTINCT i.id) as images_annotated,
+            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved,
+            SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as images_completed
+          FROM images i
+          WHERE i.annotator_id = ?
+        `, [payment.user_id]);
+
+        return {
+          ...payment,
+          annotators: annotators,
+          testers: testers,
+          adminWork: adminWork[0] || { images_annotated: 0, images_approved: 0, images_completed: 0 }
+        };
+      })
+    );
 
     // Cumulative payment summary
     const [cumulativeSummary] = await connection.execute(`
@@ -624,12 +1408,148 @@ router.get("/payment-history", verifyToken, async (req, res) => {
     await connection.release();
 
     res.json({
-      history: paymentHistory,
+      history: paymentsWithDetails,
       cumulativeSummary: cumulativeSummary[0],
     });
   } catch (err) {
     console.error("Payment history error:", err);
     res.status(500).json({ error: "Failed to fetch payment history" });
+  }
+});
+
+// GET Model-based payment details (super admin only)
+router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [rows] = await connection.execute(
+      `SELECT 
+        i.id,
+        i.image_name,
+        i.model_type,
+        i.objects_count,
+        i.status,
+        a.id as annotator_id,
+        a.name as annotator_name,
+        a.annotator_rate,
+        t.id as tester_id,
+        t.name as tester_name,
+        t.tester_rate
+       FROM images i
+       LEFT JOIN users a ON i.annotator_id = a.id
+       LEFT JOIN users t ON i.tester_id = t.id
+       WHERE i.model_type IS NOT NULL AND i.model_type <> ''
+       ORDER BY i.model_type, i.image_name`
+    );
+
+    await connection.release();
+
+    const modelMap = new Map();
+
+    rows.forEach((row) => {
+      const modelType = row.model_type || "Unknown";
+      if (!modelMap.has(modelType)) {
+        modelMap.set(modelType, {
+          modelType,
+          totalImages: 0,
+          finalizedImages: 0,
+          approvedImages: 0,
+          rejectedImages: 0,
+          totalPayment: 0,
+          images: [],
+        });
+      }
+
+      const model = modelMap.get(modelType);
+      const objectsCount = Number(row.objects_count || 0);
+      const annotatorRate = Number(row.annotator_rate || 0);
+      const testerRate = Number(row.tester_rate || 0);
+      let annotatorPayment = 0;
+      let testerPayment = 0;
+
+      if (row.status === "approved") {
+        annotatorPayment = objectsCount * annotatorRate;
+        testerPayment = objectsCount * testerRate;
+      } else if (row.status === "rejected") {
+        testerPayment = objectsCount * testerRate;
+      }
+
+      const totalPayment = annotatorPayment + testerPayment;
+
+      model.totalImages += 1;
+      if (["approved", "rejected"].includes(row.status)) {
+        model.finalizedImages += 1;
+      }
+      if (row.status === "approved") {
+        model.approvedImages += 1;
+      }
+      if (row.status === "rejected") {
+        model.rejectedImages += 1;
+      }
+      model.totalPayment += totalPayment;
+
+      model.images.push({
+        id: row.id,
+        imageName: row.image_name,
+        objectsCount,
+        status: row.status,
+        annotatorName: row.annotator_name || "Unassigned",
+        testerName: row.tester_name || "Unassigned",
+        annotatorPayment,
+        testerPayment,
+        totalPayment,
+      });
+    });
+
+    const models = Array.from(modelMap.values()).map((model) => ({
+      ...model,
+      isComplete: model.totalImages > 0 && model.finalizedImages === model.totalImages,
+    }));
+
+    res.json({ models });
+  } catch (err) {
+    console.error("Model payment details error:", err);
+    res.status(500).json({ error: "Failed to fetch model payment details" });
+  }
+});
+
+// GET Admin payment details (super admin only)
+router.get("/reports/admin-payment-details", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [rows] = await connection.execute(
+      `SELECT 
+        p.id,
+        u.name as admin_name,
+        u.email as admin_email,
+        p.amount,
+        p.hours,
+        p.status,
+        p.payment_method,
+        p.payment_date,
+        p.created_at
+       FROM payments p
+       INNER JOIN users u ON p.user_id = u.id
+       WHERE u.role = 'admin'
+       ORDER BY p.created_at DESC
+       LIMIT 100`
+    );
+
+    await connection.release();
+
+    res.json({ adminPayments: rows });
+  } catch (err) {
+    console.error("Admin payment details error:", err);
+    res.status(500).json({ error: "Failed to fetch admin payment details" });
   }
 });
 
@@ -683,23 +1603,83 @@ router.get("/model-payments", verifyToken, async (req, res) => {
 // This ensures fairness: if work is rejected and reassigned, only the successful annotator gets paid
 router.post("/payments", verifyToken, async (req, res) => {
   try {
-    const { user_id, amount, model_type, images_completed, payment_method, status } = req.body;
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
 
-    if (!user_id || !amount || !model_type) {
-      return res.status(400).json({ error: "Required fields missing" });
+    const { user_id, amount, model_type, payment_method, status } = req.body;
+
+    if (!user_id || !amount) {
+      return res.status(400).json({ error: "user_id and amount are required" });
     }
 
     const connection = await pool.getConnection();
 
+    const [users] = await connection.execute(
+      "SELECT role FROM users WHERE id = ?",
+      [user_id]
+    );
+
+    if (users.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userRole = users[0].role;
+    let imagesCompleted = 0;
+    let modelType = model_type || null;
+
+    if (["annotator", "tester"].includes(userRole)) {
+      if (!modelType) {
+        await connection.release();
+        return res.status(400).json({ error: "model_type is required for annotator/tester payments" });
+      }
+
+      const modelSummary = await getModelSummary(connection, modelType);
+      if (!modelSummary.isComplete) {
+        await connection.release();
+        return res.status(400).json({
+          error: "Model is not completed for payment",
+          modelSummary,
+        });
+      }
+
+      imagesCompleted = await getApprovedImageCount(connection, modelType, userRole, user_id);
+      if (imagesCompleted === 0) {
+        await connection.release();
+        return res.status(400).json({ error: "No approved image sets for this user/model" });
+      }
+    }
+
+    const allowedStatuses = ["pending", "approved", "paid", "rejected"];
+    const paymentStatus = allowedStatuses.includes(status) ? status : "pending";
+    const approvedDate = paymentStatus === "approved" ? new Date() : null;
+    const paymentDate = paymentStatus === "paid" ? new Date() : null;
+    const approvedBy = paymentStatus === "approved" ? req.user.id : null;
+
     await connection.execute(
-      `INSERT INTO payments (user_id, amount, model_type, images_completed, payment_method, status) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [user_id, amount, model_type, images_completed || 0, payment_method || "bank", status || "pending"]
+      `INSERT INTO payments (user_id, amount, model_type, images_completed, payment_method, status, payment_date, approved_date, approved_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        user_id,
+        amount,
+        modelType,
+        imagesCompleted,
+        payment_method || "bank",
+        paymentStatus,
+        paymentDate,
+        approvedDate,
+        approvedBy,
+      ]
     );
 
     await connection.release();
 
-    res.status(201).json({ message: "Payment added successfully" });
+    res.status(201).json({
+      message: "Payment added successfully",
+      imagesCompleted,
+      status: paymentStatus,
+    });
   } catch (err) {
     console.error("Add payment error:", err);
     res.status(500).json({ error: "Failed to add payment" });
@@ -1101,7 +2081,37 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
     const { id } = req.params;
     const { status, payment_date, approved_date } = req.body;
 
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
     const connection = await pool.getConnection();
+
+    const [existing] = await connection.execute(
+      "SELECT status FROM payments WHERE id = ?",
+      [id]
+    );
+
+    if (existing.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Payment not found" });
+    }
+
+    const currentStatus = existing[0].status;
+    if (status) {
+      if (status === "approved" && currentStatus !== "pending") {
+        await connection.release();
+        return res.status(400).json({ error: "Only pending payments can be approved" });
+      }
+      if (status === "paid" && currentStatus !== "approved") {
+        await connection.release();
+        return res.status(400).json({ error: "Only approved payments can be paid" });
+      }
+      if (status === "rejected" && currentStatus !== "pending") {
+        await connection.release();
+        return res.status(400).json({ error: "Only pending payments can be rejected" });
+      }
+    }
 
     const updates = [];
     const values = [];
@@ -1117,6 +2127,19 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
     if (approved_date && status === "approved") {
       updates.push("approved_date = ?");
       values.push(approved_date);
+      // Also store who approved it
+      updates.push("approved_by = ?");
+      values.push(req.user.id);
+    } else if (status === "approved") {
+      updates.push("approved_date = ?");
+      values.push(new Date());
+      updates.push("approved_by = ?");
+      values.push(req.user.id);
+    }
+
+    if (status === "paid" && !payment_date) {
+      updates.push("payment_date = ?");
+      values.push(new Date());
     }
 
     if (updates.length === 0) {
@@ -1464,6 +2487,10 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (testerId) {
       fields.push("tester_id = ?");
       params.push(testerId);
+      if (!status) {
+        fields.push("status = ?");
+        params.push("pending_review");
+      }
     }
     if (melbourneUserId) {
       fields.push("melbourne_user_id = ?");
@@ -1776,9 +2803,15 @@ router.put("/annotator/tasks/:id/status", verifyToken, async (req, res) => {
 
     const imageId = taskResult[0].image_id;
 
-    // Update task status
+    // Update task status with completed_date if status is completed
+    let updateQuery = `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW()`;
+    if (status === 'completed') {
+      updateQuery += `, completed_date = NOW()`;
+    }
+    updateQuery += ` WHERE id = ? AND user_id = ?`;
+    
     await connection.execute(
-      `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+      updateQuery,
       [status, notes || null, id, userId]
     );
 
@@ -1811,11 +2844,11 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
         t.task_id,
         i.image_name,
         t.status,
-        t.notes as annotator_notes,
-        i.feedback as melbourne_feedback,
-        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
+        t.notes,
+        i.feedback,
         t.assigned_date,
-        t.completed_date
+        t.completed_date,
+        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' ORDER BY t2.updated_at DESC LIMIT 1) as tester_feedback
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
       WHERE t.user_id = ? AND t.task_type = 'annotation'
@@ -2100,10 +3133,10 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
       [status, feedback || null, id, userId]
     );
 
-    // Also update the corresponding image status
+    // Also update the corresponding image status and feedback
     await connection.execute(
-      `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
-      [status, imageId]
+      `UPDATE images SET status = ?, feedback = ?, updated_at = NOW() WHERE id = ?`,
+      [status, feedback || null, imageId]
     );
 
     // Create notifications

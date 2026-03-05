@@ -13,6 +13,21 @@ export default function MelbourneReports() {
   const [annEndDate, setAnnEndDate] = useState("");
   const [annRoleFilter, setAnnRoleFilter] = useState("all");
   const [annLoading, setAnnLoading] = useState(false);
+  const [annotationSummary, setAnnotationSummary] = useState({ summary: null, pie: [], performance: [] });
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [annotatorPerf, setAnnotatorPerf] = useState([]);
+  const [annotatorPerfLoading, setAnnotatorPerfLoading] = useState(false);
+  const [testerReview, setTesterReview] = useState({ summary: null });
+  const [testerReviewLoading, setTesterReviewLoading] = useState(false);
+  const [imageSetAllocation, setImageSetAllocation] = useState({ imageSets: [], totalSets: 0 });
+  const [imageSetLoading, setImageSetLoading] = useState(false);
+  const [imageSetStartDate, setImageSetStartDate] = useState("");
+  const [imageSetEndDate, setImageSetEndDate] = useState("");
+  const [paymentReport, setPaymentReport] = useState({ payments: [], summary: {} });
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentStartDate, setPaymentStartDate] = useState("");
+  const [paymentEndDate, setPaymentEndDate] = useState("");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -97,6 +112,123 @@ export default function MelbourneReports() {
     fetchAnnotationData();
   }, [annStartDate, annEndDate, annRoleFilter]);
 
+  useEffect(() => {
+    const fetchAnnotationSummary = async () => {
+      try {
+        setSummaryLoading(true);
+        const params = {
+          role: annRoleFilter === "all" ? undefined : annRoleFilter,
+          startDate: annStartDate || undefined,
+          endDate: annEndDate || undefined,
+        };
+        const res = await axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", {
+          headers: getAuthHeader(),
+          params,
+        });
+        setAnnotationSummary(res.data);
+      } catch (err) {
+        console.error("Annotation summary fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load annotation summary");
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
+
+    fetchAnnotationSummary();
+  }, [annStartDate, annEndDate, annRoleFilter]);
+
+  useEffect(() => {
+    const fetchAnnotatorPerf = async () => {
+      try {
+        setAnnotatorPerfLoading(true);
+        const params = {
+          startDate: annStartDate || undefined,
+          endDate: annEndDate || undefined,
+        };
+        const res = await axios.get("http://localhost:5000/api/dashboard/reports/annotator-performance", {
+          headers: getAuthHeader(),
+          params,
+        });
+        setAnnotatorPerf(res.data.rows || []);
+      } catch (err) {
+        console.error("Annotator performance fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load annotator performance");
+      } finally {
+        setAnnotatorPerfLoading(false);
+      }
+    };
+
+    fetchAnnotatorPerf();
+  }, [annStartDate, annEndDate]);
+
+  useEffect(() => {
+    const fetchTesterReview = async () => {
+      try {
+        setTesterReviewLoading(true);
+        const res = await axios.get("http://localhost:5000/api/dashboard/reports/tester-review", {
+          headers: getAuthHeader(),
+        });
+        setTesterReview(res.data);
+      } catch (err) {
+        console.error("Tester review fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load tester review report");
+      } finally {
+        setTesterReviewLoading(false);
+      }
+    };
+
+    fetchTesterReview();
+  }, []);
+
+  useEffect(() => {
+    const fetchImageSetAllocation = async () => {
+      try {
+        setImageSetLoading(true);
+        const params = {
+          startDate: imageSetStartDate || undefined,
+          endDate: imageSetEndDate || undefined,
+        };
+        const res = await axios.get("http://localhost:5000/api/dashboard/reports/image-set-allocation", {
+          headers: getAuthHeader(),
+          params,
+        });
+        setImageSetAllocation(res.data);
+      } catch (err) {
+        console.error("Image set allocation fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load image set allocation report");
+      } finally {
+        setImageSetLoading(false);
+      }
+    };
+
+    fetchImageSetAllocation();
+  }, [imageSetStartDate, imageSetEndDate]);
+
+  useEffect(() => {
+    const fetchPaymentReport = async () => {
+      try {
+        setPaymentLoading(true);
+        const params = {
+          startDate: paymentStartDate || undefined,
+          endDate: paymentEndDate || undefined,
+          status: paymentStatusFilter !== 'all' ? paymentStatusFilter : undefined,
+        };
+        const res = await axios.get("http://localhost:5000/api/dashboard/reports/payment-report", {
+          headers: getAuthHeader(),
+          params,
+        });
+        setPaymentReport(res.data);
+      } catch (err) {
+        console.error("Payment report fetch error:", err);
+        setError(err.response?.data?.error || "Failed to load payment report");
+      } finally {
+        setPaymentLoading(false);
+      }
+    };
+
+    fetchPaymentReport();
+  }, [paymentStartDate, paymentEndDate, paymentStatusFilter]);
+
   const handleExport = () => {
     const params = new URLSearchParams();
     if (roleFilter !== "all") params.append("role", roleFilter);
@@ -130,6 +262,17 @@ export default function MelbourneReports() {
     rejected: Number(item.rejected || 0),
   })) || [];
 
+  const summary = annotationSummary?.summary || {};
+  const summaryPie = annotationSummary?.pie || [];
+  const summaryPerf = annotationSummary?.performance || [];
+  const summaryColors = ["#6BCB77", "#FFA07A", "#FF6B6B", "#4D96FF"];
+  const formatHours = (minutes) => {
+    if (!minutes) return "-";
+    return `${(minutes / 60).toFixed(2)} h`;
+  };
+  const testerSummary = testerReview?.summary || {};
+  const testerRows = testerReview?.testers || [];
+
   return (
     <div className="dashboard-container">
       <MelbourneSidebar />
@@ -140,6 +283,327 @@ export default function MelbourneReports() {
         </div>
 
         {error && <div className="dashboard-error">{error}</div>}
+
+        <div className="chart-container" style={{ marginTop: "8px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div>
+              <h3>Annotation Summary Report</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Filters: Date range + role</p>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <select value={annRoleFilter} onChange={(e) => setAnnRoleFilter(e.target.value)} className="assign-select" style={{ minWidth: "140px" }}>
+                <option value="all">All Roles</option>
+                <option value="annotator">Annotators</option>
+                <option value="tester">Testers</option>
+              </select>
+              <input type="date" value={annStartDate} onChange={(e) => setAnnStartDate(e.target.value)} className="text-input" style={{ padding: "8px" }} />
+              <input type="date" value={annEndDate} onChange={(e) => setAnnEndDate(e.target.value)} className="text-input" style={{ padding: "8px" }} />
+            </div>
+          </div>
+
+          {summaryLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading summary...</div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginTop: "12px" }}>
+                <div className="kpi-card"><div className="kpi-value">{summary.totalImageSets || 0}</div><div className="kpi-label">Total Image Sets</div></div>
+                <div className="kpi-card"><div className="kpi-value">{summary.totalAssigned || 0}</div><div className="kpi-label">Total Assigned</div></div>
+                <div className="kpi-card"><div className="kpi-value">{summary.completedAnnotations || 0}</div><div className="kpi-label">Completed Annotations</div></div>
+                <div className="kpi-card"><div className="kpi-value">{summary.pendingAnnotations || 0}</div><div className="kpi-label">Pending Annotations</div></div>
+                <div className="kpi-card"><div className="kpi-value">{summary.rejectedAnnotations || 0}</div><div className="kpi-label">Rejected Annotations</div></div>
+                <div className="kpi-card"><div className="kpi-value">{(summary.approvalRate || 0).toFixed(1)}%</div><div className="kpi-label">Approval Rate</div></div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", marginTop: "16px" }}>
+                <div className="chart-container" style={{ margin: 0 }}>
+                  <h4>Completed vs Pending</h4>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <PieChart>
+                      <Pie
+                        data={summaryPie}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={(entry) => `${entry.name}: ${entry.value}`}
+                        outerRadius={90}
+                        dataKey="value"
+                      >
+                        {summaryPie.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={summaryColors[index % summaryColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="chart-container" style={{ margin: 0 }}>
+                  <h4>Annotator Performance</h4>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={summaryPerf}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" angle={-20} textAnchor="end" height={60} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="assigned" fill="#4D96FF" name="Assigned" />
+                      <Bar dataKey="completed" fill="#6BCB77" name="Completed" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="chart-container" style={{ marginTop: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div>
+              <h3>Annotator Performance Report</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Based on tester approvals and task completion</p>
+            </div>
+          </div>
+
+          {annotatorPerfLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading performance...</div>
+          ) : (
+            <div className="table-container" style={{ marginTop: "12px" }}>
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Total Assigned</th>
+                    <th>Completed</th>
+                    <th>Pending</th>
+                    <th>Approved</th>
+                    <th>Rejected</th>
+                    <th>Accuracy Rate</th>
+                    <th>Avg Completion Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {annotatorPerf.length === 0 ? (
+                    <tr><td colSpan="8" className="no-data">No data for selected range</td></tr>
+                  ) : (
+                    annotatorPerf.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.name}</td>
+                        <td>{row.totalAssigned}</td>
+                        <td>{row.completed}</td>
+                        <td>{row.pending}</td>
+                        <td>{row.approved}</td>
+                        <td>{row.rejected}</td>
+                        <td>{row.accuracyRate.toFixed(1)}%</td>
+                        <td>{formatHours(row.avgCompletionMinutes)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="chart-container" style={{ marginTop: "16px" }}>
+          <div>
+            <h3>Tester Review Report</h3>
+            <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Approved vs rejected outcomes and review time</p>
+          </div>
+
+          {testerReviewLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading tester review...</div>
+          ) : (
+            <div className="table-container" style={{ marginTop: "12px" }}>
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>Tester Name</th>
+                    <th>Assigned Images</th>
+                    <th>Approved Images</th>
+                    <th>Rejected Images</th>
+                    <th>Accuracy Rate</th>
+                    <th>Avg Review Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {testerRows.length === 0 ? (
+                    <tr><td colSpan="6" className="no-data">No tester data for selected range</td></tr>
+                  ) : (
+                    testerRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.name}</td>
+                        <td>{row.assignedCount}</td>
+                        <td>{row.approvedCount}</td>
+                        <td>{row.rejectedCount}</td>
+                        <td>{row.accuracyRate.toFixed(1)}%</td>
+                        <td>{formatHours(row.avgReviewMinutes)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="chart-container" style={{ marginTop: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div>
+              <h3>Image Set Allocation Report</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Track image set assignments and completion status</p>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input type="date" value={imageSetStartDate} onChange={(e) => setImageSetStartDate(e.target.value)} className="text-input" style={{ padding: "8px" }} placeholder="Start Date" />
+              <input type="date" value={imageSetEndDate} onChange={(e) => setImageSetEndDate(e.target.value)} className="text-input" style={{ padding: "8px" }} placeholder="End Date" />
+            </div>
+          </div>
+
+          {imageSetLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading image set allocation...</div>
+          ) : (
+            <div className="table-container" style={{ marginTop: "12px" }}>
+              <div style={{ marginBottom: "12px", fontSize: "14px", color: "#666" }}>
+                Total Image Sets: <strong>{imageSetAllocation.totalSets || 0}</strong>
+              </div>
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>Image Set Name</th>
+                    <th>Assigned Annotator</th>
+                    <th>Assigned Tester</th>
+                    <th>Status</th>
+                    <th>Assigned Date</th>
+                    <th>Completion Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {imageSetAllocation.imageSets?.length === 0 ? (
+                    <tr><td colSpan="6" className="no-data">No image sets for selected range</td></tr>
+                  ) : (
+                    imageSetAllocation.imageSets?.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.imageName}</td>
+                        <td>{row.annotatorName}</td>
+                        <td>{row.testerName}</td>
+                        <td>
+                          <span style={{
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                            backgroundColor: 
+                              row.status === 'approved' ? '#d4edda' :
+                              row.status === 'rejected' ? '#f8d7da' :
+                              row.status === 'completed' ? '#d1ecf1' :
+                              row.status === 'in_progress' ? '#fff3cd' :
+                              row.status === 'pending_review' ? '#e2e3e5' :
+                              '#f8f9fa',
+                            color: 
+                              row.status === 'approved' ? '#155724' :
+                              row.status === 'rejected' ? '#721c24' :
+                              row.status === 'completed' ? '#0c5460' :
+                              row.status === 'in_progress' ? '#856404' :
+                              row.status === 'pending_review' ? '#383d41' :
+                              '#6c757d'
+                          }}>
+                            {row.status === 'in_progress' ? 'In Progress' :
+                             row.status === 'pending_review' ? 'Pending Review' :
+                             row.status.charAt(0).toUpperCase() + row.status.slice(1)}
+                          </span>
+                        </td>
+                        <td>{row.assignedDate ? new Date(row.assignedDate).toLocaleDateString() : '-'}</td>
+                        <td>{row.completionDate ? new Date(row.completionDate).toLocaleDateString() : '-'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="chart-container" style={{ marginTop: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div>
+              <h3>Payment Report</h3>
+              <p style={{ margin: 0, color: "#666", fontSize: "13px" }}>Annotator payment tracking and approval status</p>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <select value={paymentStatusFilter} onChange={(e) => setPaymentStatusFilter(e.target.value)} className="assign-select" style={{ minWidth: "140px" }}>
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="paid">Paid</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <input type="date" value={paymentStartDate} onChange={(e) => setPaymentStartDate(e.target.value)} className="text-input" style={{ padding: "8px" }} placeholder="Start Date" />
+              <input type="date" value={paymentEndDate} onChange={(e) => setPaymentEndDate(e.target.value)} className="text-input" style={{ padding: "8px" }} placeholder="End Date" />
+            </div>
+          </div>
+
+          {paymentLoading ? (
+            <div className="dashboard-loading" style={{ padding: "16px" }}>Loading payment report...</div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginTop: "12px" }}>
+                <div className="kpi-card"><div className="kpi-value">{paymentReport.summary?.totalPayments || 0}</div><div className="kpi-label">Total Payments</div></div>
+                <div className="kpi-card"><div className="kpi-value">Rs. {paymentReport.summary?.totalAmount || 0}</div><div className="kpi-label">Total Amount</div></div>
+                <div className="kpi-card"><div className="kpi-value">{paymentReport.summary?.pendingCount || 0}</div><div className="kpi-label">Pending</div></div>
+                <div className="kpi-card"><div className="kpi-value">{paymentReport.summary?.approvedCount || 0}</div><div className="kpi-label">Approved</div></div>
+                <div className="kpi-card"><div className="kpi-value">{paymentReport.summary?.paidCount || 0}</div><div className="kpi-label">Paid</div></div>
+                <div className="kpi-card"><div className="kpi-value">{paymentReport.summary?.rejectedCount || 0}</div><div className="kpi-label">Rejected</div></div>
+              </div>
+
+              <div className="table-container" style={{ marginTop: "12px" }}>
+                <table className="reports-table">
+                  <thead>
+                    <tr>
+                      <th>Annotator Name</th>
+                      <th>Completed Tasks</th>
+                      <th>Payment Amount</th>
+                      <th>Payment Status</th>
+                      <th>Approved By</th>
+                      <th>Payment Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentReport.payments?.length === 0 ? (
+                      <tr><td colSpan="6" className="no-data">No payment data for selected range</td></tr>
+                    ) : (
+                      paymentReport.payments?.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{payment.annotatorName}</td>
+                          <td>{payment.completedTasks}</td>
+                          <td>Rs. {payment.amount}</td>
+                          <td>
+                            <span style={{
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              backgroundColor: 
+                                payment.status === 'paid' ? '#d4edda' :
+                                payment.status === 'approved' ? '#d1ecf1' :
+                                payment.status === 'rejected' ? '#f8d7da' :
+                                '#fff3cd',
+                              color: 
+                                payment.status === 'paid' ? '#155724' :
+                                payment.status === 'approved' ? '#0c5460' :
+                                payment.status === 'rejected' ? '#721c24' :
+                                '#856404'
+                            }}>
+                              {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
+                            </span>
+                          </td>
+                          <td>{payment.approvedBy}</td>
+                          <td>{payment.paymentDate ? new Date(payment.paymentDate).toLocaleDateString() : '-'}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="charts-section">
           <div className="chart-container">

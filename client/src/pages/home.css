@@ -163,34 +163,28 @@
   box-shadow: 0 12px 28px rgba(16, 185, 129, 0.4);
 }
 
-.btn-watch-demo {
-  background: rgba(255, 255, 255, 0.05);
+.btn-login {
+  background: rgba(255, 255, 255, 0.05) !important;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: white;
-  padding: 1rem 2rem;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: white !important;
+  padding: 1rem 2.5rem !important;
+  border-radius: 8px !important;
+  text-decoration: none !important;
+  font-weight: 600 !important;
+  font-size: 1rem !important;
   transition: all 0.3s ease;
+  box-shadow: 0 8px 20px rgba(255, 255, 255, 0.1) !important;
+  display: inline-block !important;
+  text-align: center;
+  cursor: pointer;
 }
 
-.btn-watch-demo:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.demo-icon {
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
+.btn-login:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 12px 28px rgba(255, 255, 255, 0.15) !important;
 }
 
 /* Hero Visual - Image with Overlay Cards */

@@ -7,10 +7,27 @@ export default function ManagePayments() {
   const [paymentOverview, setPaymentOverview] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState(null);
   const [modelPayments, setModelPayments] = useState(null);
+  const [modelPaymentDetails, setModelPaymentDetails] = useState([]);
+  const [adminPaymentDetails, setAdminPaymentDetails] = useState([]);
+  const [expandedModels, setExpandedModels] = useState({});
   const [pendingPayments, setPendingPayments] = useState([]);
+  const [expandedPayment, setExpandedPayment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+  const [eligibleModels, setEligibleModels] = useState([]);
+  const [eligibleUsers, setEligibleUsers] = useState({ modelSummary: null, annotators: [], testers: [] });
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [createForm, setCreateForm] = useState({
+    role: "annotator",
+    modelType: "",
+    userId: "",
+    amount: "",
+    paymentMethod: "bank",
+  });
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -24,12 +41,25 @@ export default function ManagePayments() {
     try {
       setLoading(true);
       setError("");
-      const [overviewRes, historyRes, modelRes] = await Promise.all([
+      const [overviewRes, historyRes, modelRes, modelsRes, adminsRes, modelDetailsRes, adminDetailsRes] = await Promise.all([
         axios.get("http://localhost:5000/api/dashboard/payments", { headers: getAuthHeader() }),
         axios.get("http://localhost:5000/api/dashboard/payment-history", {
           headers: getAuthHeader(),
         }),
         axios.get("http://localhost:5000/api/dashboard/model-payments", {
+          headers: getAuthHeader(),
+        }),
+        axios.get("http://localhost:5000/api/dashboard/payments/eligible-models", {
+          headers: getAuthHeader(),
+        }),
+        axios.get("http://localhost:5000/api/dashboard/users", {
+          headers: getAuthHeader(),
+          params: { role: "admin" },
+        }),
+        axios.get("http://localhost:5000/api/dashboard/reports/model-payment-details", {
+          headers: getAuthHeader(),
+        }),
+        axios.get("http://localhost:5000/api/dashboard/reports/admin-payment-details", {
           headers: getAuthHeader(),
         }),
       ]);
@@ -38,6 +68,10 @@ export default function ManagePayments() {
       setPaymentOverview(overviewRes.data);
       setPaymentHistory(historyRes.data);
       setModelPayments(modelRes.data);
+      setEligibleModels(modelsRes.data?.models || []);
+      setAdminUsers(adminsRes.data || []);
+      setModelPaymentDetails(modelDetailsRes.data?.models || []);
+      setAdminPaymentDetails(adminDetailsRes.data?.adminPayments || []);
 
       // Filter pending payments from history
       const pending = historyRes.data?.history?.filter((p) => p.status === "pending") || [];
@@ -47,6 +81,87 @@ export default function ManagePayments() {
       setError(err.response?.data?.error || "Failed to load payment data. Please try logging in again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleModel = (modelType) => {
+    setExpandedModels((prev) => ({
+      ...prev,
+      [modelType]: !prev[modelType],
+    }));
+  };
+
+  useEffect(() => {
+    const fetchEligibleUsers = async () => {
+      if (activeTab !== "create") return;
+      if (createForm.role === "admin") {
+        setEligibleUsers({ modelSummary: null, annotators: [], testers: [] });
+        return;
+      }
+      if (!createForm.modelType) {
+        setEligibleUsers({ modelSummary: null, annotators: [], testers: [] });
+        return;
+      }
+
+      try {
+        const res = await axios.get("http://localhost:5000/api/dashboard/payments/eligible-users", {
+          headers: getAuthHeader(),
+          params: { modelType: createForm.modelType },
+        });
+        setEligibleUsers(res.data);
+      } catch (err) {
+        console.error("Fetch eligible users error:", err);
+        setCreateError(err.response?.data?.error || "Failed to load eligible users");
+      }
+    };
+
+    fetchEligibleUsers();
+  }, [activeTab, createForm.modelType, createForm.role]);
+
+  const handleCreateChange = (field, value) => {
+    setCreateError("");
+    setCreateSuccess("");
+    setCreateForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleCreatePayment = async (e) => {
+    e.preventDefault();
+    setCreateError("");
+    setCreateSuccess("");
+
+    if (!createForm.userId || !createForm.amount) {
+      setCreateError("User and amount are required");
+      return;
+    }
+
+    if (createForm.role !== "admin" && !createForm.modelType) {
+      setCreateError("Model type is required for annotator/tester payments");
+      return;
+    }
+
+    try {
+      setCreating(true);
+      const payload = {
+        user_id: Number(createForm.userId),
+        amount: Number(createForm.amount),
+        payment_method: createForm.paymentMethod,
+      };
+
+      if (createForm.role !== "admin") {
+        payload.model_type = createForm.modelType;
+      }
+
+      await axios.post("http://localhost:5000/api/dashboard/payments", payload, {
+        headers: getAuthHeader(),
+      });
+
+      setCreateSuccess("Payment created and sent for approval");
+      setCreateForm({ role: "annotator", modelType: "", userId: "", amount: "", paymentMethod: "bank" });
+      fetchPaymentData();
+    } catch (err) {
+      setCreateError(err.response?.data?.error || "Failed to create payment");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -75,6 +190,42 @@ export default function ManagePayments() {
   };
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
+
+  const modelSummary = eligibleUsers?.modelSummary;
+  const isModelComplete = modelSummary?.isComplete || false;
+  const availableUsers =
+    createForm.role === "annotator"
+      ? eligibleUsers?.annotators || []
+      : createForm.role === "tester"
+      ? eligibleUsers?.testers || []
+      : adminUsers || [];
+  const selectedUser = availableUsers.find((user) => String(user.id) === String(createForm.userId));
+  const approvedCount = selectedUser?.approved_images || 0;
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case "approved":
+        return "Validated";
+      case "rejected":
+        return "Rejected";
+      case "completed":
+        return "Completed";
+      case "pending_review":
+        return "In Review";
+      case "in_progress":
+        return "In Progress";
+      case "pending":
+      default:
+        return "Pending";
+    }
+  };
+
+  const getStatusClass = (status) => {
+    if (status === "pending_review") {
+      return "completed";
+    }
+    return status;
+  };
 
   return (
     <div className="dashboard-container">
@@ -149,6 +300,12 @@ export default function ManagePayments() {
               Model Based Payments
             </button>
             <button
+              className={`tab ${activeTab === "create" ? "active" : ""}`}
+              onClick={() => setActiveTab("create")}
+            >
+              Create Payment
+            </button>
+            <button
               className={`tab ${activeTab === "history" ? "active" : ""}`}
               onClick={() => setActiveTab("history")}
             >
@@ -202,32 +359,66 @@ export default function ManagePayments() {
                   <th>Method</th>
                   <th>Created</th>
                   <th>Actions</th>
+                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
                 {pendingPayments.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="no-data">
+                    <td colSpan="8" className="no-data">
                       No pending payments
                     </td>
                   </tr>
                 ) : (
                   pendingPayments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td><strong>{payment.admin_name || "Unknown"}</strong></td>
-                      <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
-                      <td>{payment.model_type}</td>
-                      <td>{payment.images_completed || 0}</td>
-                      <td>{payment.payment_method || "-"}</td>
-                      <td>{new Date(payment.created_at).toLocaleDateString()}</td>
-                      <td>
-                        <div style={{ display: "flex", gap: "5px" }}>
+                    <>
+                      <tr key={payment.id}>
+                        <td><strong>{payment.admin_name || "Unknown"}</strong></td>
+                        <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
+                        <td>{payment.model_type}</td>
+                        <td>{payment.images_completed || 0}</td>
+                        <td>{payment.payment_method || "-"}</td>
+                        <td>{new Date(payment.created_at).toLocaleDateString()}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: "5px" }}>
+                            <button
+                              className="btn-approve"
+                              onClick={() => handlePaymentApproval(payment.id, "approved")}
+                              style={{
+                                padding: "6px 12px",
+                                backgroundColor: "#10b981",
+                                color: "white",
+                                border: "none",
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                              }}
+                            >
+                              ✓ Approve
+                            </button>
+                            <button
+                              className="btn-reject"
+                              onClick={() => handlePaymentApproval(payment.id, "rejected")}
+                              style={{
+                                padding: "6px 12px",
+                                backgroundColor: "#ef4444",
+                                color: "white",
+                                border: "none",
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                              }}
+                            >
+                              ✗ Reject
+                            </button>
+                          </div>
+                        </td>
+                        <td>
                           <button
-                            className="btn-approve"
-                            onClick={() => handlePaymentApproval(payment.id, "approved")}
+                            onClick={() => setExpandedPayment(expandedPayment === payment.id ? null : payment.id)}
                             style={{
                               padding: "6px 12px",
-                              backgroundColor: "#10b981",
+                              backgroundColor: "#3b82f6",
                               color: "white",
                               border: "none",
                               borderRadius: "4px",
@@ -235,26 +426,92 @@ export default function ManagePayments() {
                               fontSize: "12px",
                             }}
                           >
-                            ✓ Approve
+                            {expandedPayment === payment.id ? "▲ Hide" : "▼ Show"}
                           </button>
-                          <button
-                            className="btn-reject"
-                            onClick={() => handlePaymentApproval(payment.id, "rejected")}
-                            style={{
-                              padding: "6px 12px",
-                              backgroundColor: "#ef4444",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "4px",
-                              cursor: "pointer",
-                              fontSize: "12px",
-                            }}
-                          >
-                            ✗ Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                      </tr>
+                      {expandedPayment === payment.id && (
+                        <tr>
+                          <td colSpan="8" style={{ backgroundColor: "#f9fafb", padding: "20px" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+                              {/* Annotators Section */}
+                              <div>
+                                <h4 style={{ marginTop: 0, marginBottom: "12px", color: "#374151" }}>
+                                  📝 Annotators ({payment.annotators?.length || 0})
+                                </h4>
+                                {payment.annotators && payment.annotators.length > 0 ? (
+                                  <table style={{ width: "100%", fontSize: "13px", backgroundColor: "white", borderRadius: "4px" }}>
+                                    <thead>
+                                      <tr style={{ backgroundColor: "#e5e7eb" }}>
+                                        <th style={{ padding: "8px", textAlign: "left" }}>Annotator Name</th>
+                                        <th style={{ padding: "8px", textAlign: "center" }}>Annotated</th>
+                                        <th style={{ padding: "8px", textAlign: "center" }}>Approved</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {payment.annotators.map((annotator, idx) => (
+                                        <tr key={idx}>
+                                          <td style={{ padding: "8px" }}>{annotator.annotator_name}</td>
+                                          <td style={{ padding: "8px", textAlign: "center" }}>{annotator.images_annotated}</td>
+                                          <td style={{ padding: "8px", textAlign: "center" }}>{annotator.images_approved}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                ) : (
+                                  <p style={{ color: "#6b7280", fontSize: "13px" }}>No annotator data available</p>
+                                )}
+                              </div>
+
+                              {/* Testers Section */}
+                              <div>
+                                <h4 style={{ marginTop: 0, marginBottom: "12px", color: "#374151" }}>
+                                  ✅ Testers ({payment.testers?.length || 0})
+                                </h4>
+                                {payment.testers && payment.testers.length > 0 ? (
+                                  <table style={{ width: "100%", fontSize: "13px", backgroundColor: "white", borderRadius: "4px" }}>
+                                    <thead>
+                                      <tr style={{ backgroundColor: "#e5e7eb" }}>
+                                        <th style={{ padding: "8px", textAlign: "left" }}>Tester Name</th>
+                                        <th style={{ padding: "8px", textAlign: "center" }}>Reviewed</th>
+                                        <th style={{ padding: "8px", textAlign: "center" }}>Approved</th>
+                                        <th style={{ padding: "8px", textAlign: "center" }}>Rejected</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {payment.testers.map((tester, idx) => (
+                                        <tr key={idx}>
+                                          <td style={{ padding: "8px" }}>{tester.tester_name}</td>
+                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_reviewed}</td>
+                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_approved}</td>
+                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_rejected}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                ) : (
+                                  <p style={{ color: "#6b7280", fontSize: "13px" }}>No tester data available</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Admin's Own Work (if applicable) */}
+                            {payment.adminWork && payment.adminWork.images_annotated > 0 && (
+                              <div style={{ marginTop: "20px", padding: "12px", backgroundColor: "#dbeafe", borderRadius: "4px" }}>
+                                <h4 style={{ marginTop: 0, marginBottom: "8px", color: "#1e40af" }}>
+                                  👤 Admin's Own Work
+                                </h4>
+                                <div style={{ display: "flex", gap: "20px", fontSize: "13px" }}>
+                                  <span>Images Annotated: <strong>{payment.adminWork.images_annotated}</strong></span>
+                                  <span>Images Approved: <strong>{payment.adminWork.images_approved}</strong></span>
+                                  <span>Images Completed: <strong>{payment.adminWork.images_completed}</strong></span>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   ))
                 )}
               </tbody>
@@ -263,36 +520,221 @@ export default function ManagePayments() {
         )}
 
         {activeTab === "model" && (
-          <div className="table-container">
-            <h3>Model Based Payments</h3>
-            <table className="payments-table">
-              <thead>
-                <tr>
-                  <th>ImageSet Name</th>
-                  <th>Annotator</th>
-                  <th>Tester</th>
-                  <th>Objects</th>
-                  <th>Status</th>
-                  <th>Payment Due</th>
-                </tr>
-              </thead>
-              <tbody>
-                {modelPayments?.modelDetails?.map((payment, idx) => (
-                  <tr key={idx}>
-                    <td>{payment.model_type}</td>
-                    <td>{payment.name}</td>
-                    <td>{payment.images_completed || 0}</td>
-                    <td>{payment.images_assigned || 0}</td>
-                    <td>
-                      <span className={`status-badge status-${payment.status}`}>
-                        {payment.status}
+          <div className="model-payments-section">
+            <h3>Payment by Model Completion</h3>
+            <p className="section-hint">Payments are released only after all image sets of a model are finalized.</p>
+
+            {modelPaymentDetails.length === 0 && (
+              <div className="no-data">No model data available</div>
+            )}
+
+            {modelPaymentDetails.map((model) => {
+              const isExpanded = expandedModels[model.modelType] ?? true;
+              const completionText = `${model.finalizedImages}/${model.totalImages} ImageSets Completed`;
+              const badgeText = model.isComplete ? "Ready for Payment" : "In Progress";
+              return (
+                <div key={model.modelType} className="model-card">
+                  <div className="model-card-header">
+                    <button
+                      className="model-toggle"
+                      onClick={() => toggleModel(model.modelType)}
+                      type="button"
+                    >
+                      {isExpanded ? "▾" : "▸"}
+                    </button>
+                    <div className="model-title">
+                      <div className="model-name">{model.modelType}</div>
+                      <div className="model-subtitle">{completionText}</div>
+                    </div>
+                    <div className="model-summary">
+                      <span className={`model-badge ${model.isComplete ? "ready" : "progress"}`}>
+                        {badgeText}
                       </span>
-                    </td>
-                    <td>₨ {(payment.amount || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <span className="model-payment">₨ {Number(model.totalPayment || 0).toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="model-table">
+                      <table className="payments-table">
+                        <thead>
+                          <tr>
+                            <th>ImageSet Name</th>
+                            <th>Annotator</th>
+                            <th>Tester</th>
+                            <th>Objects</th>
+                            <th>Status</th>
+                            <th>Annotator Payment</th>
+                            <th>Tester Payment</th>
+                            <th>Total Payment</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {model.images.map((image) => (
+                            <tr key={image.id}>
+                              <td>{image.imageName}</td>
+                              <td>{image.annotatorName}</td>
+                              <td>{image.testerName}</td>
+                              <td>{image.objectsCount}</td>
+                              <td>
+                                <span className={`status-badge status-${getStatusClass(image.status)}`}>
+                                  {getStatusLabel(image.status)}
+                                </span>
+                              </td>
+                              <td>₨ {Number(image.annotatorPayment || 0).toLocaleString()}</td>
+                              <td>₨ {Number(image.testerPayment || 0).toLocaleString()}</td>
+                              <td>₨ {Number(image.totalPayment || 0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="admin-payments-section">
+              <h3>Admin Payments</h3>
+              <div className="table-container">
+                <table className="payments-table">
+                  <thead>
+                    <tr>
+                      <th>Admin</th>
+                      <th>Hours</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Method</th>
+                      <th>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminPaymentDetails.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="no-data">No admin payments</td>
+                      </tr>
+                    ) : (
+                      adminPaymentDetails.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{payment.admin_name}</td>
+                          <td>{Number(payment.hours || 0).toFixed(2)}</td>
+                          <td>₨ {Number(payment.amount || 0).toLocaleString()}</td>
+                          <td>
+                            <span className={`status-badge status-${payment.status}`}>
+                              {payment.status}
+                            </span>
+                          </td>
+                          <td>{payment.payment_method || "-"}</td>
+                          <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0]}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "create" && (
+          <div className="table-container">
+            <h3>Create Payment</h3>
+            <form onSubmit={handleCreatePayment} className="payment-create-form">
+              <div className="form-row">
+                <label>Role</label>
+                <select
+                  value={createForm.role}
+                  onChange={(e) => {
+                    const role = e.target.value;
+                    handleCreateChange("role", role);
+                    handleCreateChange("userId", "");
+                    if (role === "admin") {
+                      handleCreateChange("modelType", "");
+                    }
+                  }}
+                >
+                  <option value="annotator">Annotator</option>
+                  <option value="tester">Tester</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              {createForm.role !== "admin" && (
+                <div className="form-row">
+                  <label>Model Type</label>
+                  <select
+                    value={createForm.modelType}
+                    onChange={(e) => {
+                      handleCreateChange("modelType", e.target.value);
+                      handleCreateChange("userId", "");
+                    }}
+                  >
+                    <option value="">Select model</option>
+                    {eligibleModels.map((model) => (
+                      <option key={model.modelType} value={model.modelType}>
+                        {model.modelType} ({model.finalizedImages}/{model.totalImages} finalized)
+                      </option>
+                    ))}
+                  </select>
+                  {createForm.modelType && (
+                    <div className="form-hint">
+                      {isModelComplete
+                        ? "Model completed. Payments allowed for approved image sets."
+                        : "Model not completed. Finish all image sets before payment."}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="form-row">
+                <label>User</label>
+                <select
+                  value={createForm.userId}
+                  onChange={(e) => handleCreateChange("userId", e.target.value)}
+                  disabled={createForm.role !== "admin" && !isModelComplete}
+                >
+                  <option value="">Select user</option>
+                  {availableUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name} ({user.email})
+                    </option>
+                  ))}
+                </select>
+                {createForm.role !== "admin" && selectedUser && (
+                  <div className="form-hint">Approved image sets: {approvedCount}</div>
+                )}
+              </div>
+
+              <div className="form-row">
+                <label>Amount</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={createForm.amount}
+                  onChange={(e) => handleCreateChange("amount", e.target.value)}
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Payment Method</label>
+                <select
+                  value={createForm.paymentMethod}
+                  onChange={(e) => handleCreateChange("paymentMethod", e.target.value)}
+                >
+                  <option value="bank">Bank Transfer</option>
+                  <option value="cash">Cash</option>
+                  <option value="mobile">Mobile</option>
+                </select>
+              </div>
+
+              {createError && <div className="dashboard-error">{createError}</div>}
+              {createSuccess && <div className="dashboard-success">{createSuccess}</div>}
+
+              <button className="btn-primary" type="submit" disabled={creating}>
+                {creating ? "Creating..." : "Create Payment"}
+              </button>
+            </form>
           </div>
         )}
 

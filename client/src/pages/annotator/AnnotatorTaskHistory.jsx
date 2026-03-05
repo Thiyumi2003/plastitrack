@@ -120,9 +120,11 @@ export default function AnnotatorTaskHistory() {
                         ? new Date(task.completed_date).toLocaleDateString()
                         : "-"}
                     </td>
-                    <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
-                      {task.notes ? (
-                        <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
+                    <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.tester_feedback || task.feedback || task.notes || ""}>
+                      {task.tester_feedback || task.feedback || task.notes ? (
+                        <span style={{ color: "#666", fontSize: "13px" }}>
+                          {task.tester_feedback || task.feedback || task.notes}
+                        </span>
                       ) : (
                         <span style={{ color: "#999" }}>-</span>
                       )}

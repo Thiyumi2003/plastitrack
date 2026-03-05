@@ -115,6 +115,7 @@ async function initDatabase() {
       // Ignore if already migrated
     }
     await ensureColumn("users", "last_login", "TIMESTAMP NULL");
+    await ensureColumn("users", "profile_picture", "VARCHAR(255) NULL");
 
     // Create tasks table
     const createTasksTableQuery = `
@@ -206,6 +207,21 @@ async function initDatabase() {
     console.log("✓ Payments table created or already exists");
 
     await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
+    await ensureColumn("payments", "approved_by", "INT DEFAULT NULL");
+    
+    // Add foreign key for approved_by if it doesn't exist
+    try {
+      await connection.query(`
+        ALTER TABLE payments 
+        ADD CONSTRAINT fk_payments_approved_by 
+        FOREIGN KEY (approved_by) REFERENCES users(id)
+      `);
+    } catch (err) {
+      if (err.code !== "ER_DUP_KEYNAME") {
+        // Ignore if constraint already exists
+        console.log("Note: approved_by foreign key may already exist");
+      }
+    }
 
     // Create notifications table
     const createNotificationsTableQuery = `
@@ -290,6 +306,8 @@ async function initDatabase() {
 
     // Add hourly_rate and auto_track_hours columns to users table
     await ensureColumn("users", "hourly_rate", "DECIMAL(10,2) DEFAULT 1000.00 COMMENT 'Hourly rate for admin payments'");
+    await ensureColumn("users", "annotator_rate", "DECIMAL(10,2) DEFAULT 0 COMMENT 'Rate per object for annotators'");
+    await ensureColumn("users", "tester_rate", "DECIMAL(10,2) DEFAULT 0 COMMENT 'Rate per object for testers'");
     await ensureColumn("users", "auto_track_hours", "BOOLEAN DEFAULT TRUE COMMENT 'Auto-track working hours for admins'");
     await ensureColumn("users", "is_active", "BOOLEAN DEFAULT TRUE COMMENT 'User account active status'");
 
@@ -342,6 +360,21 @@ async function initDatabase() {
       console.log("  - Melbourne User: melbourne@plastitrack.com / melbourne123");
     }
 
+    // Backfill completed_date for existing completed tasks
+    try {
+      const [updated] = await connection.query(
+        `UPDATE tasks 
+         SET completed_date = updated_at 
+         WHERE status IN ('completed', 'approved', 'rejected') 
+         AND completed_date IS NULL`
+      );
+      if (updated.affectedRows > 0) {
+        console.log(`✓ Backfilled completed_date for ${updated.affectedRows} existing tasks`);
+      }
+    } catch (err) {
+      console.warn("Could not backfill completed_date:", err.message);
+    }
+
     await connection.end();
     console.log("✓ Database initialization complete!");
   } catch (err) {
@@ -355,8 +388,8 @@ async function initDatabase() {
 console.log("🔵 Calling initDatabase...");
 initDatabase()
   .then(() => {
-    console.log("✅ initDatabase completed successfully");
+    console.log("✓ initDatabase completed successfully");
   })
   .catch(err => {
-    console.error("❌ Database init error:", err);
+    console.error("✗ Database init error:", err);
   });

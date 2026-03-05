@@ -19,7 +19,7 @@ export default function Home() {
             <a href="#features" className="nav-item">Features</a>
             <a href="#process" className="nav-item">Process</a>
             <Link to="/login" className="nav-item">Sign In</Link>
-            <Link to="/register" className="btn-cta">Try for Free</Link>
+            <Link to="/register" className="btn-cta">Sign Up</Link>
           </nav>
         </div>
       </header>
@@ -35,10 +35,8 @@ export default function Home() {
             </p>
             <div className="hero-buttons">
               <Link to="/register" className="btn-get-started">Get Started</Link>
-              <button className="btn-watch-demo">
-                <span className="demo-icon">▶</span>
-                Watch Demo
-              </button>
+              <Link to="/login" className="btn-login">Sign In</Link>
+              
             </div>
           </div>
           <div className="hero-visual">
@@ -119,8 +117,8 @@ export default function Home() {
               <div className="work-icon work-icon-green">
                 <Edit3 size={32} />
               </div>
-              <h3>Annotate Images</h3>
-              <p>Easily label and classify plastic waste in images using our intuitive annotation tools.</p>
+              <h3>Annotation Workflow Management</h3>
+              <p>Annotators update annotation progress and mark images as completed.</p>
               <button className="learn-more">Learn More →</button>
             </div>
             <div className="work-card work-card-orange">
@@ -136,7 +134,7 @@ export default function Home() {
                 <DollarSign size={32} />
               </div>
               <h3>Track Payments</h3>
-              <p>Monitor and manage payouts for completed annotations. Get rewarded for your work.</p>
+              <p>Monitor payments and generate reports for completed annotation tasks. Payments are approved by the Super Admin.</p>
               <button className="learn-more">Learn More →</button>
             </div>
           </div>
@@ -155,8 +153,8 @@ export default function Home() {
               <div className="started-icon started-icon-green">
                 <Upload size={32} />
               </div>
-              <h3>Upload</h3>
-              <p>Admins upload images of plastic waste for annotation.</p>
+              <h3>Manage Image Sets</h3>
+              <p>Admins upload and allocate image sets for annotation.</p>
               <button className="learn-more">Learn More →</button>
             </div>
             <div className="started-card started-card-orange">
