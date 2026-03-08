@@ -283,8 +283,15 @@ export default function ManageImages() {
     if (!name) return null;
     
     // First check userProfileMap from the details endpoint (most reliable)
-    if (userProfileMap && userProfileMap[name]) {
-      return userProfileMap[name];
+    if (userProfileMap) {
+      // Try exact match first
+      if (userProfileMap[name]) {
+        return userProfileMap[name];
+      }
+      // Try lowercase match
+      if (userProfileMap[name.toLowerCase()]) {
+        return userProfileMap[name.toLowerCase()];
+      }
     }
     
     // Fallback: Search in all user lists
@@ -307,6 +314,8 @@ export default function ManageImages() {
       setSelectedImageDetails(data.image);
       setImageHistory(data.history || []);
       setUserProfileMap(data.userProfileMap || {});
+      console.log('Image details loaded:', data);
+      console.log('User profile map:', data.userProfileMap);
       setShowDetailsModal(true);
     } catch (err) {
       alert(err.response?.data?.error || "Failed to load image details");
@@ -475,6 +484,14 @@ export default function ManageImages() {
     (rejectedByFromHistory && rejectedByFromHistory === selectedImageDetails?.tester_name
       ? selectedImageDetails?.tester_profile_picture
       : null);
+
+  // Debug logging
+  if (showDetailsModal && selectedImageDetails) {
+    console.log('previousAnnotatorFromHistory name:', previousAnnotatorFromHistory);
+    console.log('previousAnnotatorProfileFromHistory:', previousAnnotatorProfileFromHistory);
+    console.log('rejectedByFromHistory name:', rejectedByFromHistory);
+    console.log('rejectedByProfileFromHistory:', rejectedByProfileFromHistory);
+  }
 
   // Reset to page 1 when filters change
   useEffect(() => {

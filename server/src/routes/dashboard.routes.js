@@ -2533,7 +2533,12 @@ router.get("/admin/images/:id/details", verifyToken, async (req, res) => {
         if (details.previousAnnotator) userNames.add(details.previousAnnotator);
         if (details.assignedTo) userNames.add(details.assignedTo);
         if (details.reassignedTo) userNames.add(details.reassignedTo);
-      } catch (e) {}
+        if (details.annotatorName) userNames.add(details.annotatorName);
+        if (details.testerName) userNames.add(details.testerName);
+        if (details.reviewer) userNames.add(details.reviewer);
+      } catch (e) {
+        // Ignore JSON parse errors
+      }
     });
     
     // Add current and previous user names
@@ -2543,19 +2548,28 @@ router.get("/admin/images/:id/details", verifyToken, async (req, res) => {
     if (imageRows[0].melbourne_name) userNames.add(imageRows[0].melbourne_name);
     if (imageRows[0].admin_name) userNames.add(imageRows[0].admin_name);
 
-    // Fetch profile pictures for all mentioned users
+    // Fetch profile pictures for all mentioned users (with case-insensitive matching)
     const userProfileMap = {};
     if (userNames.size > 0) {
       const connection2 = await pool.getConnection();
+      const nameArray = Array.from(userNames);
       const [userProfiles] = await connection2.execute(
-        `SELECT name, profile_picture FROM users WHERE name IN (${Array.from(userNames).map(() => '?').join(',')})`,
-        Array.from(userNames)
+        `SELECT name, profile_picture FROM users WHERE name IN (${nameArray.map(() => '?').join(',')})`,
+        nameArray
       );
       await connection2.release();
+      
+      // Create both exact match and lowercase match for better lookups
       userProfiles.forEach(u => {
-        userProfileMap[u.name] = u.profile_picture;
+        if (u.name) {
+          userProfileMap[u.name] = u.profile_picture;
+          userProfileMap[u.name.toLowerCase()] = u.profile_picture;
+        }
       });
     }
+
+    console.log('Image details userProfileMap:', userProfileMap);
+    console.log('User names extracted:', Array.from(userNames));
 
     res.json({
       image: imageRows[0],
