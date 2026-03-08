@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, DollarSign, Clock } from "lucide-react";
+import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, DollarSign, Clock, User } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
@@ -10,6 +10,19 @@ export default function AdminSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
+
+  const getProfileSrc = (profilePicture) => {
+    if (!profilePicture) return null;
+    if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+      return profilePicture;
+    }
+    if (profilePicture.startsWith("/")) {
+      return `http://localhost:5000${profilePicture}`;
+    }
+    return `http://localhost:5000/${profilePicture}`;
+  };
+
+  const profileSrc = getProfileSrc(user.profile_picture);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -25,6 +38,7 @@ export default function AdminSidebar() {
     { name: "Payments", icon: Wallet, path: "/admin/payments" },
     { name: "Payment Eligibility", icon: DollarSign, path: "/admin/payment-eligibility" },
     { name: "My Work Hours", icon: Clock, path: "/admin/work-hours" },
+    { name: "Profile", icon: User, path: "/admin/profile" },
   ];
 
   return (
@@ -41,7 +55,13 @@ export default function AdminSidebar() {
           </div>
 
           <div className="sidebar-user">
-            <div className="user-avatar">{user.name?.charAt(0).toUpperCase() || "A"}</div>
+            <div className="user-avatar">
+              {profileSrc ? (
+                <img className="user-avatar-img" src={profileSrc} alt={user.name || "Admin"} />
+              ) : (
+                user.name?.charAt(0).toUpperCase() || "A"
+              )}
+            </div>
             <div className="user-info">
               <div className="user-name">{user.name || "Admin"}</div>
               <div className="user-role">{user.role || "admin"}</div>

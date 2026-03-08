@@ -19,6 +19,12 @@ export default function Login() {
   const [success, setSuccess] = useState(location.state?.message || "");
   const [loading, setLoading] = useState(false);
 
+  const normalizeRole = (role) => {
+    if (role === "superadmin") return "super_admin";
+    if (role === "melbourne") return "melbourne_user";
+    return role;
+  };
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData((prev) => ({
@@ -61,7 +67,7 @@ export default function Login() {
       }
 
       // Navigate to appropriate dashboard based on role
-      const userRole = response.data.user.role;
+      const userRole = normalizeRole(response.data.user.role);
       if (userRole === "super_admin") {
         navigate("/dashboard", { state: { message: "Login successful!" } });
       } else if (userRole === "admin") {
@@ -76,7 +82,7 @@ export default function Login() {
         navigate("/", { state: { message: "Login successful!" } });
       }
     } catch (err) {
-      setError(err.response?.data?.message || "Login failed");
+      setError(err.response?.data?.error || err.response?.data?.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -105,7 +111,7 @@ export default function Login() {
         : "Login successful!";
 
       // Navigate to appropriate dashboard based on role
-      const userRole = response.data.user.role;
+      const userRole = normalizeRole(response.data.user.role);
       if (userRole === "super_admin") {
         navigate("/dashboard", { state: { message } });
       } else if (userRole === "admin") {
@@ -169,14 +175,14 @@ export default function Login() {
             {success && <div className="auth-success">{success}</div>}
 
             <form onSubmit={handleLogin} className="login-form">
-              <label className="login-label" htmlFor="email">Email</label>
+              <label className="login-label" htmlFor="email">Email or Username</label>
               <div className="login-input">
                 <Mail className="login-input-icon" size={18} />
                 <input
                   id="email"
                   type="email"
                   name="email"
-                  placeholder="Email"
+                  placeholder="Email or username"
                   value={formData.email}
                   onChange={handleChange}
                   disabled={loading}

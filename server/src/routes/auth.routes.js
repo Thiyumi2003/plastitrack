@@ -31,8 +31,9 @@ transporter.verify((error, success) => {
 router.post("/register", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
+    const normalizedEmail = String(email || "").trim().toLowerCase();
 
-    if (!name || !email || !password || !role) {
+    if (!name || !normalizedEmail || !password || !role) {
       return res.status(400).json({ error: "All fields required" });
     }
 
@@ -41,7 +42,7 @@ router.post("/register", async (req, res) => {
     // Check if user exists
     const [existingUser] = await connection.execute(
       "SELECT email FROM users WHERE email = ?",
-      [email]
+      [normalizedEmail]
     );
 
     if (existingUser.length > 0) {
@@ -55,12 +56,12 @@ router.post("/register", async (req, res) => {
     // Insert user
     await connection.execute(
       "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-      [name, email, hashedPassword, role]
+      [name, normalizedEmail, hashedPassword, role]
     );
 
     // Create JWT token
     const token = jwt.sign(
-      { email, role },
+      { email: normalizedEmail, role },
       process.env.JWT_SECRET || "supersecret123",
       { expiresIn: "24h" }
     );
@@ -78,17 +79,19 @@ router.post("/register", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+    const loginId = String(email || "").trim();
+    const normalizedEmail = loginId.toLowerCase();
 
-    if (!email || !password) {
+    if (!loginId || !password) {
       return res.status(400).json({ error: "Email and password required" });
     }
 
     const connection = await pool.getConnection();
 
-    // Find user
+    // Find user by email or exact username (name)
     const [users] = await connection.execute(
-      "SELECT * FROM users WHERE email = ?",
-      [email]
+      "SELECT * FROM users WHERE email = ? OR name = ?",
+      [normalizedEmail, loginId]
     );
 
     if (users.length === 0) {
@@ -99,7 +102,7 @@ router.post("/login", async (req, res) => {
     const user = users[0];
 
     // Check if account is active
-    if (user.is_active === false) {
+    if (user.is_active === false || user.is_active === 0 || user.is_active === "0") {
       await connection.release();
       return res.status(403).json({ error: "Account is disabled. Please contact administrator." });
     }
@@ -112,9 +115,16 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    // Normalize legacy role labels so frontend/backends stay compatible.
+    const normalizedRole = user.role === "superadmin"
+      ? "super_admin"
+      : user.role === "melbourne"
+        ? "melbourne_user"
+        : user.role;
+
     // Create JWT token
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, email: user.email, role: normalizedRole },
       process.env.JWT_SECRET || "supersecret123",
       { expiresIn: "24h" }
     );
@@ -152,7 +162,7 @@ router.post("/login", async (req, res) => {
         id: user.id, 
         email: user.email, 
         name: user.name, 
-        role: user.role,
+        role: normalizedRole,
         auto_track_hours: user.auto_track_hours,
         profile_picture: user.profile_picture || null,
       },

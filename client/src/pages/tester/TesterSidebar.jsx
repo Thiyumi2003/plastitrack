@@ -11,6 +11,19 @@ export default function TesterSidebar() {
   const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
+  const getProfileSrc = (profilePicture) => {
+    if (!profilePicture) return null;
+    if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+      return profilePicture;
+    }
+    if (profilePicture.startsWith("/")) {
+      return `http://localhost:5000${profilePicture}`;
+    }
+    return `http://localhost:5000/${profilePicture}`;
+  };
+
+  const profileSrc = getProfileSrc(user.profile_picture);
+
   const menuItems = [
     { label: "Dashboard", icon: LayoutDashboard, path: "/tester/dashboard" },
     { label: "Task History", icon: History, path: "/tester/task-history" },
@@ -38,7 +51,13 @@ export default function TesterSidebar() {
           </div>
 
           <div className="sidebar-user">
-            <div className="user-avatar">{user.name?.charAt(0).toUpperCase()}</div>
+            <div className="user-avatar">
+              {profileSrc ? (
+                <img className="user-avatar-img" src={profileSrc} alt={user.name || "User"} />
+              ) : (
+                user.name?.charAt(0).toUpperCase()
+              )}
+            </div>
             <div className="user-info">
               <div className="user-name">{user.name}</div>
               <div className="user-role">{user.role || "tester"}</div>

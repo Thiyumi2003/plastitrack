@@ -101,7 +101,7 @@ export default function MelbourneProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/annotator/profile",
+        "http://localhost:5000/api/dashboard/melbourne/profile",
         {
           name: `${profile.firstName} ${profile.lastName}`,
           email: profile.email,
@@ -142,7 +142,7 @@ export default function MelbourneProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/annotator/change-password",
+        "http://localhost:5000/api/dashboard/melbourne/change-password",
         {
           currentPassword: password.current,
           newPassword: password.new,

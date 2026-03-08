@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { formatChartDate } from "../../utils/dateUtils";
 import "./admin.css";
 import AdminSidebar from "./AdminSidebar";
 
@@ -52,7 +53,7 @@ export default function AdminDashboard() {
   })) || [];
 
   const progressData = reports?.progressOverTime?.map((item) => ({
-    date: item.date?.split("-")[2] || "N/A",
+    date: formatChartDate(item.date),
     pending: item.pending || 0,
     inProgress: item.in_progress || 0,
     completed: item.completed || 0,
@@ -90,7 +91,7 @@ export default function AdminDashboard() {
           </div>
           <div className="kpi-card">
             <div className="kpi-value">{kpis?.approve || 0}</div>
-            <div className="kpi-label">Approve</div>
+            <div className="kpi-label">Approved</div>
           </div>
           <div className="kpi-card">
             <div className="kpi-value">{kpis?.rejected || 0}</div>

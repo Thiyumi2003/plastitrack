@@ -10,6 +10,7 @@ import ViewAllUsers from "./pages/superadmin/ViewAllUsers";
 import Reports from "./pages/superadmin/Reports";
 import ManagePayments from "./pages/superadmin/ManagePayments";
 import ManageAdminWorkHours from "./pages/superadmin/ManageAdminWorkHours";
+import SuperAdminProfile from "./pages/superadmin/SuperAdminProfile";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ManageImages from "./pages/admin/ManageImages";
 import AdminUsers from "./pages/admin/AdminUsers";
@@ -17,6 +18,7 @@ import AdminReports from "./pages/admin/AdminReports";
 import AdminPayments from "./pages/admin/AdminPayments";
 import PaymentEligibility from "./pages/admin/PaymentEligibility";
 import AdminWorkHours from "./pages/admin/AdminWorkHours";
+import AdminProfile from "./pages/admin/AdminProfile";
 import AnnotatorDashboard from "./pages/annotator/AnnotatorDashboard";
 import AnnotatorProfile from "./pages/annotator/AnnotatorProfile";
 import AnnotatorPayments from "./pages/annotator/AnnotatorPayments";
@@ -36,21 +38,29 @@ function ProtectedRoute({ children, requiredRole }) {
   const user = JSON.parse(localStorage.getItem("user") || "null");
   const token = localStorage.getItem("token");
 
+  const normalizeRole = (role) => {
+    if (role === "superadmin") return "super_admin";
+    if (role === "melbourne") return "melbourne_user";
+    return role;
+  };
+
   if (!token || !user) {
     return <Navigate to="/login" />;
   }
 
-  if (requiredRole && user.role !== requiredRole) {
+  const actualRole = normalizeRole(user.role);
+
+  if (requiredRole && actualRole !== requiredRole) {
     // Redirect to appropriate dashboard based on actual role
-    if (user.role === "admin") {
+    if (actualRole === "admin") {
       return <Navigate to="/admin/dashboard" />;
-    } else if (user.role === "super_admin") {
+    } else if (actualRole === "super_admin") {
       return <Navigate to="/dashboard" />;
-    } else if (user.role === "annotator") {
+    } else if (actualRole === "annotator") {
       return <Navigate to="/annotator/dashboard" />;
-    } else if (user.role === "tester") {
+    } else if (actualRole === "tester") {
       return <Navigate to="/tester/dashboard" />;
-    } else if (user.role === "melbourne_user") {
+    } else if (actualRole === "melbourne_user") {
       return <Navigate to="/melbourne/dashboard" />;
     } else {
       return <Navigate to="/" />;
@@ -119,6 +129,14 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute requiredRole="super_admin">
+              <SuperAdminProfile />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Admin Dashboard Routes */}
         <Route
@@ -174,6 +192,14 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="admin">
               <AdminWorkHours />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/profile"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminProfile />
             </ProtectedRoute>
           }
         />

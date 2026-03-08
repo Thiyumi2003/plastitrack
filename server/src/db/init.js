@@ -57,16 +57,22 @@ async function initDatabase() {
         image_name VARCHAR(255) NOT NULL,
         model_type VARCHAR(100),
         status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending',
-        assigned_to INT,
-        annotator_id INT,
-        tester_id INT,
-        objects_count INT DEFAULT 0,
-        feedback TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        admin_id INT,
+        annotator_id INT,
+        annotator_feedback TEXT,
+        tester_id INT,
+        tester_feedback TEXT,
+        melbourne_user_id INT,
+        melbourne_user_feedback TEXT,
+        objects_count INT DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (assigned_to) REFERENCES users(id),
+        previous_tester_name VARCHAR(255) NULL,
+        previous_feedback TEXT NULL,
+        FOREIGN KEY (admin_id) REFERENCES users(id),
         FOREIGN KEY (annotator_id) REFERENCES users(id),
-        FOREIGN KEY (tester_id) REFERENCES users(id)
+        FOREIGN KEY (tester_id) REFERENCES users(id),
+        FOREIGN KEY (melbourne_user_id) REFERENCES users(id)
       )
     `;
     await connection.query(createImagesTableQuery);
@@ -102,20 +108,208 @@ async function initDatabase() {
       }
     };
 
-    // Remove deprecated columns from images
+    // Remove deprecated columns from images - need to handle foreign keys
+    console.log("🔄 Starting schema migration for images table...");
+    
+    // First, get all foreign keys on the images table
+    const [foreignKeys] = await connection.query(`
+      SELECT CONSTRAINT_NAME, COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+      WHERE TABLE_NAME = 'images' AND REFERENCED_TABLE_NAME IS NOT NULL
+    `);
+    
+    console.log(`Found ${foreignKeys.length} foreign keys on images table`);
+    
+    // Drop any foreign keys that reference old columns (assigned_to)
+    for (const fk of foreignKeys) {
+      if (fk.COLUMN_NAME === 'assigned_to') {
+        try {
+          await connection.query(`ALTER TABLE images DROP FOREIGN KEY ${fk.CONSTRAINT_NAME}`);
+          console.log(`✓ Dropped foreign key ${fk.CONSTRAINT_NAME} on assigned_to`);
+        } catch (err) {
+          console.warn(`Could not drop FK ${fk.CONSTRAINT_NAME}:`, err.message);
+        }
+      }
+    }
+
+    // Now drop the old columns
     await dropColumnIfExists("images", "file_size");
     await dropColumnIfExists("images", "filepath");
-    await ensureColumn("images", "uploaded_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
-    await ensureColumn("images", "melbourne_user_id", "INT");
-    await ensureColumn("images", "feedback", "TEXT");
+    await dropColumnIfExists("images", "feedback");
+    await dropColumnIfExists("images", "uploaded_at");
+    await dropColumnIfExists("images", "assigned_to");
+    await dropColumnIfExists("images", "rejected_at");
+    await dropColumnIfExists("images", "previous_annotator_name");
+    await dropColumnIfExists("images", "previous_rejected_at");
+    
+    // Ensure new columns exist
+    await ensureColumn("images", "admin_id", "INT");
+    await ensureColumn("images", "annotator_feedback", "TEXT NULL");
+    await ensureColumn("images", "tester_feedback", "TEXT NULL");
+    await ensureColumn("images", "melbourne_user_feedback", "TEXT NULL");
+    await ensureColumn("images", "previous_tester_name", "VARCHAR(255) NULL");
+    await ensureColumn("images", "previous_feedback", "TEXT NULL");
+    
+    // Data migration: Extract model_type from image_name if NULL
+    try {
+      const [imagesToFix] = await connection.query(`
+        SELECT id, image_name FROM images WHERE model_type IS NULL OR model_type = ''
+      `);
+      
+      if (imagesToFix.length > 0) {
+        console.log(`🔄 Fixing ${imagesToFix.length} images with missing model_type...`);
+        for (const img of imagesToFix) {
+          // Extract model type from image name pattern (e.g., "PET_01_2300_2400" -> "PET")
+          const match = img.image_name.match(/^([A-Z]+)_/);
+          if (match) {
+            await connection.query(
+              `UPDATE images SET model_type = ? WHERE id = ?`,
+              [match[1], img.id]
+            );
+          }
+        }
+        console.log(`✓ Fixed model_type for ${imagesToFix.length} images`);
+      }
+    } catch (err) {
+      console.warn("Could not fix model_type:", err.message);
+    }
+    
+    // Data migration: Copy annotation task notes to annotator_feedback
+    try {
+      const [tasksWithNotes] = await connection.query(`
+        SELECT t.image_id, t.notes
+        FROM tasks t
+        INNER JOIN images i ON t.image_id = i.id
+        WHERE t.task_type = 'annotation' 
+          AND t.status = 'completed'
+          AND t.notes IS NOT NULL 
+          AND t.notes != ''
+          AND (i.annotator_feedback IS NULL OR i.annotator_feedback = '')
+        ORDER BY t.completed_date DESC
+      `);
+      
+      if (tasksWithNotes.length > 0) {
+        console.log(`🔄 Migrating ${tasksWithNotes.length} annotation notes to annotator_feedback...`);
+        const uniqueImages = new Map();
+        // Keep only the latest note for each image
+        tasksWithNotes.forEach(task => {
+          if (!uniqueImages.has(task.image_id)) {
+            uniqueImages.set(task.image_id, task.notes);
+          }
+        });
+        
+        for (const [imageId, notes] of uniqueImages) {
+          await connection.query(
+            `UPDATE images SET annotator_feedback = ? WHERE id = ?`,
+            [notes, imageId]
+          );
+        }
+        console.log(`✓ Migrated annotator feedback for ${uniqueImages.size} images`);
+      }
+    } catch (err) {
+      console.warn("Could not migrate annotator feedback:", err.message);
+    }
+    
+    // Data migration: Copy tester task notes to tester_feedback
+    try {
+      const [testerTasks] = await connection.query(`
+        SELECT t.image_id, t.notes
+        FROM tasks t
+        INNER JOIN images i ON t.image_id = i.id
+        WHERE t.task_type = 'testing'
+          AND t.notes IS NOT NULL 
+          AND t.notes != ''
+          AND (i.tester_feedback IS NULL OR i.tester_feedback = '')
+        ORDER BY t.completed_date DESC
+      `);
+      
+      if (testerTasks.length > 0) {
+        console.log(`🔄 Migrating ${testerTasks.length} tester notes to tester_feedback...`);
+        const uniqueImages = new Map();
+        testerTasks.forEach(task => {
+          if (!uniqueImages.has(task.image_id)) {
+            uniqueImages.set(task.image_id, task.notes);
+          }
+        });
+        
+        for (const [imageId, notes] of uniqueImages) {
+          await connection.query(
+            `UPDATE images SET tester_feedback = ? WHERE id = ?`,
+            [notes, imageId]
+          );
+        }
+        console.log(`✓ Migrated tester feedback for ${uniqueImages.size} images`);
+      }
+    } catch (err) {
+      console.warn("Could not migrate tester feedback:", err.message);
+    }
+    
+    // Add foreign key constraint for admin_id if it doesn't exist
+    try {
+      await connection.query(`ALTER TABLE images ADD CONSTRAINT admin_id_fk FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL`);
+      console.log(`✓ Added foreign key constraint on images.admin_id`);
+    } catch (err) {
+      if (err.code === 'ER_DUP_KEYNAME' || err.code === 'ER_FK_DUP_NAME') {
+        console.log(`✓ Foreign key constraint admin_id_fk already exists`);
+      } else {
+        console.warn("Could not add admin_id FK:", err.code);
+      }
+    }
+    
     // Ensure images status enum supports review flow
     try {
       await connection.query(`ALTER TABLE images MODIFY status ENUM('pending', 'in_progress', 'completed', 'pending_review', 'approved', 'rejected') DEFAULT 'pending'`);
+      console.log(`✓ Updated images status enum`);
     } catch (err) {
       // Ignore if already migrated
+      console.warn("Status enum update (may already be complete):", err.code);
     }
+    
+    // Reorganize column order for images table
+    try {
+      console.log("🔄 Reorganizing images table column order...");
+      // Reorder columns: id, image_name, model_type, status, created_at, admin_id, annotator_id, annotator_feedback, tester_id, tester_feedback, melbourne_user_id, melbourne_user_feedback, objects_count, updated_at, previous_tester_name, previous_feedback
+      await connection.query(`ALTER TABLE images MODIFY created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER status`);
+      await connection.query(`ALTER TABLE images MODIFY admin_id INT AFTER created_at`);
+      await connection.query(`ALTER TABLE images MODIFY annotator_id INT AFTER admin_id`);
+      await connection.query(`ALTER TABLE images MODIFY annotator_feedback TEXT AFTER annotator_id`);
+      await connection.query(`ALTER TABLE images MODIFY tester_id INT AFTER annotator_feedback`);
+      await connection.query(`ALTER TABLE images MODIFY tester_feedback TEXT AFTER tester_id`);
+      await connection.query(`ALTER TABLE images MODIFY melbourne_user_id INT AFTER tester_feedback`);
+      await connection.query(`ALTER TABLE images MODIFY melbourne_user_feedback TEXT AFTER melbourne_user_id`);
+      await connection.query(`ALTER TABLE images MODIFY objects_count INT DEFAULT 0 AFTER melbourne_user_feedback`);
+      await connection.query(`ALTER TABLE images MODIFY updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER objects_count`);
+      await connection.query(`ALTER TABLE images MODIFY previous_tester_name VARCHAR(255) NULL AFTER updated_at`);
+      await connection.query(`ALTER TABLE images MODIFY previous_feedback TEXT NULL AFTER previous_tester_name`);
+      console.log(`✓ Images table column order reorganized`);
+    } catch (err) {
+      console.warn("Could not reorganize column order:", err.code || err.message);
+    }
+    
+    console.log("✓ Schema migration complete");
     await ensureColumn("users", "last_login", "TIMESTAMP NULL");
     await ensureColumn("users", "profile_picture", "VARCHAR(255) NULL");
+
+    // Create image history table for full image set lifecycle timeline
+    const createImageHistoryTableQuery = `
+      CREATE TABLE IF NOT EXISTS image_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        image_id INT NOT NULL,
+        event_type VARCHAR(100) NOT NULL,
+        status_from VARCHAR(50) NULL,
+        status_to VARCHAR(50) NULL,
+        actor_id INT NULL,
+        actor_name VARCHAR(255) NULL,
+        details TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
+        FOREIGN KEY (actor_id) REFERENCES users(id),
+        INDEX idx_image_history_image_id (image_id),
+        INDEX idx_image_history_created_at (created_at)
+      )
+    `;
+    await connection.query(createImageHistoryTableQuery);
+    console.log("✓ Image history table created or already exists");
 
     // Create tasks table
     const createTasksTableQuery = `
@@ -217,9 +411,11 @@ async function initDatabase() {
         FOREIGN KEY (approved_by) REFERENCES users(id)
       `);
     } catch (err) {
-      if (err.code !== "ER_DUP_KEYNAME") {
-        // Ignore if constraint already exists
-        console.log("Note: approved_by foreign key may already exist");
+      if (err.code === "ER_DUP_KEYNAME" || err.code === "ER_FK_DUP_NAME") {
+        // Constraint already exists, that's fine
+        console.log("✓ approved_by foreign key already exists");
+      } else {
+        console.warn("Could not add approved_by FK:", err.code);
       }
     }
 
@@ -311,54 +507,62 @@ async function initDatabase() {
     await ensureColumn("users", "auto_track_hours", "BOOLEAN DEFAULT TRUE COMMENT 'Auto-track working hours for admins'");
     await ensureColumn("users", "is_active", "BOOLEAN DEFAULT TRUE COMMENT 'User account active status'");
 
-    // Create a sample admin user if it doesn't exist
-    const [existingAdmin] = await connection.query(
-      "SELECT id FROM users WHERE email = 'tharuka@gmail.com'"
-    );
+    // Ensure sample users always exist (and keep superadmin credentials recoverable).
+    const bcrypt = require("bcryptjs");
+    const ensureSampleUser = async ({ name, email, password, role, forcePasswordReset = false }) => {
+      const [rows] = await connection.query("SELECT id, role FROM users WHERE email = ?", [email]);
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-    if (existingAdmin.length === 0) {
-      const bcrypt = require("bcryptjs");
-      
-      // Hash passwords for all users
-      const adminPassword = await bcrypt.hash("tharuka123", 10);
-      const superAdminPassword = await bcrypt.hash("dinesh123", 10);
-      const annotatorPassword = await bcrypt.hash("thiyumi123", 10);
-      const testerPassword = await bcrypt.hash("nipun123", 10);
-      const melbournePassword = await bcrypt.hash("melbourne123", 10);
+      if (rows.length === 0) {
+        await connection.query(
+          "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
+          [name, email, hashedPassword, role]
+        );
+        console.log(`✓ Seeded user ${email} (${role})`);
+        return;
+      }
 
-      // Insert all users
-      await connection.query(
-        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Tharuka Sadaruwan", "tharuka@gmail.com", adminPassword, "admin"]
-      );
-      
-      await connection.query(
-        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Dinesh Asanka", "dineshasanka@gmail.com", superAdminPassword, "super_admin"]
-      );
-      
-      await connection.query(
-        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Thiyumi Upasari", "thiyumiupasari2003@gmail.com", annotatorPassword, "annotator"]
-      );
-      
-      await connection.query(
-        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Nipun Jayakody", "nipunjayakody110@gmail.com", testerPassword, "tester"]
-      );
-      
-      await connection.query(
-        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-        ["Melbourne User", "melbourne@plastitrack.com", melbournePassword, "melbourne_user"]
-      );
+      const existing = rows[0];
+      if (existing.role !== role || forcePasswordReset) {
+        await connection.query(
+          "UPDATE users SET role = ?, password = ?, is_active = TRUE WHERE id = ?",
+          [role, hashedPassword, existing.id]
+        );
+        console.log(`✓ Updated user ${email} role/password`);
+      }
+    };
 
-      console.log("✓ Sample users created:");
-      console.log("  - Admin: tharuka@gmail.com / tharuka123");
-      console.log("  - Super Admin: dineshasanka@gmail.com / dinesh123");
-      console.log("  - Annotator: thiyumiupasari2003@gmail.com / thiyumi123");
-      console.log("  - Tester: nipunjayakody110@gmail.com / nipun123");
-      console.log("  - Melbourne User: melbourne@plastitrack.com / melbourne123");
-    }
+    await ensureSampleUser({
+      name: "Tharuka Sadaruwan",
+      email: "tharuka@gmail.com",
+      password: "tharuka123",
+      role: "admin",
+    });
+    await ensureSampleUser({
+      name: "Dinesh Asanka",
+      email: "dineshasanka@gmail.com",
+      password: "dinesh123",
+      role: "super_admin",
+      forcePasswordReset: true,
+    });
+    await ensureSampleUser({
+      name: "Thiyumi Upasari",
+      email: "thiyumiupasari2003@gmail.com",
+      password: "thiyumi123",
+      role: "annotator",
+    });
+    await ensureSampleUser({
+      name: "Nipun Jayakody",
+      email: "nipunjayakody110@gmail.com",
+      password: "nipun123",
+      role: "tester",
+    });
+    await ensureSampleUser({
+      name: "Melbourne User",
+      email: "melbourne@plastitrack.com",
+      password: "melbourne123",
+      role: "melbourne_user",
+    });
 
     // Backfill completed_date for existing completed tasks
     try {

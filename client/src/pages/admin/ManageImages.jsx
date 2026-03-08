@@ -9,10 +9,28 @@ export default function ManageImages() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [detailsMode, setDetailsMode] = useState("details");
+  const [selectedImageDetails, setSelectedImageDetails] = useState(null);
+  const [imageHistory, setImageHistory] = useState([]);
+  const [userProfileMap, setUserProfileMap] = useState({});
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [reassigningImageId, setReassigningImageId] = useState(null);
   const [newImageName, setNewImageName] = useState("");
   const [newObjectCount, setNewObjectCount] = useState("");
   const [isObjectCountManuallySet, setIsObjectCountManuallySet] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Search and Filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [annotatorFilter, setAnnotatorFilter] = useState("all");
+  const [testerFilter, setTesterFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 12;
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -47,16 +65,40 @@ export default function ManageImages() {
       
     try {
       const selectedUser = users.annotators.find(u => u.id.toString() === userId.toString());
-      // Optimistically update UI
+      
+      // Get tester name from image OR look it up from users testers array
+      let testerNameForHistory = image?.tester_name;
+      if (!testerNameForHistory && image?.tester_id && users.testers) {
+        testerNameForHistory = users.testers.find(t => t.id === image.tester_id)?.name;
+      }
+      
+      // Optimistically update UI - PRESERVE rejection history while reassigning
       setImages(images.map(img => 
         img.id === imageId 
-          ? { ...img, annotator_id: userId, annotator_name: selectedUser?.name, status: "in_progress" }
+          ? { 
+              ...img, 
+              annotator_id: userId, 
+              annotator_name: selectedUser?.name, 
+              status: "in_progress",
+              // Preserve rejection history if this was a rejected image
+              previous_tester_name: isReassignment ? testerNameForHistory : img.previous_tester_name,
+              previous_feedback: isReassignment ? img.tester_feedback : img.previous_feedback,
+              previous_rejected_at: isReassignment ? new Date().toISOString() : img.previous_rejected_at
+            }
           : img
       ));
       
       await axios.put(
         `http://localhost:5000/api/dashboard/admin/images/${imageId}/assign`,
-        { annotatorId: userId, status: "in_progress" },
+        { 
+          annotatorId: userId, 
+          status: "in_progress",
+          // Send rejection history to backend if this was a reassignment
+          ...(isReassignment && {
+            previous_tester_name: testerNameForHistory || image?.tester_name,
+            previous_feedback: image?.tester_feedback
+          })
+        },
         { headers: getAuthHeader() }
       );
       
@@ -132,6 +174,144 @@ export default function ManageImages() {
     } catch (err) {
       console.error("Delete error:", err.response?.data || err.message);
       alert(err.response?.data?.error || "Failed to delete image: " + err.message);
+    }
+  };
+
+  const parseEventDetails = (details) => {
+    if (!details) return {};
+    try {
+      return JSON.parse(details);
+    } catch {
+      return { raw: details };
+    }
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "-";
+    return date.toLocaleString();
+  };
+
+  const getTimelineLabel = (eventType) => {
+    const map = {
+      created: "Created",
+      assigned_to_annotator: "Assigned to annotator",
+      annotation_completed: "Annotation completed",
+      assigned_to_tester: "Sent for review",
+      reviewed: "Reviewed",
+      rejected: "Rejected",
+      reassigned: "Reassigned",
+      approved: "Approved",
+      sent_to_melbourne: "Sent to Melbourne",
+    };
+    return map[eventType] || eventType;
+  };
+
+  const getLatestHistoryDetails = (eventType) => {
+    if (!Array.isArray(imageHistory) || imageHistory.length === 0) return null;
+    const event = [...imageHistory].reverse().find((item) => item.event_type === eventType);
+    return event ? parseEventDetails(event.details) : null;
+  };
+
+  const getAnnotationHistory = () => {
+    if (!Array.isArray(imageHistory) || imageHistory.length === 0) return [];
+    const assignments = imageHistory.filter(
+      (item) => item.event_type === "assigned_to_annotator" || item.event_type === "reassigned"
+    );
+    return assignments.map((assignment) => {
+      const details = parseEventDetails(assignment.details);
+      const annotatorName = details.reassignedTo || details.annotatorName || assignment.actor_name;
+      
+      // Find completion event for this annotator
+      const completionEvent = imageHistory.find(
+        (item) => item.event_type === "annotation_completed" && 
+        new Date(item.created_at) > new Date(assignment.created_at)
+      );
+      
+      return {
+        annotatorName,
+        assignedDate: assignment.created_at,
+        completedDate: completionEvent?.created_at || null,
+        status: completionEvent ? "Completed" : "In Progress"
+      };
+    });
+  };
+
+  const getReassignmentHistory = () => {
+    if (!Array.isArray(imageHistory) || imageHistory.length === 0) return [];
+    return imageHistory.filter(
+      (item) => item.event_type === "rejected" || item.event_type === "reassigned"
+    ).map((event) => {
+      const details = parseEventDetails(event.details);
+      return {
+        date: event.created_at,
+        action: event.event_type === "rejected" 
+          ? `Rejected by ${details.rejectedBy || event.actor_name}` 
+          : `Reassigned to ${details.reassignedTo || "annotator"}`,
+        details: details
+      };
+    });
+  };
+
+  const getAvatarText = (name) => {
+    if (!name) return "?";
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  };
+
+  const getProfileSrc = (profilePicture) => {
+    if (!profilePicture) return null;
+    if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+      return profilePicture;
+    }
+    if (profilePicture.startsWith("/")) {
+      return `http://localhost:5000${profilePicture}`;
+    }
+    return `http://localhost:5000/${profilePicture}`;
+  };
+
+  const findProfilePictureByName = (userList, name) => {
+    if (!Array.isArray(userList) || !name) return null;
+    const target = String(name).trim().toLowerCase();
+    const user = userList.find((u) => String(u.name || "").trim().toLowerCase() === target);
+    return user?.profile_picture || null;
+  };
+
+  const findProfilePictureByNameInAllUsers = (name) => {
+    if (!name) return null;
+    
+    // First check userProfileMap from the details endpoint (most reliable)
+    if (userProfileMap && userProfileMap[name]) {
+      return userProfileMap[name];
+    }
+    
+    // Fallback: Search in all user lists
+    const allUsers = [
+      ...(users.annotators || []),
+      ...(users.testers || []),
+      ...(users.melbourneUsers || [])
+    ];
+    return findProfilePictureByName(allUsers, name);
+  };
+
+  const openImageDetails = async (imageId, mode = "details") => {
+    try {
+      setIsLoadingDetails(true);
+      setDetailsMode(mode);
+      const { data } = await axios.get(
+        `http://localhost:5000/api/dashboard/admin/images/${imageId}/details`,
+        { headers: getAuthHeader() }
+      );
+      setSelectedImageDetails(data.image);
+      setImageHistory(data.history || []);
+      setUserProfileMap(data.userProfileMap || {});
+      setShowDetailsModal(true);
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to load image details");
+    } finally {
+      setIsLoadingDetails(false);
     }
   };
 
@@ -221,6 +401,86 @@ export default function ManageImages() {
     return <span className={`status-badge ${s.class}`}>{s.label}</span>;
   };
 
+  // Filter and search logic
+  const filteredImages = images.filter((img) => {
+    // Search filter
+    const matchesSearch = !searchQuery || 
+      (img.image_name || img.filename || "").toLowerCase().includes(searchQuery.toLowerCase());
+    
+    // Status filter
+    const matchesStatus = statusFilter === "all" || img.status === statusFilter;
+    
+    // Annotator filter
+    const matchesAnnotator = annotatorFilter === "all" || 
+      img.annotator_id?.toString() === annotatorFilter;
+    
+    // Tester filter
+    const matchesTester = testerFilter === "all" || 
+      img.tester_id?.toString() === testerFilter;
+    
+    // Owner filter (current admin's uploads)
+    const currentUserId = JSON.parse(localStorage.getItem("user") || "{}").id;
+    const matchesOwner = ownerFilter === "all" || 
+      (ownerFilter === "yours" && img.admin_id?.toString() === currentUserId?.toString());
+    
+    return matchesSearch && matchesStatus && matchesAnnotator && matchesTester && matchesOwner;
+  });
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredImages.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedImages = filteredImages.slice(startIndex, endIndex);
+
+  const latestReassignedDetails = getLatestHistoryDetails("reassigned") || {};
+  const latestRejectedDetails = getLatestHistoryDetails("rejected") || {};
+  const previousAnnotatorFromHistory =
+    latestReassignedDetails.previousAnnotator ||
+    latestRejectedDetails.previousAnnotator ||
+    null;
+  const rejectedByFromHistory =
+    latestReassignedDetails.rejectedBy ||
+    latestRejectedDetails.rejectedBy ||
+    selectedImageDetails?.previous_tester_name ||
+    null;
+  const rejectionReasonFromHistory =
+    latestReassignedDetails.rejectionReason ||
+    latestRejectedDetails.rejectionReason ||
+    selectedImageDetails?.previous_feedback ||
+    selectedImageDetails?.tester_feedback ||
+    null;
+
+  const previousAnnotatorProfileFromEvent =
+    latestReassignedDetails.previousAnnotatorProfilePicture ||
+    latestRejectedDetails.previousAnnotatorProfilePicture ||
+    null;
+
+  const rejectedByProfileFromEvent =
+    latestReassignedDetails.rejectedByProfilePicture ||
+    latestRejectedDetails.rejectedByProfilePicture ||
+    selectedImageDetails?.previous_tester_profile_picture ||
+    null;
+
+  const previousAnnotatorProfileFromHistory =
+    previousAnnotatorProfileFromEvent ||
+    findProfilePictureByNameInAllUsers(previousAnnotatorFromHistory) ||
+    (previousAnnotatorFromHistory && previousAnnotatorFromHistory === selectedImageDetails?.annotator_name
+      ? selectedImageDetails?.annotator_profile_picture
+      : null);
+
+  const rejectedByProfileFromHistory =
+    rejectedByProfileFromEvent ||
+    findProfilePictureByNameInAllUsers(rejectedByFromHistory) ||
+    selectedImageDetails?.previous_tester_profile_picture ||
+    (rejectedByFromHistory && rejectedByFromHistory === selectedImageDetails?.tester_name
+      ? selectedImageDetails?.tester_profile_picture
+      : null);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, annotatorFilter, testerFilter, ownerFilter]);
+
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
@@ -236,9 +496,101 @@ export default function ManageImages() {
 
         {error && <div style={{ padding: "12px", backgroundColor: "#fee2e2", borderLeft: "4px solid #ef4444", color: "#991b1b", marginBottom: "20px", borderRadius: "4px" }}>{error}</div>}
 
+        {/* Search and Filter Section */}
+        <div className="filters-section">
+          <div className="search-box">
+            <input
+              type="text"
+              placeholder="Search images..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="search-input"
+            />
+          </div>
+          
+          <div className="filters-row">
+            <div className="filter-group">
+              <label>Admin:</label>
+              <select 
+                value={ownerFilter} 
+                onChange={(e) => setOwnerFilter(e.target.value)}
+                className="filter-select"
+              >
+                <option value="all">All</option>
+                <option value="yours">Yours</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Status:</label>
+              <select 
+                value={statusFilter} 
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="filter-select"
+              >
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="pending_review">Pending Review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Annotator:</label>
+              <select 
+                value={annotatorFilter} 
+                onChange={(e) => setAnnotatorFilter(e.target.value)}
+                className="filter-select"
+              >
+                <option value="all">All</option>
+                {users.annotators.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Tester:</label>
+              <select 
+                value={testerFilter} 
+                onChange={(e) => setTesterFilter(e.target.value)}
+                className="filter-select"
+              >
+                <option value="all">All</option>
+                {users.testers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="results-info">
+            Showing {paginatedImages.length} of {filteredImages.length} image(s)
+          </div>
+        </div>
+
         <div className="images-grid">
-          {images.map((img) => (
+          {paginatedImages.map((img) => (
             <div key={img.id} className="image-card">
+              {(() => {
+                const hasPreviousRejection = Boolean(img.previous_tester_name || img.previous_feedback);
+                return hasPreviousRejection ? (
+                  <div className="previous-rejected-inline">
+                    <span className="status-badge status-previous-rejected">Previous Rejected</span>
+                    {img.previous_tester_name && (
+                      <span className="previous-rejected-by">by {img.previous_tester_name}</span>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
               <div className="image-icon">📷</div>
               <div className="image-info">
                 <h3>{img.image_name || img.filename || "Unnamed"}</h3>
@@ -256,6 +608,32 @@ export default function ManageImages() {
                 </div>
               </div>
               <div className="image-status">{getStatusBadge(img.status)}</div>
+
+              {img.status === "rejected" ? (
+                <div className="card-action-row">
+                  <button
+                    className="action-btn"
+                    onClick={() => openImageDetails(img.id, "rejection")}
+                  >
+                    View Rejection
+                  </button>
+                  <button
+                    className="action-btn warning"
+                    onClick={() => setReassigningImageId(reassigningImageId === img.id ? null : img.id)}
+                  >
+                    Reassign
+                  </button>
+                </div>
+              ) : (
+                <div className="card-action-row">
+                  <button
+                    className="action-btn"
+                    onClick={() => openImageDetails(img.id, "details")}
+                  >
+                    View Details
+                  </button>
+                </div>
+              )}
 
               {img.status === "pending" && (
                 <div className="image-actions">
@@ -277,6 +655,20 @@ export default function ManageImages() {
               {img.status === "in_progress" && (
                 <div className="assigned-info">
                   <div className="assigned-user">📝 Annotator: {img.annotator_name}</div>
+                  
+                  {/* Show rejection history if this was a reassignment after rejection */}
+                  {img.previous_tester_name && (
+                    <div className="rejection-history">
+                      <div className="assigned-user" style={{ color: "#ef4444", marginTop: "10px" }}>❌ Previous rejected by: {img.previous_tester_name}</div>
+                      {img.previous_feedback && (
+                        <div className="feedback-box" style={{ backgroundColor: "#fee2e2", borderColor: "#ef4444", marginTop: "8px" }}>
+                          <strong>Previous Rejection Reason:</strong>
+                          <p>{img.previous_feedback}</p>
+                        </div>
+                      )}
+                      <div style={{ color: "#10b981", fontSize: "0.85rem", marginTop: "8px", padding: "8px", backgroundColor: "rgba(16, 185, 129, 0.1)", borderRadius: "4px" }}>✅ Reassigned for rework</div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -308,10 +700,10 @@ export default function ManageImages() {
                     <div className="assigned-user">📝 Annotator: {img.annotator_name || "N/A"}</div>
                     <div className="assigned-user" style={{ color: "#10b981", fontWeight: "bold" }}>✓ Testing by: {img.tester_name || "N/A"}</div>
                   </div>
-                  {img.feedback && (
+                  {img.tester_feedback && (
                     <div className="feedback-box">
                       <strong>Tester Feedback:</strong>
-                      <p>{img.feedback}</p>
+                      <p>{img.tester_feedback}</p>
                     </div>
                   )}
                 </>
@@ -326,10 +718,16 @@ export default function ManageImages() {
                       <div className="assigned-user" style={{ color: "#10b981", fontWeight: "bold" }}>✓ Melbourne: {img.melbourne_name}</div>
                     )}
                   </div>
-                  {img.feedback && (
+                  {img.melbourne_user_feedback && (
                     <div className="feedback-box">
-                      <strong>Feedback:</strong>
-                      <p>{img.feedback}</p>
+                      <strong>Melbourne Feedback:</strong>
+                      <p>{img.melbourne_user_feedback}</p>
+                    </div>
+                  )}
+                  {img.tester_feedback && !img.melbourne_user_feedback && (
+                    <div className="feedback-box">
+                      <strong>Tester Feedback:</strong>
+                      <p>{img.tester_feedback}</p>
                     </div>
                   )}
                   {!img.melbourne_name && (
@@ -354,30 +752,33 @@ export default function ManageImages() {
               {img.status === "rejected" && (
                 <>
                   <div className="assigned-info">
-                    <div className="assigned-user">📝 Previous Annotator: {img.annotator_name || "N/A"}</div>
-                    <div className="assigned-user" style={{ color: "#ef4444" }}>❌ Rejected by: {img.tester_name || "N/A"}</div>
+                    <div className="assigned-user">📝 Last Annotator: {img.annotator_name || "N/A"}</div>
+                    <div className="assigned-user" style={{ color: "#ef4444" }}>❌ Rejected by Tester: {img.tester_name || img.previous_tester_name || "N/A"}</div>
+                    <div className="assigned-user" style={{ color: "#f59e0b" }}>🔄 Current Annotator: Not assigned yet (reassign required)</div>
                   </div>
-                  {img.feedback && (
+                  {img.tester_feedback && (
                     <div className="feedback-box" style={{ backgroundColor: "#fee2e2", borderColor: "#ef4444" }}>
                       <strong>Rejection Reason:</strong>
-                      <p>{img.feedback}</p>
+                      <p>{img.tester_feedback}</p>
                     </div>
                   )}
-                  <div className="image-actions">
-                    <select
-                      className="assign-select"
-                      onChange={(e) => handleAssignAnnotator(img.id, e.target.value)}
-                      defaultValue=""
-                      style={{ borderColor: "#f59e0b", backgroundColor: "#fffbeb" }}
-                    >
-                      <option value="">🔄 Reassign to Annotator...</option>
-                      {users.annotators.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {reassigningImageId === img.id && (
+                    <div className="image-actions">
+                      <select
+                        className="assign-select"
+                        onChange={(e) => handleAssignAnnotator(img.id, e.target.value)}
+                        defaultValue=""
+                        style={{ borderColor: "#f59e0b", backgroundColor: "#fffbeb" }}
+                      >
+                        <option value="">🔄 Reassign to Annotator...</option>
+                        {users.annotators.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -395,6 +796,59 @@ export default function ManageImages() {
             </div>
           ))}
         </div>
+
+        {filteredImages.length === 0 && (
+          <div className="no-results">
+            <p>No images found matching your filters.</p>
+          </div>
+        )}
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="pagination">
+            <button 
+              className="pagination-btn" 
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </button>
+            
+            <div className="pagination-numbers">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                // Show first page, last page, current page, and pages around current
+                if (
+                  page === 1 || 
+                  page === totalPages || 
+                  (page >= currentPage - 1 && page <= currentPage + 1)
+                ) {
+                  return (
+                    <button
+                      key={page}
+                      className={`pagination-number ${
+                        page === currentPage ? "active" : ""
+                      }`}
+                      onClick={() => setCurrentPage(page)}
+                    >
+                      {page}
+                    </button>
+                  );
+                } else if (page === currentPage - 2 || page === currentPage + 2) {
+                  return <span key={page} className="pagination-ellipsis">...</span>;
+                }
+                return null;
+              })}
+            </div>
+            
+            <button 
+              className="pagination-btn" 
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </button>
+          </div>
+        )}
 
         {showUploadModal && (
           <div className="modal-overlay" onClick={() => {
@@ -448,6 +902,241 @@ export default function ManageImages() {
                   {isUploading ? "Adding..." : "Add Image"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {showDetailsModal && (
+          <div className="modal-overlay" onClick={() => setShowDetailsModal(false)}>
+            <div className="modal-content details-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="details-modal-header">
+                <h2>📋 Image Set Details</h2>
+                <button className="btn-secondary" onClick={() => setShowDetailsModal(false)}>
+                  ✕ Close
+                </button>
+              </div>
+
+              {isLoadingDetails ? (
+                <p>Loading details...</p>
+              ) : selectedImageDetails ? (
+                <>
+                  {/* 1️⃣ Image Information */}
+                  <div className="details-section basic-info-section">
+                    <h3>1️⃣ Image Information</h3>
+                    <div className="detail-row">
+                      <span className="detail-label">Image Set Name:</span>
+                      <span className="detail-value">{selectedImageDetails.image_name}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Total Images:</span>
+                      <span className="detail-value">{selectedImageDetails.objects_count || "N/A"}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Status:</span>
+                      <span className={`status-badge status-${selectedImageDetails.status}`}>
+                        {selectedImageDetails.status?.replace("_", " ")}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 2️⃣ Admin Information */}
+                  <div className="details-section">
+                    <h3>2️⃣ Admin Information</h3>
+                    <div className="detail-row">
+                      <span className="detail-label">Assigned By (Admin):</span>
+                      <span className="detail-value">{selectedImageDetails.admin_name || "-"}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Assigned Date:</span>
+                      <span className="detail-value">
+                        {selectedImageDetails.assignment_date
+                          ? new Date(selectedImageDetails.assignment_date).toLocaleDateString("en-GB", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })
+                          : "-"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3️⃣ Current Assignment */}
+                  <div className="details-section">
+                    <h3>3️⃣ Current Assignment</h3>
+                    <div className="user-assignment-row">
+                      <div className="user-card">
+                        <div className="user-card-avatar">
+                          {getProfileSrc(selectedImageDetails.annotator_profile_picture) ? (
+                            <img
+                              src={getProfileSrc(selectedImageDetails.annotator_profile_picture)}
+                              alt={selectedImageDetails.annotator_name || "Annotator"}
+                              className="avatar-img"
+                            />
+                          ) : (
+                            <div className="avatar-placeholder">{getAvatarText(selectedImageDetails.annotator_name)}</div>
+                          )}
+                        </div>
+                        <div className="user-card-info">
+                          <div className="user-card-name">{selectedImageDetails.annotator_name || "Not assigned"}</div>
+                          <div className="user-card-label">Current Annotator</div>
+                        </div>
+                      </div>
+                      <div className="user-card">
+                        <div className="user-card-avatar">
+                          {getProfileSrc(selectedImageDetails.tester_profile_picture) ? (
+                            <img
+                              src={getProfileSrc(selectedImageDetails.tester_profile_picture)}
+                              alt={selectedImageDetails.tester_name || "Tester"}
+                              className="avatar-img"
+                            />
+                          ) : (
+                            <div className="avatar-placeholder">{getAvatarText(selectedImageDetails.tester_name)}</div>
+                          )}
+                        </div>
+                        <div className="user-card-info">
+                          <div className="user-card-name">{selectedImageDetails.tester_name || "Not assigned"}</div>
+                          <div className="user-card-label">Assigned Tester</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4️⃣ Rejection Details (If Rejected) */}
+                  {(selectedImageDetails.status === "rejected" || rejectionReasonFromHistory) && (
+                    <div className="details-section rejection-details-section">
+                      <h3>4️⃣ Rejection Details</h3>
+                      
+                      <div className="user-assignment-row">
+                        <div className="user-card">
+                          <div className="user-card-avatar">
+                            {getProfileSrc(rejectedByProfileFromHistory) ? (
+                              <img
+                                src={getProfileSrc(rejectedByProfileFromHistory)}
+                                alt={selectedImageDetails.tester_name || "Tester"}
+                                className="avatar-img"
+                              />
+                            ) : (
+                              <div className="avatar-placeholder">{getAvatarText(rejectedByFromHistory || selectedImageDetails.tester_name)}</div>
+                            )}
+                          </div>
+                          <div className="user-card-info">
+                            <div className="user-card-name">{rejectedByFromHistory || selectedImageDetails.tester_name || "-"}</div>
+                            <div className="user-card-label">Rejected By (Tester)</div>
+                          </div>
+                        </div>
+                        <div className="user-card">
+                          <div className="user-card-avatar">
+                            {getProfileSrc(previousAnnotatorProfileFromHistory) ? (
+                              <img
+                                src={getProfileSrc(previousAnnotatorProfileFromHistory)}
+                                alt={previousAnnotatorFromHistory || selectedImageDetails.annotator_name || "Annotator"}
+                                className="avatar-img"
+                              />
+                            ) : (
+                              <div className="avatar-placeholder">{getAvatarText(previousAnnotatorFromHistory || selectedImageDetails.annotator_name)}</div>
+                            )}
+                          </div>
+                          <div className="user-card-info">
+                            <div className="user-card-name">{previousAnnotatorFromHistory || selectedImageDetails.annotator_name || "-"}</div>
+                            <div className="user-card-label">Previous Annotator</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rejection-reason-box">
+                        <div className="rejection-reason-label">Rejection Reason:</div>
+                        <div className="rejection-reason-text">
+                          {rejectionReasonFromHistory || selectedImageDetails.tester_feedback || "No rejection reason provided."}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Admin Actions */}
+                  <div className="details-section actions-section">
+                    <div className="action-buttons">
+                      {selectedImageDetails.status === "rejected" && (
+                        <select 
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleAssignAnnotator(selectedImageDetails.id, e.target.value);
+                              setShowDetailsModal(false);
+                            }
+                          }}
+                          className="btn-action btn-primary"
+                          defaultValue=""
+                        >
+                          <option value="">🔁 Reassign Annotator</option>
+                          {users.annotators.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      
+                      {selectedImageDetails.status === "completed" && !selectedImageDetails.tester_id && (
+                        <select 
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleAssignTester(selectedImageDetails.id, e.target.value);
+                              setShowDetailsModal(false);
+                            }
+                          }}
+                          className="btn-action btn-primary"
+                          defaultValue=""
+                        >
+                          <option value="">📋 Assign Tester</option>
+                          {users.testers.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      
+                      {(selectedImageDetails.status === "approved" || selectedImageDetails.status === "completed") && !selectedImageDetails.melbourne_user_id && (
+                        <select 
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleSendToMelbourne(selectedImageDetails.id, e.target.value);
+                              setShowDetailsModal(false);
+                            }
+                          }}
+                          className="btn-action btn-secondary"
+                          defaultValue=""
+                        >
+                          <option value="">🌏 Request Melbourne Approval</option>
+                          {users.melbourneUsers.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      
+                      <button 
+                        className="btn-action btn-danger"
+                        onClick={() => {
+                          handleDeleteImage(selectedImageDetails.id, selectedImageDetails.image_name);
+                          setShowDetailsModal(false);
+                        }}
+                      >
+                        🗑️ Delete Image Set
+                      </button>
+                      
+                      <button 
+                        className="btn-action btn-secondary"
+                        onClick={() => setShowDetailsModal(false)}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p>No details found.</p>
+              )}
             </div>
           </div>
         )}

@@ -25,6 +25,32 @@ const verifyToken = (req, res, next) => {
 
 const isSuperAdmin = (req) => req.user?.role === "super_admin";
 
+async function logImageHistory(connection, {
+  imageId,
+  eventType,
+  statusFrom = null,
+  statusTo = null,
+  actorId = null,
+  actorName = null,
+  details = null,
+}) {
+  try {
+    let resolvedActorName = actorName;
+    if (!resolvedActorName && actorId) {
+      const [rows] = await connection.execute("SELECT name FROM users WHERE id = ? LIMIT 1", [actorId]);
+      resolvedActorName = rows?.[0]?.name || null;
+    }
+
+    await connection.execute(
+      `INSERT INTO image_history (image_id, event_type, status_from, status_to, actor_id, actor_name, details, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [imageId, eventType, statusFrom, statusTo, actorId, resolvedActorName, details]
+    );
+  } catch (err) {
+    console.error("Failed to write image history:", err);
+  }
+}
+
 const getModelSummary = async (connection, modelType) => {
   const [rows] = await connection.execute(
     `SELECT 
@@ -408,14 +434,14 @@ router.get("/reports", verifyToken, async (req, res) => {
     // Progress over time (last 30 days)
     const [progressData] = await connection.execute(`
       SELECT 
-        DATE(uploaded_at) as date,
+        DATE(created_at) as date,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM images
-      GROUP BY DATE(uploaded_at)
+      GROUP BY DATE(created_at)
       ORDER BY date DESC
       LIMIT 30
     `);
@@ -462,9 +488,9 @@ router.get("/reports", verifyToken, async (req, res) => {
         i.objects_count,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
-        i.feedback as melbourne_feedback
+        i.melbourne_user_feedback as melbourne_feedback
       FROM images i
-      LEFT JOIN users u1 ON i.assigned_to = u1.id
+      LEFT JOIN users u1 ON i.admin_id = u1.id
       LEFT JOIN users u2 ON i.annotator_id = u2.id
       LEFT JOIN users u3 ON i.tester_id = u3.id
       LEFT JOIN users u4 ON i.melbourne_user_id = u4.id
@@ -512,6 +538,8 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
       whereClause += " AND t.assigned_date <= ?";
       params.push(endDate);
     }
+
+    console.log(`[ANNOTATION-SUMMARY] Executing query with whereClause: ${whereClause}, params:`, params);
 
     const [summaryRows] = await connection.execute(
       `SELECT 
@@ -584,8 +612,8 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error("Annotation summary error:", err);
-    res.status(500).json({ error: "Failed to fetch annotation summary" });
+    console.error("❌ Annotation summary error:", err.message, err.stack);
+    res.status(500).json({ error: "Failed to fetch annotation summary", details: err.message });
   }
 });
 
@@ -1055,10 +1083,10 @@ router.get("/performance/system", verifyToken, async (req, res) => {
     `);
 
     const [images7d] = await connection.execute(`
-      SELECT DATE(uploaded_at) as date, COUNT(*) as total
+      SELECT DATE(created_at) as date, COUNT(*) as total
       FROM images
-      WHERE uploaded_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-      GROUP BY DATE(uploaded_at)
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY DATE(created_at)
       ORDER BY date ASC
     `);
 
@@ -1359,7 +1387,7 @@ router.get("/payment-history", verifyToken, async (req, res) => {
             SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved
           FROM images i
           INNER JOIN users a ON i.annotator_id = a.id
-          WHERE i.assigned_to = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
+          WHERE i.admin_id = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
           GROUP BY a.id, a.name
         `, [payment.user_id, payment.user_id]);
 
@@ -1373,7 +1401,7 @@ router.get("/payment-history", verifyToken, async (req, res) => {
             SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as images_rejected
           FROM images i
           INNER JOIN users t ON i.tester_id = t.id
-          WHERE i.assigned_to = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
+          WHERE i.admin_id = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
           GROUP BY t.id, t.name
         `, [payment.user_id, payment.user_id]);
 
@@ -2223,13 +2251,29 @@ router.post("/admin/images/add", verifyToken, async (req, res) => {
     }
 
     const objectCount = Math.max(0, Number(objectsCount) || 0);
+    
+    // Extract model_type from filename (e.g., "PET_01_2300_2400" -> "PET")
+    const modelTypeMatch = filename.match(/^([A-Z]+)_/);
+    const modelType = modelTypeMatch ? modelTypeMatch[1] : null;
 
     const connection = await pool.getConnection();
 
-    await connection.execute(
-      "INSERT INTO images (image_name, status, assigned_to, objects_count, uploaded_at) VALUES (?, ?, ?, ?, NOW())",
-      [filename, "pending", adminId, objectCount]
+    const [insertResult] = await connection.execute(
+      "INSERT INTO images (image_name, model_type, status, admin_id, objects_count) VALUES (?, ?, ?, ?, ?)",
+      [filename, modelType, "pending", adminId, objectCount]
     );
+
+    await logImageHistory(connection, {
+      imageId: insertResult.insertId,
+      eventType: "created",
+      statusFrom: null,
+      statusTo: "pending",
+      actorId: adminId,
+      details: JSON.stringify({
+        imageName: filename,
+        objectsCount: objectCount,
+      }),
+    });
 
     await connection.release();
 
@@ -2338,14 +2382,14 @@ router.get("/admin/reports", verifyToken, async (req, res) => {
 
     // Progress over time
     const [progressOverTime] = await connection.execute(
-      `SELECT DATE(uploaded_at) as date,
+      `SELECT DATE(created_at) as date,
               SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
               SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
               SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
        FROM images
-       GROUP BY DATE(uploaded_at)
+       GROUP BY DATE(created_at)
        ORDER BY date DESC
        LIMIT 30`
     );
@@ -2374,21 +2418,22 @@ router.get("/admin/images", verifyToken, async (req, res) => {
         i.image_name,
         i.status,
         i.objects_count,
-        i.uploaded_at,
         i.created_at,
-        i.assigned_to,
+        i.admin_id,
         i.annotator_id,
+        i.annotator_feedback,
         i.tester_id,
+        i.tester_feedback,
         i.melbourne_user_id,
+        i.melbourne_user_feedback,
         u_admin.name as admin_name,
         u_ann.name as annotator_name,
         u_test.name as tester_name,
         u_mel.name as melbourne_name,
-        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
-        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
-        i.feedback as melbourne_feedback
+        i.previous_tester_name,
+        i.previous_feedback
        FROM images i
-       LEFT JOIN users u_admin ON i.assigned_to = u_admin.id
+       LEFT JOIN users u_admin ON i.admin_id = u_admin.id
        LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
        LEFT JOIN users u_test ON i.tester_id = u_test.id
        LEFT JOIN users u_mel ON i.melbourne_user_id = u_mel.id
@@ -2406,21 +2451,138 @@ router.get("/admin/images", verifyToken, async (req, res) => {
   }
 });
 
+// GET Admin Image Details + Timeline History
+router.get("/admin/images/:id/details", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const connection = await pool.getConnection();
+
+    const [imageRows] = await connection.execute(
+      `SELECT
+        i.id,
+        i.image_name,
+        i.model_type,
+        i.objects_count,
+        i.created_at,
+        i.updated_at,
+        i.status,
+        i.admin_id,
+        u_admin.name as admin_name,
+        i.annotator_feedback,
+        i.tester_feedback,
+        i.melbourne_user_feedback,
+        i.previous_tester_name,
+        i.previous_feedback,
+        i.annotator_id,
+        i.tester_id,
+        i.melbourne_user_id,
+        u_ann.name as annotator_name,
+        u_ann.profile_picture as annotator_profile_picture,
+        u_test.name as tester_name,
+        u_test.profile_picture as tester_profile_picture,
+        u_mel.name as melbourne_name,
+        u_mel.profile_picture as melbourne_profile_picture,
+        u_prev_test.profile_picture as previous_tester_profile_picture,
+        (SELECT MIN(t1.assigned_date) FROM tasks t1 WHERE t1.image_id = i.id AND t1.task_type = 'annotation') as assignment_date,
+        (SELECT MAX(t2.completed_date) FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' AND t2.status = 'completed') as annotation_completed_date,
+        (SELECT MAX(t3.completed_date) FROM tasks t3 WHERE t3.image_id = i.id AND t3.task_type = 'testing' AND t3.status IN ('approved', 'rejected')) as review_completed_date,
+        (SELECT t4.notes FROM tasks t4 WHERE t4.image_id = i.id AND t4.task_type = 'testing' ORDER BY t4.updated_at DESC LIMIT 1) as tester_comments
+       FROM images i
+      LEFT JOIN users u_admin ON i.admin_id = u_admin.id
+       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
+       LEFT JOIN users u_test ON i.tester_id = u_test.id
+       LEFT JOIN users u_mel ON i.melbourne_user_id = u_mel.id
+       LEFT JOIN users u_prev_test ON i.previous_tester_name = u_prev_test.name
+       WHERE i.id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (imageRows.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Image not found" });
+    }
+
+    const [historyRows] = await connection.execute(
+      `SELECT
+        h.id,
+        h.event_type,
+        h.status_from,
+        h.status_to,
+        h.actor_id,
+        h.actor_name,
+        h.details,
+        h.created_at,
+        u_actor.profile_picture as actor_profile_picture
+       FROM image_history h
+       LEFT JOIN users u_actor ON h.actor_name = u_actor.name
+       WHERE h.image_id = ?
+       ORDER BY h.created_at ASC, h.id ASC`,
+      [id]
+    );
+
+    await connection.release();
+
+    // Build a user profile lookup map from history to ensure we have all profile pictures
+    const userNames = new Set();
+    historyRows.forEach(h => {
+      if (h.actor_name) userNames.add(h.actor_name);
+      try {
+        const details = JSON.parse(h.details || '{}');
+        if (details.rejectedBy) userNames.add(details.rejectedBy);
+        if (details.previousAnnotator) userNames.add(details.previousAnnotator);
+        if (details.assignedTo) userNames.add(details.assignedTo);
+        if (details.reassignedTo) userNames.add(details.reassignedTo);
+      } catch (e) {}
+    });
+    
+    // Add current and previous user names
+    if (imageRows[0].annotator_name) userNames.add(imageRows[0].annotator_name);
+    if (imageRows[0].tester_name) userNames.add(imageRows[0].tester_name);
+    if (imageRows[0].previous_tester_name) userNames.add(imageRows[0].previous_tester_name);
+    if (imageRows[0].melbourne_name) userNames.add(imageRows[0].melbourne_name);
+    if (imageRows[0].admin_name) userNames.add(imageRows[0].admin_name);
+
+    // Fetch profile pictures for all mentioned users
+    const userProfileMap = {};
+    if (userNames.size > 0) {
+      const connection2 = await pool.getConnection();
+      const [userProfiles] = await connection2.execute(
+        `SELECT name, profile_picture FROM users WHERE name IN (${Array.from(userNames).map(() => '?').join(',')})`,
+        Array.from(userNames)
+      );
+      await connection2.release();
+      userProfiles.forEach(u => {
+        userProfileMap[u.name] = u.profile_picture;
+      });
+    }
+
+    res.json({
+      image: imageRows[0],
+      history: historyRows,
+      userProfileMap: userProfileMap,
+    });
+  } catch (err) {
+    console.error("Get admin image details error:", err);
+    res.status(500).json({ error: "Failed to load image details" });
+  }
+});
+
 // GET Admin Filtered Users (annotators and testers only)
 router.get("/admin/users-filtered", verifyToken, async (req, res) => {
   try {
     const connection = await pool.getConnection();
 
     const [annotators] = await connection.execute(
-      "SELECT id, name, email, role, created_at FROM users WHERE role = 'annotator' ORDER BY name"
+      "SELECT id, name, email, role, profile_picture, created_at FROM users WHERE role = 'annotator' ORDER BY name"
     );
 
     const [testers] = await connection.execute(
-      "SELECT id, name, email, role, created_at FROM users WHERE role = 'tester' ORDER BY name"
+      "SELECT id, name, email, role, profile_picture, created_at FROM users WHERE role = 'tester' ORDER BY name"
     );
 
     const [melbourneUsers] = await connection.execute(
-      "SELECT id, name, email, role, created_at FROM users WHERE role = 'melbourne_user' ORDER BY name"
+      "SELECT id, name, email, role, profile_picture, created_at FROM users WHERE role = 'melbourne_user' ORDER BY name"
     );
 
     await connection.release();
@@ -2440,7 +2602,7 @@ router.get("/admin/users-filtered", verifyToken, async (req, res) => {
 router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { annotatorId, testerId, melbourneUserId, status, feedback } = req.body;
+    const { annotatorId, testerId, melbourneUserId, status, feedback, previous_tester_name, previous_feedback } = req.body;
     const adminId = req.user?.id;
 
     // Log incoming request for debugging
@@ -2460,13 +2622,34 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
 
     const connection = await pool.getConnection();
 
-    // Check if image exists
-    const [imageRows] = await connection.execute("SELECT status, annotator_id, image_name FROM images WHERE id = ?", [id]);
+    // Check if image exists - fetch joined user names for reassignment history
+    const [imageRows] = await connection.execute(
+      `SELECT
+        i.status,
+        i.annotator_id,
+        i.image_name,
+        i.tester_id,
+        i.annotator_feedback,
+        u_ann.name as current_annotator_name,
+        u_ann.profile_picture as current_annotator_profile_picture,
+        u_test.name as current_tester_name,
+        u_test.profile_picture as current_tester_profile_picture
+       FROM images i
+       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
+       LEFT JOIN users u_test ON i.tester_id = u_test.id
+       WHERE i.id = ?`,
+      [id]
+    );
     if (imageRows.length === 0) {
       await connection.release();
       return res.status(404).json({ error: "Image not found" });
     }
     const currentImage = imageRows[0];
+    const [adminData] = await connection.execute(
+      `SELECT name FROM users WHERE id = ?`,
+      [adminId]
+    );
+    const adminName = adminData[0]?.name || "Admin";
 
     // Define isRejectedReassignment before it is used
     const isRejectedReassignment = currentImage.status === 'rejected' && annotatorId;
@@ -2478,6 +2661,15 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     if (annotatorId) {
       fields.push("annotator_id = ?");
       params.push(annotatorId);
+      // When reassigning after rejection, preserve the rejection history
+      if (isRejectedReassignment) {
+        fields.push("previous_tester_name = ?");
+        params.push(previous_tester_name || currentImage.current_tester_name || null);
+        if (previous_feedback) {
+          fields.push("previous_feedback = ?");
+          params.push(previous_feedback);
+        }
+      }
       // Reset status to in_progress when reassigning after rejection
       if (isRejectedReassignment && !status) {
         fields.push("status = ?");
@@ -2500,8 +2692,14 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
       fields.push("status = ?");
       params.push(status);
     }
-    if (feedback) {
-      fields.push("feedback = ?");
+if (feedback && annotatorId) {
+        fields.push("annotator_feedback = ?");
+        params.push(feedback);
+      } else if (feedback && testerId) {
+        fields.push("tester_feedback = ?");
+        params.push(feedback);
+      } else if (feedback && melbourneUserId) {
+        fields.push("melbourne_user_feedback = ?");
       params.push(feedback);
     }
 
@@ -2516,16 +2714,98 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
     await connection.execute(query, params);
     console.log(`Image ${id} updated with fields:`, fields);
 
+    // Timeline logging for assignment/reassignment lifecycle
+    if (annotatorId) {
+      const [newAnnotatorRows] = await connection.execute(
+        `SELECT name FROM users WHERE id = ? LIMIT 1`,
+        [annotatorId]
+      );
+      const reassignedToName = newAnnotatorRows[0]?.name || `User #${annotatorId}`;
+
+      if (isRejectedReassignment) {
+        const historyDetails = JSON.stringify({
+          rejectedBy: previous_tester_name || currentImage.current_tester_name || null,
+          rejectedByProfilePicture: currentImage.current_tester_profile_picture || null,
+          rejectionReason: previous_feedback || currentImage.annotator_feedback || null,
+          previousAnnotator: currentImage.current_annotator_name || null,
+          previousAnnotatorProfilePicture: currentImage.current_annotator_profile_picture || null,
+          reassignedBy: adminName,
+          reassignedTo: reassignedToName,
+          reassignedAt: new Date().toISOString(),
+        });
+
+        await logImageHistory(connection, {
+          imageId: id,
+          eventType: "reassigned",
+          statusFrom: currentImage.status,
+          statusTo: status || "in_progress",
+          actorId: adminId,
+          actorName: adminName,
+          details: historyDetails,
+        });
+      } else {
+        await logImageHistory(connection, {
+          imageId: id,
+          eventType: "assigned_to_annotator",
+          statusFrom: currentImage.status,
+          statusTo: status || currentImage.status,
+          actorId: adminId,
+          actorName: adminName,
+          details: JSON.stringify({
+            assignedTo: reassignedToName,
+            assignedToId: Number(annotatorId),
+            assignedAt: new Date().toISOString(),
+          }),
+        });
+      }
+    }
+
+    if (testerId) {
+      const [newTesterRows] = await connection.execute(
+        `SELECT name FROM users WHERE id = ? LIMIT 1`,
+        [testerId]
+      );
+      const testerName = newTesterRows[0]?.name || `User #${testerId}`;
+
+      await logImageHistory(connection, {
+        imageId: id,
+        eventType: "assigned_to_tester",
+        statusFrom: currentImage.status,
+        statusTo: status || "pending_review",
+        actorId: adminId,
+        actorName: adminName,
+        details: JSON.stringify({
+          assignedTester: testerName,
+          assignedTesterId: Number(testerId),
+        }),
+      });
+    }
+
+    if (melbourneUserId) {
+      const [newMelRows] = await connection.execute(
+        `SELECT name FROM users WHERE id = ? LIMIT 1`,
+        [melbourneUserId]
+      );
+
+      await logImageHistory(connection, {
+        imageId: id,
+        eventType: "sent_to_melbourne",
+        statusFrom: currentImage.status,
+        statusTo: status || currentImage.status,
+        actorId: adminId,
+        actorName: adminName,
+        details: JSON.stringify({
+          melbourneUser: newMelRows[0]?.name || `User #${melbourneUserId}`,
+          melbourneUserId: Number(melbourneUserId),
+        }),
+      });
+    }
+
     // Create task if assigning to annotator
     if (annotatorId) {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         const imageName = currentImage.image_name || `Image #${id}`;
-        const [adminData] = await connection.execute(
-          `SELECT name FROM users WHERE id = ?`,
-          [adminId]
-        );
-        const adminName = adminData[0]?.name || 'Admin';
 
         await connection.execute(
           `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
@@ -2556,11 +2836,6 @@ router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
         );
         if (existingTesterTask.length === 0) {
           const imageName = currentImage.image_name || `Image #${id}`;
-          const [adminData] = await connection.execute(
-            `SELECT name FROM users WHERE id = ?`,
-            [adminId]
-          );
-          const adminName = adminData[0]?.name || 'Admin';
 
           await connection.execute(
             `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
@@ -2691,6 +2966,219 @@ router.get("/admin/payments", verifyToken, async (req, res) => {
   }
 });
 
+// PUT Update Admin Profile
+router.put("/admin/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email, phone } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`,
+      [name, email, phone || null, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// PUT Change Admin Password
+router.put("/admin/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
+// PUT Update Super Admin Profile
+router.put("/super-admin/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email, phone } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`,
+      [name, email, phone || null, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// PUT Change Super Admin Password
+router.put("/super-admin/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
+// PUT Update Melbourne User Profile
+router.put("/melbourne/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, email, phone } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    await connection.execute(
+      `UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?`,
+      [name, email, phone || null, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// PUT Change Melbourne User Password
+router.put("/melbourne/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
 // ========== ANNOTATOR ROUTES ==========
 
 // GET Annotator KPIs
@@ -2755,7 +3243,7 @@ router.get("/annotator/tasks", verifyToken, async (req, res) => {
         t.status,
         u.name as assigned_by,
         t.notes as annotator_notes,
-        i.feedback as melbourne_feedback,
+        i.melbourne_user_feedback as melbourne_feedback,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
         t.assigned_date
       FROM tasks t
@@ -2792,7 +3280,7 @@ router.put("/annotator/tasks/:id/status", verifyToken, async (req, res) => {
 
     // First, get the image_id from the task
     const [taskResult] = await connection.execute(
-      `SELECT image_id FROM tasks WHERE id = ? AND user_id = ?`,
+      `SELECT image_id, status FROM tasks WHERE id = ? AND user_id = ?`,
       [id, userId]
     );
 
@@ -2802,6 +3290,7 @@ router.put("/annotator/tasks/:id/status", verifyToken, async (req, res) => {
     }
 
     const imageId = taskResult[0].image_id;
+    const previousStatus = taskResult[0].status;
 
     // Update task status with completed_date if status is completed
     let updateQuery = `UPDATE tasks SET status = ?, notes = ?, updated_at = NOW()`;
@@ -2816,10 +3305,32 @@ router.put("/annotator/tasks/:id/status", verifyToken, async (req, res) => {
     );
 
     // Also update the corresponding image status
-    await connection.execute(
-      `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
-      [status, imageId]
-    );
+    if (status === "completed") {
+      // When annotator completes, save their notes to annotator_feedback
+      await connection.execute(
+        `UPDATE images SET status = ?, annotator_feedback = ?, updated_at = NOW() WHERE id = ?`,
+        [status, notes || null, imageId]
+      );
+    } else {
+      await connection.execute(
+        `UPDATE images SET status = ?, updated_at = NOW() WHERE id = ?`,
+        [status, imageId]
+      );
+    }
+
+    if (status === "completed") {
+      await logImageHistory(connection, {
+        imageId,
+        eventType: "annotation_completed",
+        statusFrom: previousStatus,
+        statusTo: status,
+        actorId: userId,
+        details: JSON.stringify({
+          notes: notes || null,
+          completedAt: new Date().toISOString(),
+        }),
+      });
+    }
 
     await connection.release();
     res.json({ message: "Task status updated successfully" });
@@ -2845,7 +3356,7 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
         i.image_name,
         t.status,
         t.notes,
-        i.feedback,
+        i.annotator_feedback,
         t.assigned_date,
         t.completed_date,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' ORDER BY t2.updated_at DESC LIMIT 1) as tester_feedback
@@ -3062,7 +3573,7 @@ router.get("/tester/tasks", verifyToken, async (req, res) => {
         t.assigned_date,
         t.notes as tester_notes,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
-        i.feedback as melbourne_feedback,
+        i.melbourne_user_feedback as melbourne_feedback,
         u.name as assigned_by_name
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
@@ -3099,9 +3610,11 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
 
     // Get the image_id, task details, and annotator from the task
     const [taskResult] = await connection.execute(
-      `SELECT t.image_id, t.task_type, i.image_name, i.annotator_id
+      `SELECT t.image_id, t.task_type, i.image_name, i.annotator_id, u_ann.name as annotator_name,
+              u_ann.profile_picture as annotator_profile_picture
        FROM tasks t
        LEFT JOIN images i ON t.image_id = i.id
+       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
        WHERE t.id = ? AND t.user_id = ?`,
       [id, userId]
     );
@@ -3114,6 +3627,8 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
     const imageId = taskResult[0].image_id;
     const imageName = taskResult[0].image_name || `Image #${imageId}`;
     const annotatorId = taskResult[0].annotator_id;
+    const annotatorName = taskResult[0].annotator_name || null;
+    const annotatorProfilePicture = taskResult[0].annotator_profile_picture || null;
     console.log(`Tester ${userId} reviewing task ${id} with status ${status}`);
 
     // If rejecting, mark all previous annotation tasks for this image as ineligible for payment
@@ -3133,19 +3648,53 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
       [status, feedback || null, id, userId]
     );
 
-    // Also update the corresponding image status and feedback
+    // Also update the corresponding image status and tester feedback
     await connection.execute(
-      `UPDATE images SET status = ?, feedback = ?, updated_at = NOW() WHERE id = ?`,
+      `UPDATE images SET status = ?, tester_feedback = ?, updated_at = NOW() WHERE id = ?`,
       [status, feedback || null, imageId]
     );
 
-    // Create notifications
-    const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
     const [testerData] = await connection.execute(
-      `SELECT name FROM users WHERE id = ?`,
+      `SELECT name, profile_picture FROM users WHERE id = ?`,
       [userId]
     );
     const testerName = testerData[0]?.name || 'Tester';
+    const testerProfilePicture = testerData[0]?.profile_picture || null;
+
+    await logImageHistory(connection, {
+      imageId,
+      eventType: "reviewed",
+      statusFrom: "pending_review",
+      statusTo: "pending_review",
+      actorId: userId,
+      actorName: testerName,
+      details: JSON.stringify({
+        reviewer: testerName,
+        decision: status,
+        comments: feedback || null,
+      }),
+    });
+
+    await logImageHistory(connection, {
+      imageId,
+      eventType: status === "rejected" ? "rejected" : "approved",
+      statusFrom: "pending_review",
+      statusTo: status,
+      actorId: userId,
+      actorName: testerName,
+      details: JSON.stringify({
+        rejectedBy: status === "rejected" ? testerName : null,
+        rejectedByProfilePicture: status === "rejected" ? testerProfilePicture : null,
+        rejectionDate: status === "rejected" ? new Date().toISOString() : null,
+        rejectionReason: status === "rejected" ? (feedback || null) : null,
+        previousAnnotator: status === "rejected" ? annotatorName : null,
+        previousAnnotatorProfilePicture: status === "rejected" ? annotatorProfilePicture : null,
+        testerComments: feedback || null,
+      }),
+    });
+
+    // Create notifications
+    const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
 
     const notificationMessage = status === 'approved' 
       ? `✅ ${testerName} approved "​${imageName}" | ACTION: Check your Dashboard for next steps` 
@@ -3252,7 +3801,7 @@ router.get("/tester/task-history", verifyToken, async (req, res) => {
         t.completed_date,
         t.notes as tester_notes,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
-        i.feedback as melbourne_feedback,
+        i.melbourne_user_feedback as melbourne_feedback,
         u.name as assigned_by_name
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
@@ -3399,13 +3948,13 @@ router.get("/melbourne/datasets", verifyToken, async (req, res) => {
         i.image_name,
         i.status,
         i.objects_count,
-        i.uploaded_at,
+        i.created_at,
         i.updated_at,
         u_ann.name as annotator_name,
         u_test.name as tester_name,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'annotation' LIMIT 1) as annotator_notes,
         t.notes as tester_feedback,
-        i.feedback as melbourne_feedback,
+        i.melbourne_user_feedback as melbourne_feedback,
         t.completed_date as tester_review_date
       FROM images i
       LEFT JOIN users u_ann ON i.annotator_id = u_ann.id
@@ -3442,7 +3991,7 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
 
     // Get image details
     const [imageResult] = await connection.execute(
-      `SELECT image_name, annotator_id, tester_id FROM images WHERE id = ?`,
+      `SELECT image_name, annotator_id, tester_id, status FROM images WHERE id = ?`,
       [id]
     );
 
@@ -3468,7 +4017,7 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
     // Store feedback if provided
     if (feedback) {
       await connection.execute(
-        `UPDATE images SET feedback = ? WHERE id = ?`,
+        `UPDATE images SET melbourne_user_feedback = ? WHERE id = ?`,
         [feedback, id]
       );
     }
@@ -3480,6 +4029,21 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
       [userId]
     );
     const melbourneName = melbourneUserData[0]?.name || 'Melbourne User';
+
+    await logImageHistory(connection, {
+      imageId: id,
+      eventType: status === "rejected" ? "rejected" : "approved",
+      statusFrom: imageResult[0].status,
+      statusTo: status,
+      actorId: userId,
+      actorName: melbourneName,
+      details: JSON.stringify({
+        reviewedBy: melbourneName,
+        reviewLevel: "melbourne",
+        rejectionReason: status === "rejected" ? (feedback || null) : null,
+        testerComments: feedback || null,
+      }),
+    });
 
     const notificationMessage = status === 'approved' 
       ? `✅ ${melbourneName} approved "​${imageName}" for production | ACTION: Dataset is ready for use` 
@@ -3546,7 +4110,7 @@ router.get("/melbourne/recent-reviews", verifyToken, async (req, res) => {
         i.image_name,
         i.status,
         i.objects_count,
-        i.feedback as melbourne_feedback,
+        i.melbourne_user_feedback as melbourne_feedback,
         i.updated_at,
         u_ann.name as annotator_name,
         u_test.name as tester_name,

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import MelbourneSidebar from "./MelbourneSidebar";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { formatChartDate } from "../../utils/dateUtils";
 import "../annotator/annotator.css";
 
 export default function MelbourneDashboard() {
@@ -106,7 +107,7 @@ export default function MelbourneDashboard() {
   })) || [];
 
   const progressData = adminReports?.progressOverTime?.map((item) => ({
-    date: item.date?.split("-")[2] || "N/A",
+    date: formatChartDate(item.date),
     pending: item.pending || 0,
     inProgress: item.in_progress || 0,
     completed: item.completed || 0,

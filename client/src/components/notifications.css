@@ -1,7 +1,7 @@
 .notifications-container {
   position: relative;
   display: inline-block;
-  z-index: 9999;
+  z-index: 99999;
 }
 
 .notification-bell {
@@ -45,25 +45,34 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 9998;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 60px;
+  z-index: 99998;
+  backdrop-filter: blur(4px);
 }
 
 .notification-dropdown {
-  position: relative;
+  position: fixed;
   width: 420px;
   background: white;
   border: 1px solid #ddd;
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  z-index: 9999;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25),
+              0 20px 60px rgba(0, 0, 0, 0.3);
+  z-index: 99999;
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  margin: 0 auto;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .notification-header {
@@ -235,6 +244,13 @@
   margin-top: 2px;
 }
 
+.notification-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .mark-read-btn {
   background: none;
   border: none;
@@ -251,4 +267,64 @@
 
 .mark-read-btn:hover {
   background-color: #f0f0f0;
+}
+
+.notification-close-item-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #888;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.notification-close-item-btn:hover {
+  background-color: #fde8e8;
+  color: #dc3545;
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+  .notification-dropdown {
+    width: 95%;
+    max-width: 420px;
+    max-height: 80vh;
+  }
+
+  .notification-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .notification-header h3 {
+    font-size: 15px;
+  }
+
+  .mark-all-read {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .notification-dropdown {
+    width: 100%;
+    max-height: 85vh;
+    border-radius: 12px;
+  }
+
+  .notification-item {
+    padding: 10px 12px;
+  }
+
+  .notification-message {
+    font-size: 13px;
+  }
+
+  .notification-time {
+    font-size: 10px;
+  }
 }
