@@ -88,9 +88,50 @@ export const PaymentReport = () => {
   };
 
   const handleExportPDF = async () => {
-    await ExportService.exportToPDF(
-      "payment-report",
-      "payment-report.pdf"
+    const rows = (payments || []).map((payment) => ({
+      "Annotator Name": payment.annotatorName,
+      "Completed Tasks": payment.completedTasks,
+      "Amount (Rs)": payment.amount,
+      Status: payment.status,
+      "Approved By": payment.approvedBy || "-",
+      "Payment Date": payment.paymentDate
+        ? new Date(payment.paymentDate).toLocaleDateString()
+        : "-",
+    }));
+
+    await ExportService.exportReportTemplateToPDF(
+      {
+        title: "Payment Report",
+        filters: {
+          startDate,
+          endDate,
+          status: statusFilter === "all" ? "All" : statusFilter,
+        },
+        kpis: [
+          { label: "Total Payments", value: summary.totalPayments || 0 },
+          { label: "Total Amount (Rs)", value: (summary.totalAmount || 0).toLocaleString("en-IN") },
+          { label: "Pending", value: summary.pendingCount || 0 },
+          { label: "Approved", value: summary.approvedCount || 0 },
+          { label: "Paid", value: summary.paidCount || 0 },
+          { label: "Rejected", value: summary.rejectedCount || 0 },
+        ],
+        tables: [
+          {
+            title: "Payment Details",
+            columns: [
+              "Annotator Name",
+              "Completed Tasks",
+              "Amount (Rs)",
+              "Status",
+              "Approved By",
+              "Payment Date",
+            ],
+            rows,
+          },
+        ],
+      },
+      "payment-report.pdf",
+      { orientation: "landscape", documentTitle: "Payment Report" }
     );
   };
 

@@ -1,62 +1,153 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
-import { ReportHeader, PaginationControls, KPICard } from "./FilterManager";
+import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./FilterManager";
 
 /**
- * Tester Review Report Component
- * Shows tester approval/rejection statistics and review times
+ * Tester Performance Report Component
+ * Detailed performance metrics for each tester with pagination and sorting
  */
 export const TesterReviewReport = () => {
   const { fetchData, loading, error, clearCache } = useReportsData();
-  const [testerRows, setTesterRows] = useState([]);
-  const [summary, setSummary] = useState({});
+  const [testerPerf, setTesterPerf] = useState([]);
   const [pageSize, setPageSize] = useState(20);
+  const [sortConfig, setSortConfig] = useState({ key: "name", direction: "asc" });
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
-    testerRows,
+    testerPerf,
     pageSize
   );
 
+  // Calculate summary statistics
+  const stats = useMemo(() => {
+    if (testerPerf.length === 0) return null;
+    return {
+      totalTesters: testerPerf.length,
+      avgAccuracy: (
+        testerPerf.reduce((sum, row) => sum + row.accuracy, 0) /
+        testerPerf.length
+      ).toFixed(1),
+      totalAssigned: testerPerf.reduce((sum, row) => sum + row.totalAssigned, 0),
+      totalApproved: testerPerf.reduce((sum, row) => sum + row.approved, 0),
+      totalRejected: testerPerf.reduce((sum, row) => sum + row.rejected, 0),
+    };
+  }, [testerPerf]);
+
   useEffect(() => {
-    const loadTesterReview = async () => {
+    const loadPerformance = async () => {
       try {
-        const data = await fetchData("/api/dashboard/reports/tester-review");
-        setTesterRows(data.testers || []);
-        setSummary(data.summary || {});
+        const data = await fetchData(
+          "/api/dashboard/reports/tester-review",
+          {
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+          }
+        );
+        setTesterPerf(data.rows || []);
       } catch (err) {
-        console.error("Failed to load tester review:", err);
+        console.error("Failed to load tester performance:", err);
       }
     };
 
-    loadTesterReview();
-  }, [fetchData]);
+    loadPerformance();
+  }, [startDate, endDate, fetchData]);
 
-  const handleRefresh = useCallback(() => {
+  const handleFilterChange = useCallback((key, value) => {
+    if (key === "startDate") setStartDate(value);
+    if (key === "endDate") setEndDate(value);
+    goToPage(1);
     clearCache("tester-review");
-  }, [clearCache]);
+  }, [goToPage, clearCache]);
 
-  const formatHours = (minutes) => {
-    if (!minutes) return "-";
-    return `${(minutes / 60).toFixed(2)} h`;
+  const handleSort = (key) => {
+    let direction = "asc";
+    if (sortConfig.key === key && sortConfig.direction === "asc") {
+      direction = "desc";
+    }
+    setSortConfig({ key, direction });
   };
 
+  const sortedData = useMemo(() => {
+    let sorted = [...testerPerf];
+    if (sortConfig.key) {
+      sorted.sort((a, b) => {
+        const aValue = a[sortConfig.key];
+        const bValue = b[sortConfig.key];
+        if (aValue < bValue) return sortConfig.direction === "asc" ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === "asc" ? 1 : -1;
+        return 0;
+      });
+    }
+    return sorted;
+  }, [testerPerf, sortConfig]);
+
+  const displayData = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sortedData.slice(start, start + pageSize);
+  }, [sortedData, currentPage, pageSize]);
+
   const handleExportExcel = () => {
-    const data = testerRows.map((row) => ({
-      "Tester Name": row.name,
-      "Assigned Images": row.assignedCount,
-      "Approved Images": row.approvedCount,
-      "Rejected Images": row.rejectedCount,
-      "Accuracy Rate %": row.accuracyRate.toFixed(1),
+    const data = testerPerf.map((row) => ({
+      "Name": row.name,
+      "Total Assigned": row.totalAssigned,
+      "Approved": row.approved,
+      "Rejected": row.rejected,
+      "Under Review": row.underReview,
+      "Total Time (hrs)": (row.totalReviewMinutes / 60).toFixed(2),
+      "Accuracy %": row.accuracy.toFixed(1),
       "Avg Review Time (hrs)": (row.avgReviewMinutes / 60).toFixed(2),
     }));
-    ExportService.exportToExcel(data, "tester-review.xlsx", "Testers");
+    ExportService.exportToExcel(
+      data,
+      "tester-performance.xlsx",
+      "Performance"
+    );
   };
 
   const handleExportPDF = async () => {
-    await ExportService.exportToPDF(
-      "tester-review-report",
-      "tester-review.pdf"
+    const tableRows = (testerPerf || []).map((row) => ({
+      Name: row.name,
+      "Total Assigned": row.totalAssigned,
+      Approved: row.approved,
+      Rejected: row.rejected,
+      "Under Review": row.underReview,
+      "Total Time (hrs)": (Number(row.totalReviewMinutes || 0) / 60).toFixed(2),
+      "Accuracy %": `${Number(row.accuracy || 0).toFixed(1)}%`,
+      "Avg Review Time (hrs)": (Number(row.avgReviewMinutes || 0) / 60).toFixed(2),
+    }));
+
+    await ExportService.exportReportTemplateToPDF(
+      {
+        title: "Tester Performance Report",
+        filters: { startDate, endDate },
+        kpis: [
+          { label: "Total Testers", value: stats?.totalTesters || 0 },
+          { label: "Avg Accuracy", value: `${stats?.avgAccuracy || 0}%` },
+          { label: "Total Assigned", value: stats?.totalAssigned || 0 },
+          { label: "Total Approved", value: stats?.totalApproved || 0 },
+          { label: "Total Rejected", value: stats?.totalRejected || 0 },
+        ],
+        tables: [
+          {
+            title: "Tester Performance",
+            columns: [
+              "Name",
+              "Total Assigned",
+              "Approved",
+              "Rejected",
+              "Under Review",
+              "Total Time (hrs)",
+              "Accuracy %",
+              "Avg Review Time (hrs)",
+            ],
+            rows: tableRows,
+          },
+        ],
+      },
+      "tester-performance.pdf",
+      { orientation: "landscape", documentTitle: "Tester Performance Report" }
     );
   };
 
@@ -65,30 +156,30 @@ export const TesterReviewReport = () => {
   }
 
   return (
-    <div id="tester-review-report">
+    <div id="tester-performance-report">
       <ReportHeader
-        title="Tester Review Report"
-        description="Approved vs rejected outcomes and review time analysis"
+        title="Tester Performance Report"
+        description="Full performance metrics including approved, rejected, and under review tasks"
         onExportExcel={handleExportExcel}
         onExportPDF={handleExportPDF}
-      >
-        <button
-          onClick={handleRefresh}
-          className="btn-secondary"
-          style={{ padding: "6px 12px", fontSize: "13px" }}
-        >
-          ↻ Refresh
-        </button>
-      </ReportHeader>
+      />
+
+      <FilterManager
+        filters={{ startDate, endDate }}
+        onFilterChange={handleFilterChange}
+        showDateFilters
+        showRoleFilter={false}
+        showStatusFilter={false}
+      />
 
       {loading ? (
         <div style={{ textAlign: "center", padding: "20px", color: "#666" }}>
-          Loading tester review data...
+          Loading performance data...
         </div>
       ) : (
         <>
-          {/* Summary KPIs */}
-          {summary && (
+          {/* Summary Stats */}
+          {stats && (
             <div
               style={{
                 display: "grid",
@@ -99,48 +190,41 @@ export const TesterReviewReport = () => {
             >
               <KPICard
                 label="Total Testers"
-                value={testerRows.length}
+                value={stats.totalTesters}
                 icon="👥"
                 color="#4D96FF"
               />
               <KPICard
+                label="Avg Accuracy"
+                value={`${stats.avgAccuracy}%`}
+                icon="🎯"
+                color="#6BCB77"
+              />
+              <KPICard
                 label="Total Assigned"
-                value={testerRows.reduce((sum, r) => sum + r.assignedCount, 0)}
+                value={stats.totalAssigned}
                 icon="📋"
                 color="#FFA07A"
               />
               <KPICard
                 label="Total Approved"
-                value={testerRows.reduce((sum, r) => sum + r.approvedCount, 0)}
+                value={stats.totalApproved}
                 icon="✓"
                 color="#6BCB77"
               />
               <KPICard
                 label="Total Rejected"
-                value={testerRows.reduce((sum, r) => sum + r.rejectedCount, 0)}
+                value={stats.totalRejected}
                 icon="✗"
                 color="#FF6B6B"
-              />
-              <KPICard
-                label="Avg Accuracy"
-                value={
-                  testerRows.length > 0
-                    ? `${(
-                        testerRows.reduce((sum, r) => sum + r.accuracyRate, 0) /
-                        testerRows.length
-                      ).toFixed(1)}%`
-                    : "0%"
-                }
-                icon="🎯"
-                color="#8B5CF6"
               />
             </div>
           )}
 
-          {/* Tester Table */}
-          {testerRows.length === 0 ? (
+          {/* Data Table */}
+          {testerPerf.length === 0 ? (
             <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
-              No tester data available
+              No performance data available for the selected date range
             </div>
           ) : (
             <>
@@ -148,60 +232,68 @@ export const TesterReviewReport = () => {
                 <table className="reports-table">
                   <thead>
                     <tr>
-                      <th>Tester Name</th>
-                      <th>Assigned Images</th>
-                      <th style={{ color: "#6BCB77" }}>Approved</th>
-                      <th style={{ color: "#FF6B6B" }}>Rejected</th>
-                      <th>Approval Rate %</th>
-                      <th>Accuracy Rate %</th>
-                      <th>Avg Review Time</th>
+                      <th
+                        onClick={() => handleSort("name")}
+                        style={{ cursor: "pointer", userSelect: "none" }}
+                      >
+                        Name {sortConfig.key === "name" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleSort("totalAssigned")}
+                        style={{ cursor: "pointer", userSelect: "none" }}
+                      >
+                        Total Assigned {sortConfig.key === "totalAssigned" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleSort("approved")}
+                        style={{ cursor: "pointer", userSelect: "none" }}
+                      >
+                        Approved {sortConfig.key === "approved" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleSort("rejected")}
+                        style={{ cursor: "pointer", userSelect: "none" }}
+                      >
+                        Rejected {sortConfig.key === "rejected" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th onClick={() => handleSort("underReview")} style={{ cursor: "pointer", userSelect: "none" }}>
+                        Under Review {sortConfig.key === "underReview" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th onClick={() => handleSort("totalReviewMinutes")} style={{ cursor: "pointer", userSelect: "none" }}>
+                        Total Time {sortConfig.key === "totalReviewMinutes" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleSort("accuracy")}
+                        style={{ cursor: "pointer", userSelect: "none" }}
+                      >
+                        Accuracy {sortConfig.key === "accuracy" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th style={{ cursor: "default" }}>
+                        Avg Review Time
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedData.map((row) => {
-                      const approvalRate = row.assignedCount > 0
-                        ? ((row.approvedCount / row.assignedCount) * 100).toFixed(1)
-                        : "0";
-                      return (
-                        <tr key={row.id}>
-                          <td style={{ fontWeight: "500" }}>{row.name}</td>
-                          <td>{row.assignedCount}</td>
-                          <td style={{ color: "#6BCB77", fontWeight: "500" }}>
-                            {row.approvedCount}
-                          </td>
-                          <td style={{ color: "#FF6B6B", fontWeight: "500" }}>
-                            {row.rejectedCount}
-                          </td>
-                          <td>
-                            <span
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: "4px",
-                                backgroundColor:
-                                  Number(approvalRate) > 80
-                                    ? "#d4edda"
-                                    : Number(approvalRate) > 50
-                                    ? "#fff3cd"
-                                    : "#f8d7da",
-                                color:
-                                  Number(approvalRate) > 80
-                                    ? "#155724"
-                                    : Number(approvalRate) > 50
-                                    ? "#856404"
-                                    : "#721c24",
-                                fontWeight: "500",
-                              }}
-                            >
-                              {approvalRate}%
-                            </span>
-                          </td>
-                          <td style={{ color: "#4D96FF", fontWeight: "500" }}>
-                            {row.accuracyRate.toFixed(1)}%
-                          </td>
-                          <td>{formatHours(row.avgReviewMinutes)}</td>
-                        </tr>
-                      );
-                    })}
+                    {displayData.map((row) => (
+                      <tr key={row.id}>
+                        <td style={{ fontWeight: "500" }}>{row.name}</td>
+                        <td>{row.totalAssigned}</td>
+                        <td style={{ color: "#6BCB77", fontWeight: "500" }}>
+                          {row.approved}
+                        </td>
+                        <td style={{ color: "#FF6B6B", fontWeight: "500" }}>
+                          {row.rejected}
+                        </td>
+                        <td style={{ color: "#FFA500" }}>{row.underReview}</td>
+                        <td style={{ color: "#9C27B0" }}>
+                          {(row.totalReviewMinutes / 60).toFixed(2)} hrs
+                        </td>
+                        <td style={{ color: "#4D96FF", fontWeight: "500" }}>
+                          {row.accuracy.toFixed(1)}%
+                        </td>
+                        <td>{(row.avgReviewMinutes / 60).toFixed(2)} hrs</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -212,7 +304,7 @@ export const TesterReviewReport = () => {
                 onPageChange={goToPage}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
-                totalItems={testerRows.length}
+                totalItems={testerPerf.length}
               />
             </>
           )}

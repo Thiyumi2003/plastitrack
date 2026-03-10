@@ -541,6 +541,18 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
 
     console.log(`[ANNOTATION-SUMMARY] Executing query with whereClause: ${whereClause}, params:`, params);
 
+    const [imageCounts] = await connection.execute(
+      `SELECT COUNT(*) as totalImageSets FROM images`
+    );
+
+    const [imagesByStatus] = await connection.execute(
+      `SELECT 
+        status,
+        COUNT(*) as count
+       FROM images
+       GROUP BY status`
+    );
+
     const [summaryRows] = await connection.execute(
       `SELECT 
         COUNT(DISTINCT t.image_id) as totalImageSets,
@@ -593,17 +605,17 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
     res.json({
       filters: { startDate: startDate || null, endDate: endDate || null, role: role || null },
       summary: {
-        totalImageSets: Number(summary.totalImageSets || 0),
+        totalImageSets: Number(imageCounts[0]?.totalImageSets || 0),
         totalAssigned: Number(summary.totalAssigned || 0),
         completedAnnotations: Number(summary.completedAnnotations || 0),
         pendingAnnotations: Number(summary.pendingAnnotations || 0),
         rejectedAnnotations: Number(summary.rejectedAnnotations || 0),
         approvalRate: Number(approvalRate.toFixed(2)),
       },
-      pie: [
-        { name: "Completed", value: Number(summary.completedAnnotations || 0) },
-        { name: "Pending", value: Number(summary.pendingAnnotations || 0) },
-      ],
+      pie: imagesByStatus.map(row => ({
+        name: row.status.charAt(0).toUpperCase() + row.status.slice(1),
+        value: Number(row.count || 0)
+      })),
       performance: performanceRows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -628,6 +640,7 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
     const { startDate, endDate } = req.query;
     const connection = await pool.getConnection();
 
+    // Build date filter for tasks
     let taskWhere = "WHERE u.role = 'annotator'";
     const taskParams = [];
     if (startDate) {
@@ -639,22 +652,56 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
       taskParams.push(endDate);
     }
 
-    const [taskRows] = await connection.execute(
+    // Main query: Get full historical performance for each annotator
+    const [performanceRows] = await connection.execute(
       `SELECT 
         u.id,
         u.name,
-        COUNT(t.id) as total_assigned,
+        -- Total unique images ever assigned (historical + current)
+        COUNT(DISTINCT t.image_id) as total_assigned,
+        -- Completed tasks
         SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN t.status IN ('pending','in_progress','pending_review') THEN 1 ELSE 0 END) as pending,
-        AVG(TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at))) as avg_completion_minutes
+        -- Current in progress
+        SUM(CASE WHEN t.status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) as in_progress,
+        -- Tasks marked as rejected
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected_tasks,
+        -- Average completion time
+        AVG(CASE 
+          WHEN t.status = 'completed' AND t.completed_date IS NOT NULL 
+          THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, t.completed_date)
+          ELSE NULL 
+        END) as avg_completion_minutes
        FROM users u
        LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type = 'annotation'
        ${taskWhere}
-       GROUP BY u.id, u.name
-       ORDER BY completed DESC, total_assigned DESC`,
+       GROUP BY u.id, u.name`,
       taskParams
     );
 
+    // Get "under review" count - images where annotator completed work and now being tested
+    let underReviewWhere = "WHERE ann_task.user_id IS NOT NULL AND ann_task.task_type = 'annotation' AND ann_task.status = 'completed' AND test_task.task_type = 'testing' AND test_task.status IN ('pending', 'in_progress', 'pending_review')";
+    const underReviewParams = [];
+    if (startDate) {
+      underReviewWhere += " AND ann_task.assigned_date >= ?";
+      underReviewParams.push(startDate);
+    }
+    if (endDate) {
+      underReviewWhere += " AND ann_task.assigned_date <= ?";
+      underReviewParams.push(endDate);
+    }
+
+    const [underReviewRows] = await connection.execute(
+      `SELECT 
+        ann_task.user_id as annotator_id,
+        COUNT(DISTINCT ann_task.image_id) as under_review_count
+       FROM tasks ann_task
+       JOIN tasks test_task ON ann_task.image_id = test_task.image_id
+       ${underReviewWhere}
+       GROUP BY ann_task.user_id`,
+      underReviewParams
+    );
+
+    // Get current image status counts for each annotator
     let imageWhere = "WHERE i.annotator_id IS NOT NULL";
     const imageParams = [];
     if (startDate) {
@@ -666,44 +713,129 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
       imageParams.push(endDate);
     }
 
-    const [approvalRows] = await connection.execute(
+    const [currentStatusRows] = await connection.execute(
       `SELECT 
-        i.annotator_id as annotator_id,
+        i.annotator_id,
         SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejected
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as currently_rejected
        FROM images i
        ${imageWhere}
        GROUP BY i.annotator_id`,
       imageParams
     );
 
+    // Get reassigned/previously rejected count
+    // These are images where the annotator worked but are no longer assigned to them
+    let reassignedWhere = "WHERE th.user_id IS NOT NULL AND th.task_type = 'annotation' AND (i.annotator_id != th.user_id OR i.annotator_id IS NULL)";
+    const reassignedParams = [];
+    if (startDate) {
+      reassignedWhere += " AND th.assigned_date >= ?";
+      reassignedParams.push(startDate);
+    }
+    if (endDate) {
+      reassignedWhere += " AND th.assigned_date <= ?";
+      reassignedParams.push(endDate);
+    }
+
+    const [reassignedRows] = await connection.execute(
+      `SELECT 
+        th.user_id as annotator_id,
+        COUNT(DISTINCT th.image_id) as reassigned_count
+       FROM tasks th
+       JOIN images i ON th.image_id = i.id
+       ${reassignedWhere}
+       GROUP BY th.user_id`,
+      reassignedParams
+    );
+
+    // Get approved objects count for each annotator (only from approved images)
+    let objectsWhere = "WHERE t.user_id IS NOT NULL AND t.task_type = 'annotation' AND i.status = 'approved'";
+    const objectsParams = [];
+    if (startDate) {
+      objectsWhere += " AND t.assigned_date >= ?";
+      objectsParams.push(startDate);
+    }
+    if (endDate) {
+      objectsWhere += " AND t.assigned_date <= ?";
+      objectsParams.push(endDate);
+    }
+
+    const [objectsRows] = await connection.execute(
+      `SELECT 
+        t.user_id as annotator_id,
+        SUM(i.objects_count) as approved_objects
+       FROM tasks t
+       JOIN images i ON t.image_id = i.id
+       ${objectsWhere}
+       GROUP BY t.user_id`,
+      objectsParams
+    );
+
     await connection.release();
 
-    const approvalMap = new Map();
-    approvalRows.forEach((row) => {
-      approvalMap.set(row.annotator_id, {
+    // Build lookup maps
+    const currentStatusMap = new Map();
+    currentStatusRows.forEach((row) => {
+      currentStatusMap.set(row.annotator_id, {
         approved: Number(row.approved || 0),
-        rejected: Number(row.rejected || 0),
+        currently_rejected: Number(row.currently_rejected || 0),
       });
     });
 
-    const rows = taskRows.map((row) => {
-      const approval = approvalMap.get(row.id) || { approved: 0, rejected: 0 };
-      const totalReviewed = approval.approved + approval.rejected;
-      const accuracyRate = totalReviewed > 0 ? (approval.approved / totalReviewed) * 100 : 0;
+    const reassignedMap = new Map();
+    reassignedRows.forEach((row) => {
+      reassignedMap.set(row.annotator_id, Number(row.reassigned_count || 0));
+    });
+
+    const objectsMap = new Map();
+    objectsRows.forEach((row) => {
+      objectsMap.set(row.annotator_id, Number(row.approved_objects || 0));
+    });
+
+    const underReviewMap = new Map();
+    underReviewRows.forEach((row) => {
+      underReviewMap.set(row.annotator_id, Number(row.under_review_count || 0));
+    });
+
+    // Combine all data
+    const rows = performanceRows.map((row) => {
+      const currentStatus = currentStatusMap.get(row.id) || { approved: 0, currently_rejected: 0 };
+      const reassignedCount = reassignedMap.get(row.id) || 0;
+      const approvedObjects = objectsMap.get(row.id) || 0;
+      const underReviewCount = underReviewMap.get(row.id) || 0;
+      
+      const completed = Number(row.completed || 0);
+      const approved = currentStatus.approved;
+      const currentlyRejected = currentStatus.currently_rejected;
+      const rejectedTasks = Number(row.rejected_tasks || 0);
+      
+      // Total reviewed = approved + all rejected (current + tasks marked rejected)
+      const totalReviewed = approved + currentlyRejected + rejectedTasks;
+      const accuracyRate = totalReviewed > 0 ? (approved / totalReviewed) * 100 : 0;
+      
       const avgMinutes = Number(row.avg_completion_minutes || 0);
       const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+      
       return {
         id: row.id,
         name: row.name,
         totalAssigned: Number(row.total_assigned || 0),
-        completed: Number(row.completed || 0),
-        pending: Number(row.pending || 0),
-        approved: approval.approved,
-        rejected: approval.rejected,
+        completed: completed,
+        inProgress: Number(row.in_progress || 0),
+        underReview: underReviewCount,
+        approved: approved,
+        rejected: currentlyRejected + rejectedTasks,
+        reassigned: reassignedCount,
+        approvedObjects: approvedObjects,
         accuracyRate: Number(accuracyRate.toFixed(2)),
         avgCompletionMinutes: Number(safeAvgMinutes.toFixed(2)),
       };
+    });
+
+    // Sort by completed tasks and total assigned
+    rows.sort((a, b) => {
+      if (b.completed !== a.completed) return b.completed - a.completed;
+      return b.totalAssigned - a.totalAssigned;
     });
 
     res.json({
@@ -727,99 +859,222 @@ router.get("/reports/tester-review", verifyToken, async (req, res) => {
     const { startDate, endDate } = req.query;
     const connection = await pool.getConnection();
 
-    let whereClause = "WHERE t.task_type = 'testing'";
-    const params = [];
+    // Build date filter for tasks
+    let taskWhere = "WHERE u.role = 'tester'";
+    const taskParams = [];
     if (startDate) {
-      whereClause += " AND t.assigned_date >= ?";
-      params.push(startDate);
+      taskWhere += " AND t.assigned_date >= ?";
+      taskParams.push(startDate);
     }
     if (endDate) {
-      whereClause += " AND t.assigned_date <= ?";
-      params.push(endDate);
+      taskWhere += " AND t.assigned_date <= ?";
+      taskParams.push(endDate);
     }
 
-    const [rows] = await connection.execute(
-      `SELECT 
-        COUNT(*) as totalReviewed,
-        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approvedCount,
-        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejectedCount,
-        AVG(TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at))) as avgReviewMinutes
-       FROM tasks t
-       ${whereClause}
-       AND t.status IN ('approved','rejected')`,
-      params
-    );
-
-    let joinClause = "LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type = 'testing'";
-    const testerParams = [];
-    if (startDate) {
-      joinClause += " AND t.assigned_date >= ?";
-      testerParams.push(startDate);
-    }
-    if (endDate) {
-      joinClause += " AND t.assigned_date <= ?";
-      testerParams.push(endDate);
-    }
-
-    const [testerRows] = await connection.execute(
+    // Main query: Get full performance for each tester
+    const [performanceRows] = await connection.execute(
       `SELECT 
         u.id,
         u.name,
-        COUNT(t.id) as assignedCount,
-        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approvedCount,
-        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejectedCount,
-        AVG(CASE WHEN t.status IN ('approved', 'rejected') 
-            THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, COALESCE(t.completed_date, t.updated_at)) 
-            ELSE NULL END) as avgReviewMinutes
+        -- Total unique images assigned for testing
+        COUNT(DISTINCT t.image_id) as total_assigned,
+        -- Approved by tester
+        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        -- Rejected by tester
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        -- Currently under review (pending, in_progress, pending_review)
+        SUM(CASE WHEN t.status IN ('pending', 'in_progress', 'pending_review') THEN 1 ELSE 0 END) as under_review,
+        -- Total time spent (sum of all review times)
+        SUM(CASE 
+          WHEN t.status IN ('approved', 'rejected') AND t.completed_date IS NOT NULL 
+          THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, t.completed_date)
+          ELSE 0 
+        END) as total_review_minutes,
+        -- Average review time
+        AVG(CASE 
+          WHEN t.status IN ('approved', 'rejected') AND t.completed_date IS NOT NULL 
+          THEN TIMESTAMPDIFF(MINUTE, t.assigned_date, t.completed_date)
+          ELSE NULL 
+        END) as avg_review_minutes
        FROM users u
-       ${joinClause}
-       WHERE u.role = 'tester'
-       GROUP BY u.id, u.name
-       ORDER BY assignedCount DESC, approvedCount DESC`,
-      testerParams
+       LEFT JOIN tasks t ON u.id = t.user_id AND t.task_type = 'testing'
+       ${taskWhere}
+       GROUP BY u.id, u.name`,
+      taskParams
     );
 
     await connection.release();
 
-    const summary = rows[0] || {};
-    const approved = Number(summary.approvedCount || 0);
-    const rejected = Number(summary.rejectedCount || 0);
-    const totalReviewed = Number(summary.totalReviewed || 0);
-    const rejectionRate = approved + rejected > 0 ? (rejected / (approved + rejected)) * 100 : 0;
-    const avgMinutes = Number(summary.avgReviewMinutes || 0);
-    const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+    // Process rows
+    const rows = performanceRows.map((row) => {
+      const approved = Number(row.approved || 0);
+      const rejected = Number(row.rejected || 0);
+      const completed = approved + rejected;
+      const accuracy = completed > 0 ? (approved / completed) * 100 : 0;
+      
+      const avgMinutes = Number(row.avg_review_minutes || 0);
+      const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
+      
+      const totalMinutes = Number(row.total_review_minutes || 0);
+      const safeTotalMinutes = Number.isFinite(totalMinutes) ? totalMinutes : 0;
+      
+      return {
+        id: row.id,
+        name: row.name,
+        totalAssigned: Number(row.total_assigned || 0),
+        approved: approved,
+        rejected: rejected,
+        underReview: Number(row.under_review || 0),
+        totalReviewMinutes: Number(safeTotalMinutes.toFixed(2)),
+        accuracy: Number(accuracy.toFixed(2)),
+        avgReviewMinutes: Number(safeAvgMinutes.toFixed(2)),
+      };
+    });
+
+    // Sort by approved and total assigned
+    rows.sort((a, b) => {
+      if (b.approved !== a.approved) return b.approved - a.approved;
+      return b.totalAssigned - a.totalAssigned;
+    });
 
     res.json({
       filters: { startDate: startDate || null, endDate: endDate || null },
-      summary: {
-        totalReviewed,
-        approvedCount: approved,
-        rejectedCount: rejected,
-        avgReviewMinutes: Number(safeAvgMinutes.toFixed(2)),
-        rejectionRate: Number(rejectionRate.toFixed(2)),
-      },
-      testers: testerRows.map((row) => {
-        const approved = Number(row.approvedCount || 0);
-        const rejected = Number(row.rejectedCount || 0);
-        const completed = approved + rejected;
-        const accuracyRate = completed > 0 ? (approved / completed) * 100 : 0;
-        const avgMinutes = Number(row.avgReviewMinutes || 0);
-        const safeAvgMinutes = Number.isFinite(avgMinutes) ? avgMinutes : 0;
-        
-        return {
-          id: row.id,
-          name: row.name,
-          assignedCount: Number(row.assignedCount || 0),
-          approvedCount: approved,
-          rejectedCount: rejected,
-          accuracyRate: Number(accuracyRate.toFixed(2)),
-          avgReviewMinutes: Number(safeAvgMinutes.toFixed(2)),
-        };
-      }),
+      rows,
     });
   } catch (err) {
     console.error("Tester review error:", err);
     res.status(500).json({ error: "Failed to fetch tester review report" });
+  }
+});
+
+// GET Image Details Report
+router.get("/reports/image-details", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate, status: statusFilter } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE 1=1";
+    const params = [];
+    if (startDate) {
+      whereClause += " AND i.created_at >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND i.created_at <= ?";
+      params.push(endDate);
+    }
+    if (statusFilter && statusFilter !== "all") {
+      whereClause += " AND i.status = ?";
+      params.push(statusFilter);
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT
+        i.id,
+        i.image_name,
+        i.model_type,
+        i.status,
+        i.objects_count,
+        i.annotator_feedback,
+        i.tester_feedback,
+        i.melbourne_user_feedback,
+        prev_ann.previous_annotator_name,
+        i.previous_tester_name,
+        i.previous_feedback,
+        i.created_at,
+        i.updated_at,
+        a.name as annotator_name,
+        t.name as tester_name,
+        m.name as melbourne_user_name,
+        ann.annotation_assigned_date,
+        ann.annotation_completed_date,
+        tst.testing_assigned_date,
+        tst.testing_completed_date
+       FROM images i
+       LEFT JOIN users a ON i.annotator_id = a.id
+       LEFT JOIN users t ON i.tester_id = t.id
+       LEFT JOIN users m ON i.melbourne_user_id = m.id
+       LEFT JOIN (
+         SELECT
+           ih.image_id,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(
+               NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ih.details, '$.previousAnnotator')), '')
+               ORDER BY ih.created_at DESC SEPARATOR '||'
+             ),
+             '||',
+             1
+           ) as previous_annotator_name
+         FROM image_history ih
+         WHERE ih.event_type = 'reassigned'
+         GROUP BY ih.image_id
+       ) prev_ann ON prev_ann.image_id = i.id
+       LEFT JOIN (
+         SELECT image_id,
+           MAX(assigned_date) as annotation_assigned_date,
+           MAX(completed_date) as annotation_completed_date
+         FROM tasks
+         WHERE task_type = 'annotation'
+         GROUP BY image_id
+       ) ann ON ann.image_id = i.id
+       LEFT JOIN (
+         SELECT image_id,
+           MAX(assigned_date) as testing_assigned_date,
+           MAX(completed_date) as testing_completed_date
+         FROM tasks
+         WHERE task_type = 'testing'
+         GROUP BY image_id
+       ) tst ON tst.image_id = i.id
+       ${whereClause}
+       ORDER BY i.id ASC`,
+      params
+    );
+
+    await connection.release();
+
+    const images = rows.map((row) => ({
+      id: row.id,
+      imageName: row.image_name,
+      modelType: row.model_type || "-",
+      status: row.status,
+      objectsCount: Number(row.objects_count || 0),
+      annotatorName: row.annotator_name || "Not assigned",
+      testerName: row.tester_name || "Not assigned",
+      melbourneUserName: row.melbourne_user_name || "Not assigned",
+      annotatorFeedback: row.annotator_feedback || "",
+      testerFeedback: row.tester_feedback || "",
+      melbourneFeedback: row.melbourne_user_feedback || "",
+      previousAnnotatorName: row.previous_annotator_name || "",
+      previousTesterName: row.previous_tester_name || "",
+      previousFeedback: row.previous_feedback || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      annotationAssignedDate: row.annotation_assigned_date,
+      annotationCompletedDate: row.annotation_completed_date,
+      testingAssignedDate: row.testing_assigned_date,
+      testingCompletedDate: row.testing_completed_date,
+    }));
+
+    res.json({
+      filters: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        status: statusFilter || "all",
+      },
+      summary: {
+        totalImages: images.length,
+        totalObjects: images.reduce((sum, img) => sum + Number(img.objectsCount || 0), 0),
+      },
+      images,
+    });
+  } catch (err) {
+    console.error("Image details report error:", err);
+    res.status(500).json({ error: "Failed to fetch image details report" });
   }
 });
 
@@ -2102,6 +2357,111 @@ router.get("/admin/sessions", verifyToken, async (req, res) => {
   }
 });
 
+// POST Sync current active session to work hours (for real-time tracking while logged in)
+router.post("/admin/sync-active-session", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    // Check if auto-tracking is enabled
+    const [user] = await connection.execute(
+      "SELECT auto_track_hours, name FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    if (user.length === 0 || user[0].auto_track_hours === false) {
+      await connection.release();
+      return res.json({ 
+        message: "Auto-tracking disabled", 
+        synced: false 
+      });
+    }
+
+    // Find the most recent unclosed session
+    const [sessions] = await connection.execute(
+      `SELECT id, login_time FROM admin_sessions 
+       WHERE admin_id = ? AND logout_time IS NULL 
+       ORDER BY login_time DESC LIMIT 1`,
+      [adminId]
+    );
+
+    if (sessions.length === 0) {
+      await connection.release();
+      return res.json({ 
+        message: "No active session found", 
+        synced: false 
+      });
+    }
+
+    const session = sessions[0];
+    const currentTime = new Date();
+    const loginTime = new Date(session.login_time);
+    const durationHours = (currentTime - loginTime) / (1000 * 60 * 60); // Convert to hours
+
+    // Only sync if session is at least 15 minutes
+    if (durationHours < 0.25) {
+      await connection.release();
+      return res.json({ 
+        message: "Session too short (minimum 15 minutes required)", 
+        current_duration_minutes: Math.round(durationHours * 60),
+        synced: false 
+      });
+    }
+
+    const workDate = loginTime.toISOString().split('T')[0];
+
+    // Check if there's already an auto-tracked entry for today
+    const [existingEntry] = await connection.execute(
+      `SELECT id, hours_worked FROM work_hours 
+       WHERE admin_id = ? AND date = ? AND is_auto_tracked = TRUE`,
+      [adminId, workDate]
+    );
+
+    if (existingEntry.length > 0) {
+      // Update existing entry with current session duration
+      await connection.execute(
+        `UPDATE work_hours 
+         SET hours_worked = ?, updated_at = NOW() 
+         WHERE id = ?`,
+        [durationHours.toFixed(2), existingEntry[0].id]
+      );
+    } else {
+      // Create new work hours entry for active session
+      await connection.execute(
+        `INSERT INTO work_hours 
+         (admin_id, date, hours_worked, task_description, is_auto_tracked, session_start, session_end) 
+         VALUES (?, ?, ?, ?, TRUE, ?, NOW())`,
+        [
+          adminId, 
+          workDate, 
+          durationHours.toFixed(2),
+          'Auto-tracked session (active)',
+          session.login_time
+        ]
+      );
+    }
+
+    await connection.release();
+
+    console.log(`Synced active session: ${durationHours.toFixed(2)} hours for admin ${user[0].name}`);
+
+    res.json({ 
+      message: "Active session synced to work hours", 
+      hours: parseFloat(durationHours.toFixed(2)),
+      synced: true 
+    });
+
+  } catch (err) {
+    console.error("Sync active session error:", err);
+    res.status(500).json({ error: "Failed to sync active session" });
+  }
+});
+
 // ===== END ADMIN WORK HOURS TRACKING =====
 // PUT Update payment status
 router.put("/payments/:id", verifyToken, async (req, res) => {
@@ -3051,6 +3411,53 @@ router.put("/admin/change-password", verifyToken, async (req, res) => {
   }
 });
 
+// PUT Change Password (backward-compatible route for older clients)
+router.put("/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
 // PUT Update Super Admin Profile
 router.put("/super-admin/profile", verifyToken, async (req, res) => {
   try {
@@ -3885,6 +4292,53 @@ router.put("/tester/profile", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Update tester profile error:", err);
     res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// PUT Change Tester Password
+router.put("/tester/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const connection = await pool.getConnection();
+    const bcrypt = require("bcryptjs");
+
+    const [user] = await connection.execute(
+      `SELECT password FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user || !user[0]) {
+      await connection.release();
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isPasswordValid) {
+      await connection.release();
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await connection.execute(
+      `UPDATE users SET password = ? WHERE id = ?`,
+      [hashedPassword, userId]
+    );
+
+    await connection.release();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    console.error("Change tester password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
   }
 });
 

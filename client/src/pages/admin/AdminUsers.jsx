@@ -41,6 +41,24 @@ export default function AdminUsers() {
     ? users 
     : users.filter(u => u.role === filter);
 
+  const getProfileSrc = (profilePicture) => {
+    if (!profilePicture) return null;
+    if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+      return profilePicture;
+    }
+    if (profilePicture.startsWith("/")) {
+      return `http://localhost:5000${profilePicture}`;
+    }
+    return `http://localhost:5000/${profilePicture}`;
+  };
+
+  const getAvatarText = (name) => {
+    if (!name) return "?";
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  };
+
   if (loading) return <div className="dashboard-loading">Loading users...</div>;
 
   return (
@@ -77,7 +95,7 @@ export default function AdminUsers() {
           <table>
             <thead>
               <tr>
-                <th>ID</th>
+                <th>PROFILE</th>
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
@@ -87,7 +105,21 @@ export default function AdminUsers() {
             <tbody>
               {filteredUsers.map((user) => (
                 <tr key={user.id}>
-                  <td>{user.id}</td>
+                  <td>
+                    <div className="user-id-cell">
+                      <div className="user-id-avatar">
+                        {getProfileSrc(user.profile_picture) ? (
+                          <img
+                            src={getProfileSrc(user.profile_picture)}
+                            alt={user.name || "User"}
+                            className="user-id-avatar-img"
+                          />
+                        ) : (
+                          <span>{getAvatarText(user.name)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </td>
                   <td>{user.name}</td>
                   <td>{user.email}</td>
                   <td>

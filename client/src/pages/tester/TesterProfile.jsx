@@ -137,7 +137,7 @@ export default function TesterProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/change-password",
+        "http://localhost:5000/api/dashboard/admin/change-password",
         {
           currentPassword: password.current,
           newPassword: password.new,

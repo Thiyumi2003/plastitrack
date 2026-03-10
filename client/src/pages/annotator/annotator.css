@@ -776,6 +776,45 @@
   display: flex;
   gap: 10px;
   margin-bottom: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.filter-section label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+  font-weight: 500;
+  align-self: center;
+}
+
+.filter-select {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.filter-select:hover {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.filter-select option {
+  background: rgba(17, 24, 39, 0.95);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .filter-btn {

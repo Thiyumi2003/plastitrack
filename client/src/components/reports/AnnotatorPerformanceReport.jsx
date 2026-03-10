@@ -31,6 +31,7 @@ export const AnnotatorPerformanceReport = () => {
       ).toFixed(1),
       totalAssigned: annotatorPerf.reduce((sum, row) => sum + row.totalAssigned, 0),
       totalCompleted: annotatorPerf.reduce((sum, row) => sum + row.completed, 0),
+      approvedObjects: annotatorPerf.reduce((sum, row) => sum + row.approvedObjects, 0),
     };
   }, [annotatorPerf]);
 
@@ -92,9 +93,12 @@ export const AnnotatorPerformanceReport = () => {
       "Name": row.name,
       "Total Assigned": row.totalAssigned,
       "Completed": row.completed,
-      "Pending": row.pending,
+      "In Progress": row.inProgress,
+      "Under Review": row.underReview,
       "Approved": row.approved,
       "Rejected": row.rejected,
+      "Reassigned": row.reassigned,
+      "Approved Objects": row.approvedObjects,
       "Accuracy Rate %": row.accuracyRate.toFixed(1),
       "Avg Completion Time (hrs)": (row.avgCompletionMinutes / 60).toFixed(2),
     }));
@@ -106,9 +110,53 @@ export const AnnotatorPerformanceReport = () => {
   };
 
   const handleExportPDF = async () => {
-    await ExportService.exportToPDF(
-      "annotator-performance-report",
-      "annotator-performance.pdf"
+    const tableRows = (annotatorPerf || []).map((row) => ({
+      Name: row.name,
+      "Total Assigned": row.totalAssigned,
+      Completed: row.completed,
+      "In Progress": row.inProgress,
+      "Under Review": row.underReview,
+      Approved: row.approved,
+      Rejected: row.rejected,
+      Reassigned: row.reassigned,
+      "Approved Objects": row.approvedObjects,
+      "Accuracy %": `${Number(row.accuracyRate || 0).toFixed(1)}%`,
+      "Avg Completion Time (hrs)": (Number(row.avgCompletionMinutes || 0) / 60).toFixed(2),
+    }));
+
+    await ExportService.exportReportTemplateToPDF(
+      {
+        title: "Annotator Performance Report",
+        filters: { startDate, endDate },
+        kpis: [
+          { label: "Total Annotators", value: stats?.totalAnnotators || 0 },
+          { label: "Avg Accuracy", value: `${stats?.avgAccuracy || 0}%` },
+          { label: "Total Assigned", value: stats?.totalAssigned || 0 },
+          { label: "Total Completed", value: stats?.totalCompleted || 0 },
+          { label: "Approved Objects", value: stats?.approvedObjects || 0 },
+        ],
+        tables: [
+          {
+            title: "Annotator Performance",
+            columns: [
+              "Name",
+              "Total Assigned",
+              "Completed",
+              "In Progress",
+              "Under Review",
+              "Approved",
+              "Rejected",
+              "Reassigned",
+              "Approved Objects",
+              "Accuracy %",
+              "Avg Completion Time (hrs)",
+            ],
+            rows: tableRows,
+          },
+        ],
+      },
+      "annotator-performance.pdf",
+      { orientation: "landscape", documentTitle: "Annotator Performance Report" }
     );
   };
 
@@ -120,7 +168,7 @@ export const AnnotatorPerformanceReport = () => {
     <div id="annotator-performance-report">
       <ReportHeader
         title="Annotator Performance Report"
-        description="Individual performance metrics including accuracy rates and completion times"
+        description="Full historical performance metrics including current assignments, completed work, and previously rejected tasks"
         onExportExcel={handleExportExcel}
         onExportPDF={handleExportPDF}
       />
@@ -173,6 +221,12 @@ export const AnnotatorPerformanceReport = () => {
                 icon="✓"
                 color="#8B5CF6"
               />
+              <KPICard
+                label="Approved Objects"
+                value={stats.approvedObjects}
+                icon="🎨"
+                color="#FF6B9D"
+              />
             </div>
           )}
 
@@ -206,16 +260,25 @@ export const AnnotatorPerformanceReport = () => {
                         Completed {sortConfig.key === "completed" && (sortConfig.direction === "asc" ? "↑" : "↓")}
                       </th>
                       <th
-                        onClick={() => handleSort("pending")}
+                        onClick={() => handleSort("inProgress")}
                         style={{ cursor: "pointer", userSelect: "none" }}
                       >
-                        Pending {sortConfig.key === "pending" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                        In Progress {sortConfig.key === "inProgress" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th onClick={() => handleSort("underReview")} style={{ cursor: "pointer", userSelect: "none" }}>
+                        Under Review {sortConfig.key === "underReview" && (sortConfig.direction === "asc" ? "↑" : "↓")}
                       </th>
                       <th onClick={() => handleSort("approved")} style={{ cursor: "pointer", userSelect: "none" }}>
                         Approved {sortConfig.key === "approved" && (sortConfig.direction === "asc" ? "↑" : "↓")}
                       </th>
                       <th onClick={() => handleSort("rejected")} style={{ cursor: "pointer", userSelect: "none" }}>
                         Rejected {sortConfig.key === "rejected" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th onClick={() => handleSort("reassigned")} style={{ cursor: "pointer", userSelect: "none" }}>
+                        Reassigned {sortConfig.key === "reassigned" && (sortConfig.direction === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th onClick={() => handleSort("approvedObjects")} style={{ cursor: "pointer", userSelect: "none" }}>
+                        Approved Objects {sortConfig.key === "approvedObjects" && (sortConfig.direction === "asc" ? "↑" : "↓")}
                       </th>
                       <th
                         onClick={() => handleSort("accuracyRate")}
@@ -236,9 +299,12 @@ export const AnnotatorPerformanceReport = () => {
                         <td style={{ color: "#6BCB77", fontWeight: "500" }}>
                           {row.completed}
                         </td>
-                        <td style={{ color: "#FFB74D" }}>{row.pending}</td>
+                        <td style={{ color: "#4D96FF" }}>{row.inProgress}</td>
+                        <td style={{ color: "#FFA500" }}>{row.underReview}</td>
                         <td style={{ color: "#6BCB77" }}>{row.approved}</td>
                         <td style={{ color: "#FF6B6B" }}>{row.rejected}</td>
+                        <td style={{ color: "#FF9800" }}>{row.reassigned}</td>
+                        <td style={{ color: "#9C27B0" }}>{row.approvedObjects}</td>
                         <td style={{ color: "#4D96FF", fontWeight: "500" }}>
                           {row.accuracyRate.toFixed(1)}%
                         </td>

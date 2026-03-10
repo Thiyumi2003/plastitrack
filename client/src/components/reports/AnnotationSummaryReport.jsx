@@ -103,9 +103,48 @@ export const AnnotationSummaryReport = () => {
   };
 
   const handleExportPDF = async () => {
-    await ExportService.exportToPDF(
-      "annotation-summary-report",
-      "annotation-summary.pdf"
+    const performanceRows = (summaryPerf || []).map((item) => ({
+      Name: item.name,
+      Assigned: item.assigned,
+      Completed: item.completed,
+    }));
+
+    const statusRows = (summaryPie || []).map((item) => ({
+      Status: item.name,
+      Count: item.value,
+    }));
+
+    await ExportService.exportReportTemplateToPDF(
+      {
+        title: "Annotation Summary Report",
+        filters: {
+          role: roleFilter === "all" ? "All" : roleFilter,
+          startDate,
+          endDate,
+        },
+        kpis: [
+          { label: "Total Image Sets", value: summary?.totalImageSets || 0 },
+          { label: "Total Assigned", value: summary?.totalAssigned || 0 },
+          { label: "Completed", value: summary?.completedAnnotations || 0 },
+          { label: "Pending", value: summary?.pendingAnnotations || 0 },
+          { label: "Rejected", value: summary?.rejectedAnnotations || 0 },
+          { label: "Approval Rate", value: `${(summary?.approvalRate || 0).toFixed(1)}%` },
+        ],
+        tables: [
+          {
+            title: "Status Distribution",
+            columns: ["Status", "Count"],
+            rows: statusRows,
+          },
+          {
+            title: "Performance by Annotator",
+            columns: ["Name", "Assigned", "Completed"],
+            rows: performanceRows,
+          },
+        ],
+      },
+      "annotation-summary.pdf",
+      { orientation: "landscape", documentTitle: "Annotation Summary Report" }
     );
   };
 

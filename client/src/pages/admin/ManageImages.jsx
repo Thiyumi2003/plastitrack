@@ -256,6 +256,8 @@ export default function ManageImages() {
 
   const getAvatarText = (name) => {
     if (!name) return "?";
+    const normalized = String(name).trim().toLowerCase();
+    if (normalized.includes("not assign")) return "?";
     const parts = String(name).trim().split(/\s+/).filter(Boolean);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
@@ -485,6 +487,21 @@ export default function ManageImages() {
       ? selectedImageDetails?.tester_profile_picture
       : null);
 
+  const shouldShowRejectionDetails = Boolean(
+    selectedImageDetails?.status === "rejected" ||
+    rejectionReasonFromHistory ||
+    rejectedByFromHistory ||
+    previousAnnotatorFromHistory ||
+    selectedImageDetails?.previous_feedback ||
+    selectedImageDetails?.previous_tester_name
+  );
+
+  const currentStatus = selectedImageDetails?.status;
+  const hasActiveAnnotator = currentStatus !== "rejected" && Boolean(selectedImageDetails?.annotator_id);
+  const hasActiveTester =
+    (currentStatus === "pending_review" || currentStatus === "approved") &&
+    Boolean(selectedImageDetails?.tester_id);
+
   // Debug logging
   if (showDetailsModal && selectedImageDetails) {
     console.log('previousAnnotatorFromHistory name:', previousAnnotatorFromHistory);
@@ -601,9 +618,6 @@ export default function ManageImages() {
                 return hasPreviousRejection ? (
                   <div className="previous-rejected-inline">
                     <span className="status-badge status-previous-rejected">Previous Rejected</span>
-                    {img.previous_tester_name && (
-                      <span className="previous-rejected-by">by {img.previous_tester_name}</span>
-                    )}
                   </div>
                 ) : null;
               })()}
@@ -680,7 +694,7 @@ export default function ManageImages() {
                       {img.previous_feedback && (
                         <div className="feedback-box" style={{ backgroundColor: "#fee2e2", borderColor: "#ef4444", marginTop: "8px" }}>
                           <strong>Previous Rejection Reason:</strong>
-                          <p>{img.previous_feedback}</p>
+                          <p style={{ color: "#111827" }}>{img.previous_feedback}</p>
                         </div>
                       )}
                       <div style={{ color: "#10b981", fontSize: "0.85rem", marginTop: "8px", padding: "8px", backgroundColor: "rgba(16, 185, 129, 0.1)", borderRadius: "4px" }}>✅ Reassigned for rework</div>
@@ -776,7 +790,7 @@ export default function ManageImages() {
                   {img.tester_feedback && (
                     <div className="feedback-box" style={{ backgroundColor: "#fee2e2", borderColor: "#ef4444" }}>
                       <strong>Rejection Reason:</strong>
-                      <p>{img.tester_feedback}</p>
+                      <p style={{ color: "#111827" }}>{img.tester_feedback}</p>
                     </div>
                   )}
                   {reassigningImageId === img.id && (
@@ -785,7 +799,11 @@ export default function ManageImages() {
                         className="assign-select"
                         onChange={(e) => handleAssignAnnotator(img.id, e.target.value)}
                         defaultValue=""
-                        style={{ borderColor: "#f59e0b", backgroundColor: "#fffbeb" }}
+                        style={{
+                          borderColor: "rgba(245, 158, 11, 0.6)",
+                          backgroundColor: "rgba(15, 23, 42, 0.75)",
+                          color: "rgba(255, 255, 255, 0.9)"
+                        }}
                       >
                         <option value="">🔄 Reassign to Annotator...</option>
                         {users.annotators.map((u) => (
@@ -927,8 +945,8 @@ export default function ManageImages() {
           <div className="modal-overlay" onClick={() => setShowDetailsModal(false)}>
             <div className="modal-content details-modal" onClick={(e) => e.stopPropagation()}>
               <div className="details-modal-header">
-                <h2>📋 Image Set Details</h2>
-                <button className="btn-secondary" onClick={() => setShowDetailsModal(false)}>
+                <h2 className="details-title">Image Set Details</h2>
+                <button className="btn-secondary details-close-btn" onClick={() => setShowDetailsModal(false)}>
                   ✕ Close
                 </button>
               </div>
@@ -937,9 +955,9 @@ export default function ManageImages() {
                 <p>Loading details...</p>
               ) : selectedImageDetails ? (
                 <>
-                  {/* 1️⃣ Image Information */}
+                  {/* Image Information */}
                   <div className="details-section basic-info-section">
-                    <h3>1️⃣ Image Information</h3>
+                    <h3>Image Information</h3>
                     <div className="detail-row">
                       <span className="detail-label">Image Set Name:</span>
                       <span className="detail-value">{selectedImageDetails.image_name}</span>
@@ -956,9 +974,9 @@ export default function ManageImages() {
                     </div>
                   </div>
 
-                  {/* 2️⃣ Admin Information */}
+                  {/* Admin Information */}
                   <div className="details-section">
-                    <h3>2️⃣ Admin Information</h3>
+                    <h3>Admin Information</h3>
                     <div className="detail-row">
                       <span className="detail-label">Assigned By (Admin):</span>
                       <span className="detail-value">{selectedImageDetails.admin_name || "-"}</span>
@@ -977,51 +995,59 @@ export default function ManageImages() {
                     </div>
                   </div>
 
-                  {/* 3️⃣ Current Assignment */}
+                  {/* Current Assignment */}
                   <div className="details-section">
-                    <h3>3️⃣ Current Assignment</h3>
+                    <h3>Current Assignment</h3>
                     <div className="user-assignment-row">
                       <div className="user-card">
                         <div className="user-card-avatar">
-                          {getProfileSrc(selectedImageDetails.annotator_profile_picture) ? (
+                          {hasActiveAnnotator && getProfileSrc(selectedImageDetails.annotator_profile_picture) ? (
                             <img
                               src={getProfileSrc(selectedImageDetails.annotator_profile_picture)}
                               alt={selectedImageDetails.annotator_name || "Annotator"}
                               className="avatar-img"
                             />
                           ) : (
-                            <div className="avatar-placeholder">{getAvatarText(selectedImageDetails.annotator_name)}</div>
+                            <div className="avatar-placeholder">
+                              {getAvatarText(hasActiveAnnotator ? selectedImageDetails.annotator_name : "Not assigned")}
+                            </div>
                           )}
                         </div>
                         <div className="user-card-info">
-                          <div className="user-card-name">{selectedImageDetails.annotator_name || "Not assigned"}</div>
+                          <div className="user-card-name">
+                            {hasActiveAnnotator ? (selectedImageDetails.annotator_name || "Not assigned") : "Not assigned"}
+                          </div>
                           <div className="user-card-label">Current Annotator</div>
                         </div>
                       </div>
                       <div className="user-card">
                         <div className="user-card-avatar">
-                          {getProfileSrc(selectedImageDetails.tester_profile_picture) ? (
+                          {hasActiveTester && getProfileSrc(selectedImageDetails.tester_profile_picture) ? (
                             <img
                               src={getProfileSrc(selectedImageDetails.tester_profile_picture)}
                               alt={selectedImageDetails.tester_name || "Tester"}
                               className="avatar-img"
                             />
                           ) : (
-                            <div className="avatar-placeholder">{getAvatarText(selectedImageDetails.tester_name)}</div>
+                            <div className="avatar-placeholder">
+                              {getAvatarText(hasActiveTester ? selectedImageDetails.tester_name : "Not assigned")}
+                            </div>
                           )}
                         </div>
                         <div className="user-card-info">
-                          <div className="user-card-name">{selectedImageDetails.tester_name || "Not assigned"}</div>
+                          <div className="user-card-name">
+                            {hasActiveTester ? (selectedImageDetails.tester_name || "Not assigned") : "Not assigned"}
+                          </div>
                           <div className="user-card-label">Assigned Tester</div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* 4️⃣ Rejection Details (If Rejected) */}
-                  {(selectedImageDetails.status === "rejected" || rejectionReasonFromHistory) && (
+                  {/* Rejection Details (If Rejected) */}
+                  {shouldShowRejectionDetails && (
                     <div className="details-section rejection-details-section">
-                      <h3>4️⃣ Rejection Details</h3>
+                      <h3>Rejection Details</h3>
                       
                       <div className="user-assignment-row">
                         <div className="user-card">
@@ -1068,88 +1094,6 @@ export default function ManageImages() {
                       </div>
                     </div>
                   )}
-
-                  {/* Admin Actions */}
-                  <div className="details-section actions-section">
-                    <div className="action-buttons">
-                      {selectedImageDetails.status === "rejected" && (
-                        <select 
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              handleAssignAnnotator(selectedImageDetails.id, e.target.value);
-                              setShowDetailsModal(false);
-                            }
-                          }}
-                          className="btn-action btn-primary"
-                          defaultValue=""
-                        >
-                          <option value="">🔁 Reassign Annotator</option>
-                          {users.annotators.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      
-                      {selectedImageDetails.status === "completed" && !selectedImageDetails.tester_id && (
-                        <select 
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              handleAssignTester(selectedImageDetails.id, e.target.value);
-                              setShowDetailsModal(false);
-                            }
-                          }}
-                          className="btn-action btn-primary"
-                          defaultValue=""
-                        >
-                          <option value="">📋 Assign Tester</option>
-                          {users.testers.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      
-                      {(selectedImageDetails.status === "approved" || selectedImageDetails.status === "completed") && !selectedImageDetails.melbourne_user_id && (
-                        <select 
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              handleSendToMelbourne(selectedImageDetails.id, e.target.value);
-                              setShowDetailsModal(false);
-                            }
-                          }}
-                          className="btn-action btn-secondary"
-                          defaultValue=""
-                        >
-                          <option value="">🌏 Request Melbourne Approval</option>
-                          {users.melbourneUsers.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      
-                      <button 
-                        className="btn-action btn-danger"
-                        onClick={() => {
-                          handleDeleteImage(selectedImageDetails.id, selectedImageDetails.image_name);
-                          setShowDetailsModal(false);
-                        }}
-                      >
-                        🗑️ Delete Image Set
-                      </button>
-                      
-                      <button 
-                        className="btn-action btn-secondary"
-                        onClick={() => setShowDetailsModal(false)}
-                      >
-                        ✕ Close
-                      </button>
-                    </div>
-                  </div>
                 </>
               ) : (
                 <p>No details found.</p>

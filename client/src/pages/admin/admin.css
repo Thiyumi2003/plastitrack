@@ -122,12 +122,20 @@
   font-size: 0.9rem;
   cursor: pointer;
   transition: all 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
 }
 
 .assign-select:focus {
   outline: none;
   border-color: #10b981;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.assign-select option {
+  background: rgba(17, 24, 39, 0.95);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .assigned-user {
@@ -202,6 +210,20 @@
   align-items: center;
   margin-bottom: 16px;
   gap: 12px;
+}
+
+.details-title {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 2rem;
+  line-height: 1.1;
+  flex: 1;
+}
+
+.details-close-btn {
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  min-width: 120px;
 }
 
 .details-grid {
@@ -1147,6 +1169,33 @@
 
 .users-table tr:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.user-id-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-id-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.user-id-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .role-badge {
