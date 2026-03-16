@@ -1303,6 +1303,24 @@
   transition: all 0.2s ease;
 }
 
+select.text-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: rgba(15, 23, 42, 0.82);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+select.text-input option {
+  background: #ffffff;
+  color: #111827;
+}
+
+select.text-input:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.45);
+}
+
 .text-input:focus {
   outline: none;
   border-color: #10b981;
@@ -1362,6 +1380,29 @@
 .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.3);
+}
+
+.btn-change-password {
+  background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(251, 146, 60, 0.2);
+}
+
+.btn-change-password:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(251, 146, 60, 0.3);
+}
+
+.btn-change-password:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .no-data {

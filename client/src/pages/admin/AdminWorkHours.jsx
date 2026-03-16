@@ -4,6 +4,28 @@ import { Calendar, Clock, Plus, Trash2, CheckCircle, XCircle, Zap, ZapOff } from
 import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 
+const parseHoursInput = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  if (raw.includes(":")) {
+    const parts = raw.split(":");
+    if (parts.length !== 2) return null;
+
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+    if (hours < 0 || minutes < 0 || minutes >= 60) return null;
+
+    return hours + minutes / 60;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 export default function AdminWorkHours() {
   const [workHours, setWorkHours] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -73,12 +95,14 @@ export default function AdminWorkHours() {
   };
 
   const handleSubmit = async () => {
-    if (!formData.date || !formData.hours_worked) {
-      alert("Date and hours worked are required");
+    const parsedHours = parseHoursInput(formData.hours_worked);
+
+    if (!formData.date || parsedHours === null) {
+      alert("Date and worked time are required (e.g., 8, 8.5, or 8:30)");
       return;
     }
 
-    if (formData.hours_worked < 0 || formData.hours_worked > 24) {
+    if (parsedHours < 0 || parsedHours > 24) {
       alert("Hours must be between 0 and 24");
       return;
     }
@@ -86,7 +110,10 @@ export default function AdminWorkHours() {
     try {
       await axios.post(
         "http://localhost:5000/api/dashboard/admin/work-hours",
-        formData,
+        {
+          ...formData,
+          hours_worked: Number(parsedHours.toFixed(2)),
+        },
         { headers: getAuthHeader() }
       );
       setShowAddModal(false);
@@ -422,18 +449,15 @@ export default function AdminWorkHours() {
             </div>
 
             <div className="form-group">
-              <label>Hours Worked</label>
+              <label>Worked Time</label>
               <input
-                type="number"
+                type="text"
                 value={formData.hours_worked}
                 onChange={(e) => setFormData({ ...formData, hours_worked: e.target.value })}
-                placeholder="e.g., 8"
-                min="0"
-                max="24"
-                step="0.5"
+                placeholder="e.g., 8, 8.5, or 8:30"
               />
               <small style={{ color: "#666", display: "block", marginTop: "5px" }}>
-                Enter hours between 0 and 24
+                Enter decimal hours or HH:MM format (0:15 to 24:00)
               </small>
             </div>
 

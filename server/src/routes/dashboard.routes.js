@@ -1,4 +1,4 @@
-
+﻿
 const express = require("express");
 const pool = require("../db/pool");
 const multer = require("multer");
@@ -24,6 +24,337 @@ const verifyToken = (req, res, next) => {
 };
 
 const isSuperAdmin = (req) => req.user?.role === "super_admin";
+
+const ROLE_PAYMENT_TYPE = {
+  annotator: "per_object",
+  tester: "per_object",
+  admin: "per_hour",
+};
+
+const LEGACY_RATE_COLUMN_BY_ROLE = {
+  annotator: "annotator_rate",
+  tester: "tester_rate",
+  admin: "hourly_rate",
+};
+
+const PAYMENT_STATUS = {
+  PENDING_CALCULATION: "pending_calculation",
+  PENDING_APPROVAL: "pending_approval",
+  APPROVED: "approved",
+  READY_TO_PAY: "ready_to_pay",
+  PAID: "paid",
+  REJECTED: "rejected",
+};
+
+const PAYMENT_STATUSES = Object.values(PAYMENT_STATUS);
+
+const normalizeRateValue = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
+const parseHoursWorkedInput = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // Supports formats like "1:30" (1 hour 30 minutes) in addition to decimal hours.
+  if (raw.includes(":")) {
+    const parts = raw.split(":");
+    if (parts.length !== 2) return null;
+
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+    if (hours < 0 || minutes < 0 || minutes >= 60) return null;
+
+    return hours + minutes / 60;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const syncLegacyRateColumn = async (connection, userId, role, rateValue) => {
+  const column = LEGACY_RATE_COLUMN_BY_ROLE[role];
+  if (!column) return;
+  await connection.execute(`UPDATE users SET ${column} = ? WHERE id = ?`, [rateValue, userId]);
+};
+
+const getRoleRate = async (connection, userId, role) => {
+  const paymentType = ROLE_PAYMENT_TYPE[role];
+  const legacyColumn = LEGACY_RATE_COLUMN_BY_ROLE[role];
+  if (!paymentType || !legacyColumn) {
+    return 0;
+  }
+
+  const [rows] = await connection.execute(
+    `SELECT
+      COALESCE(ur.custom_rate, u.${legacyColumn}, rr.default_rate, 0) as effective_rate
+     FROM users u
+     LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = ?
+     LEFT JOIN role_rates rr ON rr.role_name = ? AND rr.payment_type = ?
+     WHERE u.id = ?
+     LIMIT 1`,
+    [paymentType, role, paymentType, userId]
+  );
+
+  return Number(rows?.[0]?.effective_rate || 0);
+};
+
+const calculatePaymentForUser = async (connection, user, modelType) => {
+  const role = user.role;
+  const userId = Number(user.id);
+  const rate = await getRoleRate(connection, userId, role);
+
+  if (role === "annotator") {
+    if (!modelType) {
+      return { error: "model_type is required for annotator payments" };
+    }
+
+    const summary = await getModelSummary(connection, modelType);
+    if (!summary.isComplete) {
+      return { error: "Model is not completed for payment", modelSummary: summary };
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT
+        COUNT(*) as image_sets,
+        COALESCE(SUM(objects_count), 0) as approved_objects
+       FROM images
+       WHERE model_type = ?
+         AND annotator_id = ?
+         AND status = 'approved'`,
+      [modelType, userId]
+    );
+
+    const approvedObjects = Number(rows?.[0]?.approved_objects || 0);
+    const imageSets = Number(rows?.[0]?.image_sets || 0);
+    if (approvedObjects <= 0) {
+      return { error: "No approved objects found for this annotator/model" };
+    }
+
+    return {
+      role,
+      paymentType: "per_object",
+      modelType,
+      imageSets,
+      basisCount: approvedObjects,
+      amount: approvedObjects * rate,
+      rateUsed: rate,
+    };
+  }
+
+  if (role === "tester") {
+    if (!modelType) {
+      return { error: "model_type is required for tester payments" };
+    }
+
+    const summary = await getModelSummary(connection, modelType);
+    if (!summary.isComplete) {
+      return { error: "Model is not completed for payment", modelSummary: summary };
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT
+        COUNT(*) as image_sets,
+        COALESCE(SUM(objects_count), 0) as reviewed_objects
+       FROM images
+       WHERE model_type = ?
+         AND tester_id = ?
+         AND status IN ('approved', 'rejected')`,
+      [modelType, userId]
+    );
+
+    const reviewedObjects = Number(rows?.[0]?.reviewed_objects || 0);
+    const imageSets = Number(rows?.[0]?.image_sets || 0);
+    if (reviewedObjects <= 0) {
+      return { error: "No reviewed objects found for this tester/model" };
+    }
+
+    return {
+      role,
+      paymentType: "per_object",
+      modelType,
+      imageSets,
+      basisCount: reviewedObjects,
+      amount: reviewedObjects * rate,
+      rateUsed: rate,
+    };
+  }
+
+  if (role === "admin") {
+    const [rows] = await connection.execute(
+      `SELECT
+        COALESCE(SUM(hours_worked), 0) as approved_hours
+       FROM work_hours
+       WHERE admin_id = ?
+         AND status = 'approved'`,
+      [userId]
+    );
+
+    const approvedHours = Number(rows?.[0]?.approved_hours || 0);
+    if (approvedHours <= 0) {
+      return { error: "No approved work hours found for this admin" };
+    }
+
+    return {
+      role,
+      paymentType: "per_hour",
+      modelType: null,
+      imageSets: 0,
+      basisCount: approvedHours,
+      amount: approvedHours * rate,
+      rateUsed: rate,
+    };
+  }
+
+  return { error: "Unsupported role for payment calculation" };
+};
+
+/**
+ * Calculate admin payment eligibility
+ * Returns: totalWorkedMinutes, alreadyPaidMinutes, remainingMinutes, hourlyRate, minuteRate
+ */
+const calculateAdminPaymentEligibility = async (connection, adminId) => {
+  try {
+    // Get admin hourly rate. If user-specific rate is missing, fallback to role default.
+    const [adminUsers] = await connection.execute(
+      `SELECT
+        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate
+       FROM users u
+       LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
+       LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
+       WHERE u.id = ? AND u.role = 'admin'`,
+      [adminId]
+    );
+
+    if (adminUsers.length === 0) {
+      return { error: "Admin user not found" };
+    }
+
+    const hourlyRate = Number(adminUsers[0].hourly_rate || 0);
+
+    const minuteRate = hourlyRate / 60; // Convert hourly to minute rate
+
+    // Calculate total worked minutes from approved work hours
+    // work_hours.hours_worked is in decimal format (e.g., 1.5 = 1 hour 30 minutes)
+    const [workHours] = await connection.execute(
+      `SELECT COALESCE(SUM(hours_worked), 0) as total_approved_hours
+       FROM work_hours
+       WHERE admin_id = ? AND status = 'approved'`,
+      [adminId]
+    );
+
+    const totalApprovedHours = Number(workHours[0].total_approved_hours || 0);
+    const totalWorkedMinutes = Math.round(totalApprovedHours * 60); // Convert hours to minutes
+
+    // Calculate already paid minutes from approved payments
+    const [paidPayments] = await connection.execute(
+      `SELECT COALESCE(SUM(p.paid_minutes), 0) as total_paid_minutes
+       FROM payments p
+       JOIN users u ON p.user_id = u.id
+       WHERE p.user_id = ? AND u.role = 'admin' AND p.status IN ('approved', 'ready_to_pay', 'paid')`,
+      [adminId]
+    );
+
+    const alreadyPaidMinutes = Number(paidPayments[0].total_paid_minutes || 0);
+
+    // Calculate remaining unpaid minutes
+    const remainingMinutes = Math.max(0, totalWorkedMinutes - alreadyPaidMinutes);
+
+    return {
+      adminId,
+      totalWorkedMinutes,
+      alreadyPaidMinutes,
+      remainingMinutes,
+      hourlyRate,
+      minuteRate: Number(minuteRate.toFixed(4)),
+      paymentEligible: remainingMinutes > 0 && hourlyRate > 0,
+      hourlyRateConfigured: hourlyRate > 0,
+    };
+  } catch (err) {
+    console.error("Calculate admin payment eligibility error:", err);
+    return { error: "Failed to calculate payment eligibility" };
+  }
+};
+
+/**
+ * Validate and calculate admin payment
+ * Ensures payMinutes <= remainingMinutes and calculates paymentAmount
+ */
+const validateAndCalculateAdminPayment = async (connection, adminId, payMinutes) => {
+  const eligibility = await calculateAdminPaymentEligibility(connection, adminId);
+
+  if (eligibility.error) {
+    return { error: eligibility.error };
+  }
+
+  const payMin = Number(payMinutes);
+  if (!Number.isInteger(payMin) || payMin <= 0) {
+    return { error: "payMinutes must be a positive integer" };
+  }
+
+  if (payMin > eligibility.remainingMinutes) {
+    return {
+      error: `Cannot pay ${payMin} minutes. Only ${eligibility.remainingMinutes} minutes remaining.`,
+    };
+  }
+
+  const paymentAmount = payMin * eligibility.minuteRate;
+
+  return {
+    success: true,
+    adminId,
+    payMinutes: payMin,
+    minuteRate: eligibility.minuteRate,
+    paymentAmount: Number(paymentAmount.toFixed(2)),
+    eligibility,
+  };
+};
+
+const maskCardNumber = (cardNumber) => {
+  if (!cardNumber) return null;
+  const digits = String(cardNumber).replace(/\D/g, "");
+  if (!digits) return null;
+  const last4 = digits.slice(-4).padStart(4, "0");
+  return `**** **** **** ${last4}`;
+};
+
+const buildMaskedAccountNumber = (accountNumber) => {
+  if (!accountNumber) return null;
+  const raw = String(accountNumber).trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 4) {
+    return `****${digits.slice(-4)}`;
+  }
+  if (raw.length >= 4) {
+    return `****${raw.slice(-4)}`;
+  }
+  return null;
+};
+
+const formatPaymentMethodLabel = (method = {}) => {
+  const bank = method.bank_name || null;
+  const branch = method.branch_name || null;
+  const accountName = method.account_name || method.card_holder_name || null;
+  const masked = method.masked_card_number || "****";
+
+  if (bank || branch) {
+    const left = [bank, branch].filter(Boolean).join(" / ") || "Bank Account";
+    const suffix = accountName ? ` (${accountName})` : "";
+    return `${left} ${masked}${suffix}`.trim();
+  }
+
+  return `${method.card_type || "Card"} ${masked}`.trim();
+};
 
 async function logImageHistory(connection, {
   imageId,
@@ -255,7 +586,7 @@ router.get("/admins", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [admins] = await connection.execute(
-      "SELECT id, name, email, role, created_at FROM users WHERE role = 'admin'"
+      "SELECT id, name, email, role, created_at, profile_picture FROM users WHERE role = 'admin'"
     );
 
     await connection.release();
@@ -273,7 +604,7 @@ router.get("/users", verifyToken, async (req, res) => {
     const { role } = req.query;
     const connection = await pool.getConnection();
 
-    let query = "SELECT id, name, email, role, is_active, hourly_rate, annotator_rate, tester_rate, created_at FROM users WHERE role != 'super_admin'";
+    let query = "SELECT id, name, email, role, is_active, hourly_rate, annotator_rate, tester_rate, profile_picture, created_at FROM users WHERE role != 'super_admin'";
     const params = [];
 
     if (role) {
@@ -299,6 +630,9 @@ router.put("/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, email, role, hourly_rate, annotator_rate, tester_rate } = req.body;
+    const normalizedHourlyRate = normalizeRateValue(hourly_rate);
+    const normalizedAnnotatorRate = normalizeRateValue(annotator_rate);
+    const normalizedTesterRate = normalizeRateValue(tester_rate);
 
     const allowedRoles = ["super_admin"];
     if (!allowedRoles.includes(req.user?.role)) {
@@ -328,23 +662,41 @@ router.put("/users/:id", verifyToken, async (req, res) => {
 
     if (hourly_rate !== undefined && role === "admin") {
       query += ", hourly_rate = ?";
-      params.push(hourly_rate);
+      params.push(normalizedHourlyRate);
     }
 
     if (annotator_rate !== undefined && role === "annotator") {
       query += ", annotator_rate = ?";
-      params.push(annotator_rate);
+      params.push(normalizedAnnotatorRate);
     }
 
     if (tester_rate !== undefined && role === "tester") {
       query += ", tester_rate = ?";
-      params.push(tester_rate);
+      params.push(normalizedTesterRate);
     }
 
     query += " WHERE id = ?";
     params.push(id);
 
     await connection.execute(query, params);
+
+    // Keep user_rates aligned with existing View All Users edit flow.
+    await connection.execute("DELETE FROM user_rates WHERE user_id = ?", [id]);
+    const paymentType = ROLE_PAYMENT_TYPE[role] || null;
+    let selectedRate = null;
+    if (role === "admin") selectedRate = normalizedHourlyRate;
+    if (role === "annotator") selectedRate = normalizedAnnotatorRate;
+    if (role === "tester") selectedRate = normalizedTesterRate;
+
+    if (paymentType && selectedRate !== null) {
+      await connection.execute(
+        `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`,
+        [id, paymentType, selectedRate]
+      );
+    }
+
     await connection.release();
 
     res.json({ message: "User updated successfully" });
@@ -494,7 +846,7 @@ router.get("/reports", verifyToken, async (req, res) => {
       LEFT JOIN users u2 ON i.annotator_id = u2.id
       LEFT JOIN users u3 ON i.tester_id = u3.id
       LEFT JOIN users u4 ON i.melbourne_user_id = u4.id
-      ORDER BY i.created_at DESC
+      ORDER BY i.id ASC
       LIMIT 50
     `);
 
@@ -624,7 +976,7 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error("❌ Annotation summary error:", err.message, err.stack);
+    console.error("Annotation summary error:", err.message, err.stack);
     res.status(500).json({ error: "Failed to fetch annotation summary", details: err.message });
   }
 });
@@ -1457,34 +1809,33 @@ router.get("/payments/eligible-models", verifyToken, async (req, res) => {
     }
 
     const connection = await pool.getConnection();
-
     const [rows] = await connection.execute(
-      `SELECT 
+      `SELECT
         model_type,
-        COUNT(*) as total_images,
-        SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END) as finalized_images,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_images,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_images
+        COUNT(*) as total_image_sets,
+        SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END) as completed_image_sets,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_image_sets,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_image_sets
        FROM images
        WHERE model_type IS NOT NULL AND model_type <> ''
        GROUP BY model_type
        ORDER BY model_type`
     );
-
     await connection.release();
 
     const models = rows.map((row) => {
-      const totalImages = Number(row.total_images || 0);
-      const finalizedImages = Number(row.finalized_images || 0);
-      const approvedImages = Number(row.approved_images || 0);
-      const rejectedImages = Number(row.rejected_images || 0);
+      const totalImageSets = Number(row.total_image_sets || 0);
+      const completedImageSets = Number(row.completed_image_sets || 0);
+      const eligibleForPayment = totalImageSets > 0 && completedImageSets === totalImageSets;
       return {
+        modelName: row.model_type,
         modelType: row.model_type,
-        totalImages,
-        finalizedImages,
-        approvedImages,
-        rejectedImages,
-        isComplete: totalImages > 0 && finalizedImages === totalImages,
+        totalImageSets,
+        completedImageSets,
+        approvedImageSets: Number(row.approved_image_sets || 0),
+        rejectedImageSets: Number(row.rejected_image_sets || 0),
+        eligibleForPayment,
+        isComplete: eligibleForPayment,
       };
     });
 
@@ -1492,6 +1843,44 @@ router.get("/payments/eligible-models", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Eligible models error:", err);
     res.status(500).json({ error: "Failed to fetch eligible models" });
+  }
+});
+
+// GET Payment Eligibility table summary (super admin only)
+router.get("/payments/eligibility-summary", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT
+        model_type as model_name,
+        COUNT(*) as total_image_sets,
+        SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END) as completed_image_sets
+       FROM images
+       WHERE model_type IS NOT NULL AND model_type <> ''
+       GROUP BY model_type
+       ORDER BY model_type`
+    );
+    await connection.release();
+
+    res.json({
+      rows: rows.map((row) => {
+        const total = Number(row.total_image_sets || 0);
+        const completed = Number(row.completed_image_sets || 0);
+        return {
+          model_name: row.model_name,
+          total_image_sets: total,
+          completed_image_sets: completed,
+          eligible_for_payment: total > 0 && total === completed,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("Eligibility summary error:", err);
+    res.status(500).json({ error: "Failed to fetch payment eligibility summary" });
   }
 });
 
@@ -1511,188 +1900,186 @@ router.get("/payments/eligible-users", verifyToken, async (req, res) => {
     const modelSummary = await getModelSummary(connection, modelType);
 
     const [annotators] = await connection.execute(
-      `SELECT 
+      `SELECT
         u.id,
         u.name,
         u.email,
         u.role,
-        COUNT(i.id) as approved_images
+        COUNT(i.id) as approved_image_sets,
+        COALESCE(SUM(i.objects_count), 0) as approved_objects
        FROM images i
        INNER JOIN users u ON i.annotator_id = u.id
        WHERE i.model_type = ? AND i.status = 'approved'
        GROUP BY u.id, u.name, u.email, u.role
-       ORDER BY approved_images DESC`,
+       ORDER BY approved_objects DESC`,
       [modelType]
     );
 
     const [testers] = await connection.execute(
-      `SELECT 
+      `SELECT
         u.id,
         u.name,
         u.email,
         u.role,
-        COUNT(i.id) as approved_images
+        COUNT(i.id) as reviewed_image_sets,
+        COALESCE(SUM(i.objects_count), 0) as reviewed_objects
        FROM images i
        INNER JOIN users u ON i.tester_id = u.id
-       WHERE i.model_type = ? AND i.status = 'approved'
+       WHERE i.model_type = ? AND i.status IN ('approved', 'rejected')
        GROUP BY u.id, u.name, u.email, u.role
-       ORDER BY approved_images DESC`,
+       ORDER BY reviewed_objects DESC`,
       [modelType]
     );
 
     await connection.release();
 
-    res.json({
-      modelType,
-      modelSummary,
-      annotators,
-      testers,
-    });
+    res.json({ modelType, modelSummary, annotators, testers });
   } catch (err) {
     console.error("Eligible users error:", err);
     res.status(500).json({ error: "Failed to fetch eligible users" });
   }
 });
 
-// GET Payments overview
+// GET Payment Dashboard (super admin only)
 router.get("/payments", verifyToken, async (req, res) => {
   try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
     const connection = await pool.getConnection();
 
-    // Total paid this month
-    const [totalPaidMonth] = await connection.execute(`
-      SELECT COALESCE(SUM(amount), 0) as total FROM payments 
-      WHERE status = 'paid' 
-      AND MONTH(payment_date) = MONTH(NOW()) 
-      AND YEAR(payment_date) = YEAR(NOW())
-    `);
+    const [summaryRows] = await connection.execute(
+      `SELECT
+        SUM(CASE WHEN status IN ('pending_calculation', 'pending_approval') THEN 1 ELSE 0 END) as total_pending_payments,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_payments,
+        SUM(CASE WHEN status = 'ready_to_pay' THEN 1 ELSE 0 END) as ready_to_pay_payments,
+        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_payments,
+        COALESCE(SUM(amount), 0) as total_amount,
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) as total_paid_amount
+       FROM payments`
+    );
 
-    // Models ready for payment
-    const [modelsReadyForPayment] = await connection.execute(`
-      SELECT COUNT(DISTINCT model_type) as count FROM payments 
-      WHERE status = 'approved'
-    `);
+    const [recentTransactions] = await connection.execute(
+      `SELECT
+        p.id,
+        u.name as user_name,
+        u.role as user_role,
+        p.model_type,
+        p.amount,
+        p.status,
+        p.payment_method,
+        p.payment_date,
+        p.created_at
+       FROM payments p
+       LEFT JOIN users u ON u.id = p.user_id
+       ORDER BY COALESCE(p.payment_date, p.created_at) DESC
+       LIMIT 10`
+    );
 
-    // Pending admin payment
-    const [pendingAdminPayment] = await connection.execute(`
-      SELECT COALESCE(SUM(amount), 0) as total FROM payments 
-      WHERE status = 'pending'
-    `);
+    const [savedCards] = await connection.execute(
+      `SELECT
+        pm.id,
+        pm.user_id,
+        u.name as user_name,
+        pm.card_holder_name,
+        pm.masked_card_number,
+        pm.card_type,
+        pm.expiry_month,
+        pm.expiry_year,
+        pm.is_default,
+        pm.created_at
+       FROM payment_methods pm
+       LEFT JOIN users u ON u.id = pm.user_id
+       ORDER BY pm.is_default DESC, pm.updated_at DESC
+       LIMIT 20`
+    );
 
-    // Withdrawal methods
-    const [withdrawalMethods] = await connection.execute(`
-      SELECT 
+    const [methodBreakdown] = await connection.execute(
+      `SELECT
         payment_method,
         COUNT(*) as count,
-        SUM(amount) as total
-      FROM payments
-      WHERE status = 'paid'
-      GROUP BY payment_method
-    `);
+        COALESCE(SUM(amount), 0) as total
+       FROM payments
+       WHERE status = 'paid'
+       GROUP BY payment_method`
+    );
 
     await connection.release();
 
+    const summary = summaryRows?.[0] || {};
     res.json({
-      totalPaidThisMonth: totalPaidMonth[0].total,
-      modelsReadyForPayment: modelsReadyForPayment[0].count,
-      pendingAdminPayment: pendingAdminPayment[0].total,
-      withdrawalMethods: withdrawalMethods,
+      totalPendingPayments: Number(summary.total_pending_payments || 0),
+      approvedPayments: Number(summary.approved_payments || 0),
+      readyToPayPayments: Number(summary.ready_to_pay_payments || 0),
+      paidPayments: Number(summary.paid_payments || 0),
+      totalAmount: Number(summary.total_amount || 0),
+      totalPaidAmount: Number(summary.total_paid_amount || 0),
+      recentTransactions,
+      savedPaymentCards: savedCards,
+      methodBreakdown,
+
+      // Backward-compatible fields used by current UI
+      totalPaidThisMonth: Number(summary.total_paid_amount || 0),
+      modelsReadyForPayment: Number(summary.ready_to_pay_payments || 0),
+      pendingAdminPayment: Number(summary.total_pending_payments || 0),
+      withdrawalMethods: methodBreakdown,
     });
   } catch (err) {
-    console.error("Payments error:", err);
-    res.status(500).json({ error: "Failed to fetch payments" });
+    console.error("Payments dashboard error:", err);
+    res.status(500).json({ error: "Failed to fetch payments dashboard" });
   }
 });
 
 // GET Payment history
 router.get("/payment-history", verifyToken, async (req, res) => {
   try {
-    const connection = await pool.getConnection();
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
 
-    const [paymentHistory] = await connection.execute(`
-      SELECT 
+    const connection = await pool.getConnection();
+    const [history] = await connection.execute(
+      `SELECT
         p.id,
         p.user_id,
-        u.name as admin_name,
+        u.name as user_name,
         u.role as user_role,
         p.amount,
         p.model_type,
         p.images_completed,
+        p.objects_count,
+        p.hours,
+        p.rate_used,
         p.status,
         p.payment_method,
         p.payment_date,
+        p.approved_date,
         p.created_at,
         approver.name as approved_by
-      FROM payments p
-      LEFT JOIN users u ON p.user_id = u.id
-      LEFT JOIN users approver ON p.approved_by = approver.id
-      ORDER BY p.created_at DESC
-      LIMIT 100
-    `);
-
-    // For each payment, get annotator and tester details
-    const paymentsWithDetails = await Promise.all(
-      paymentHistory.map(async (payment) => {
-        // Get annotators who worked on this user's images (for admin payments)
-        const [annotators] = await connection.execute(`
-          SELECT DISTINCT
-            a.id,
-            a.name as annotator_name,
-            COUNT(DISTINCT i.id) as images_annotated,
-            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved
-          FROM images i
-          INNER JOIN users a ON i.annotator_id = a.id
-          WHERE i.admin_id = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
-          GROUP BY a.id, a.name
-        `, [payment.user_id, payment.user_id]);
-
-        // Get testers who reviewed images
-        const [testers] = await connection.execute(`
-          SELECT DISTINCT
-            t.id,
-            t.name as tester_name,
-            COUNT(DISTINCT i.id) as images_reviewed,
-            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved,
-            SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as images_rejected
-          FROM images i
-          INNER JOIN users t ON i.tester_id = t.id
-          WHERE i.admin_id = ? OR (? IN (SELECT id FROM users WHERE role IN ('admin', 'melbourne_user')))
-          GROUP BY t.id, t.name
-        `, [payment.user_id, payment.user_id]);
-
-        // Get admin's own work if they're an annotator
-        const [adminWork] = await connection.execute(`
-          SELECT 
-            COUNT(DISTINCT i.id) as images_annotated,
-            SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as images_approved,
-            SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as images_completed
-          FROM images i
-          WHERE i.annotator_id = ?
-        `, [payment.user_id]);
-
-        return {
-          ...payment,
-          annotators: annotators,
-          testers: testers,
-          adminWork: adminWork[0] || { images_annotated: 0, images_approved: 0, images_completed: 0 }
-        };
-      })
+       FROM payments p
+       LEFT JOIN users u ON p.user_id = u.id
+       LEFT JOIN users approver ON p.approved_by = approver.id
+       ORDER BY p.created_at DESC
+       LIMIT 200`
     );
 
-    // Cumulative payment summary
-    const [cumulativeSummary] = await connection.execute(`
-      SELECT 
-        SUM(amount) as total_amount,
-        COUNT(*) as total_transactions
-      FROM payments
-      WHERE status = 'paid'
-    `);
-
+    const [cumulativeSummary] = await connection.execute(
+      `SELECT
+        COALESCE(SUM(amount), 0) as total_amount,
+        COUNT(*) as total_transactions,
+        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as total_paid_transactions
+       FROM payments`
+    );
     await connection.release();
 
     res.json({
-      history: paymentsWithDetails,
-      cumulativeSummary: cumulativeSummary[0],
+      history,
+      cumulativeSummary: cumulativeSummary?.[0] || {
+        total_amount: 0,
+        total_transactions: 0,
+        total_paid_transactions: 0,
+      },
     });
   } catch (err) {
     console.error("Payment history error:", err);
@@ -1718,13 +2105,17 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
         i.status,
         a.id as annotator_id,
         a.name as annotator_name,
-        a.annotator_rate,
+        COALESCE(aur.custom_rate, a.annotator_rate, arr.default_rate, 0) as annotator_rate,
         t.id as tester_id,
         t.name as tester_name,
-        t.tester_rate
+        COALESCE(tur.custom_rate, t.tester_rate, trr.default_rate, 0) as tester_rate
        FROM images i
        LEFT JOIN users a ON i.annotator_id = a.id
        LEFT JOIN users t ON i.tester_id = t.id
+       LEFT JOIN user_rates aur ON aur.user_id = a.id AND aur.payment_type = 'per_object'
+       LEFT JOIN role_rates arr ON arr.role_name = 'annotator' AND arr.payment_type = 'per_object'
+       LEFT JOIN user_rates tur ON tur.user_id = t.id AND tur.payment_type = 'per_object'
+       LEFT JOIN role_rates trr ON trr.role_name = 'tester' AND trr.payment_type = 'per_object'
        WHERE i.model_type IS NOT NULL AND i.model_type <> ''
        ORDER BY i.model_type, i.image_name`
     );
@@ -1839,12 +2230,16 @@ router.get("/reports/admin-payment-details", verifyToken, async (req, res) => {
 // GET Model-based payments
 router.get("/model-payments", verifyToken, async (req, res) => {
   try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
     const connection = await pool.getConnection();
 
     const [modelPayments] = await connection.execute(`
       SELECT 
         model_type,
-        SUM(CASE WHEN status = 'ready' THEN amount ELSE 0 END) as ready_for_payment,
+        SUM(CASE WHEN status = 'ready_to_pay' THEN amount ELSE 0 END) as ready_for_payment,
         SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved,
         COUNT(DISTINCT user_id) as users_count,
         COUNT(*) as total_payments
@@ -1881,91 +2276,621 @@ router.get("/model-payments", verifyToken, async (req, res) => {
   }
 });
 
-// POST Add payment
-// Note: Payments should only be created for tasks where eligible_for_payment = TRUE
-// This ensures fairness: if work is rejected and reassigned, only the successful annotator gets paid
+// POST Calculate/Create payment by role rules
 router.post("/payments", verifyToken, async (req, res) => {
   try {
     if (!isSuperAdmin(req)) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    const { user_id, amount, model_type, payment_method, status } = req.body;
+    const { user_id, model_type, payment_method } = req.body;
+    const userId = Number(user_id);
 
-    if (!user_id || !amount) {
-      return res.status(400).json({ error: "user_id and amount are required" });
+    if (!userId) {
+      return res.status(400).json({ error: "user_id is required" });
     }
 
     const connection = await pool.getConnection();
 
-    const [users] = await connection.execute(
-      "SELECT role FROM users WHERE id = ?",
-      [user_id]
-    );
+    const [users] = await connection.execute("SELECT id, role FROM users WHERE id = ?", [userId]);
 
     if (users.length === 0) {
       await connection.release();
       return res.status(404).json({ error: "User not found" });
     }
 
-    const userRole = users[0].role;
-    let imagesCompleted = 0;
-    let modelType = model_type || null;
+    const user = users[0];
+    const calculation = await calculatePaymentForUser(connection, user, model_type || null);
 
-    if (["annotator", "tester"].includes(userRole)) {
-      if (!modelType) {
-        await connection.release();
-        return res.status(400).json({ error: "model_type is required for annotator/tester payments" });
-      }
-
-      const modelSummary = await getModelSummary(connection, modelType);
-      if (!modelSummary.isComplete) {
-        await connection.release();
-        return res.status(400).json({
-          error: "Model is not completed for payment",
-          modelSummary,
-        });
-      }
-
-      imagesCompleted = await getApprovedImageCount(connection, modelType, userRole, user_id);
-      if (imagesCompleted === 0) {
-        await connection.release();
-        return res.status(400).json({ error: "No approved image sets for this user/model" });
-      }
+    if (calculation.error) {
+      await connection.release();
+      return res.status(400).json({
+        error: calculation.error,
+        modelSummary: calculation.modelSummary || null,
+      });
     }
 
-    const allowedStatuses = ["pending", "approved", "paid", "rejected"];
-    const paymentStatus = allowedStatuses.includes(status) ? status : "pending";
-    const approvedDate = paymentStatus === "approved" ? new Date() : null;
-    const paymentDate = paymentStatus === "paid" ? new Date() : null;
-    const approvedBy = paymentStatus === "approved" ? req.user.id : null;
-
     await connection.execute(
-      `INSERT INTO payments (user_id, amount, model_type, images_completed, payment_method, status, payment_date, approved_date, approved_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+      `INSERT INTO payments (
         user_id,
         amount,
-        modelType,
-        imagesCompleted,
+        model_type,
+        images_completed,
+        objects_count,
+        hours,
+        rate_used,
+        payment_method,
+        status,
+        payment_date,
+        approved_date,
+        approved_by
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        Number(calculation.amount.toFixed(2)),
+        calculation.modelType,
+        calculation.imageSets || 0,
+        calculation.paymentType === "per_object" ? calculation.basisCount : 0,
+        calculation.paymentType === "per_hour" ? calculation.basisCount : 0,
+        Number(calculation.rateUsed.toFixed(2)),
         payment_method || "bank",
-        paymentStatus,
-        paymentDate,
-        approvedDate,
-        approvedBy,
+        PAYMENT_STATUS.PENDING_APPROVAL,
+        null,
+        null,
+        null,
       ]
     );
 
     await connection.release();
 
     res.status(201).json({
-      message: "Payment added successfully",
-      imagesCompleted,
-      status: paymentStatus,
+      message: "Payment calculated and submitted for approval",
+      calculation,
+      status: PAYMENT_STATUS.PENDING_APPROVAL,
     });
   } catch (err) {
     console.error("Add payment error:", err);
     res.status(500).json({ error: "Failed to add payment" });
+  }
+});
+
+// POST Create Admin Payment (Super Admin)
+// Super Admin creates a payment for an admin based on minutes worked
+router.post("/admin-payments", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { admin_id, pay_minutes, source_payment_method_id } = req.body;
+    const adminId = Number(admin_id);
+
+    if (!adminId) {
+      return res.status(400).json({ error: "admin_id is required" });
+    }
+
+    if (!pay_minutes) {
+      return res.status(400).json({ error: "pay_minutes is required" });
+    }
+
+    if (!source_payment_method_id) {
+      return res.status(400).json({ error: "Select Super Admin source payment account" });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      // Verify admin exists
+      const [adminUsers] = await connection.execute(
+        "SELECT id, name, role FROM users WHERE id = ?",
+        [adminId]
+      );
+
+      if (adminUsers.length === 0) {
+        return res.status(404).json({ error: "Admin user not found" });
+      }
+
+      if (adminUsers[0].role !== "admin") {
+        return res.status(400).json({ error: "Selected user is not an admin" });
+      }
+
+      // Validate and calculate payment
+      const calculation = await validateAndCalculateAdminPayment(connection, adminId, pay_minutes);
+
+      if (calculation.error) {
+        return res.status(400).json({
+          error: calculation.error,
+          eligibility: calculation.eligibility || null,
+        });
+      }
+
+      // Verify Super Admin owns the source payment method
+      const [sourceMethods] = await connection.execute(
+        "SELECT id, user_id FROM payment_methods WHERE id = ?",
+        [source_payment_method_id]
+      );
+
+      if (sourceMethods.length === 0) {
+        return res.status(404).json({ error: "Source payment method not found" });
+      }
+
+      if (sourceMethods[0].user_id !== req.user.id) {
+        return res.status(403).json({ error: "Source account does not belong to you" });
+      }
+
+      // Create payment record
+      const [result] = await connection.execute(
+        `INSERT INTO payments (
+          user_id,
+          amount,
+          status,
+          hours,
+          paid_minutes,
+          minute_rate,
+          rate_used,
+          payment_method_id,
+          approved_by,
+          created_at,
+          approved_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+        [
+          adminId,
+          calculation.paymentAmount,
+          PAYMENT_STATUS.PENDING_APPROVAL,
+          Number((calculation.payMinutes / 60).toFixed(2)),
+          calculation.payMinutes,
+          calculation.minuteRate,
+          calculation.eligibility.hourlyRate,
+          source_payment_method_id,
+          null,
+          null,
+        ]
+      );
+
+      res.status(201).json({
+        message: "Admin payment created and submitted for approval",
+        paymentId: result.insertId,
+        payment: {
+          id: result.insertId,
+          adminId,
+          paidMinutes: calculation.payMinutes,
+          paymentAmount: calculation.paymentAmount,
+          minuteRate: calculation.minuteRate,
+          hourlyRate: calculation.eligibility.hourlyRate,
+          status: PAYMENT_STATUS.PENDING_APPROVAL,
+          eligibility: calculation.eligibility,
+        },
+      });
+    } finally {
+      await connection.release();
+    }
+  } catch (err) {
+    console.error("Create admin payment error:", err);
+    res.status(500).json({ error: "Failed to create admin payment" });
+  }
+});
+
+// GET Admin Payment Eligibility (Super Admin)
+// Get payment eligibility info for an admin before creating payment
+router.get("/admin-payments/eligibility/:admin_id", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const adminId = Number(req.params.admin_id);
+    if (!adminId) {
+      return res.status(400).json({ error: "admin_id is required" });
+    }
+
+    const connection = await pool.getConnection();
+    let eligibility;
+    try {
+      eligibility = await calculateAdminPaymentEligibility(connection, adminId);
+    } finally {
+      await connection.release();
+    }
+
+    if (eligibility.error) {
+      return res.status(400).json({ error: eligibility.error });
+    }
+
+    res.json(eligibility);
+  } catch (err) {
+    console.error("Get admin payment eligibility error:", err);
+    res.status(500).json({ error: "Failed to fetch payment eligibility" });
+  }
+});
+
+// POST Pay approved payment (Super Admin)
+router.post("/payments/:id/pay", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { id } = req.params;
+    const { payment_method_id, source_payment_method_id, payment_method, card } = req.body;
+    const sourceMethodId = Number(source_payment_method_id);
+    if (!sourceMethodId) {
+      return res.status(400).json({ error: "Select Super Admin source account" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [sourceRows] = await connection.execute(
+      `SELECT id, card_type, card_holder_name, account_name, bank_name, branch_name, masked_card_number
+       FROM payment_methods
+       WHERE id = ? AND user_id = ? LIMIT 1`,
+      [sourceMethodId, req.user.id]
+    );
+    if (!sourceRows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Super Admin source account not found" });
+    }
+    const sourceMethod = sourceRows[0];
+
+    const [rows] = await connection.execute(
+      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, u.name, u.role
+       FROM payments p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Payment not found" });
+    }
+
+    const payment = rows[0];
+    if (![PAYMENT_STATUS.APPROVED, PAYMENT_STATUS.READY_TO_PAY].includes(payment.status)) {
+      await connection.release();
+      return res.status(400).json({ error: "Only approved or ready-to-pay payments can be paid" });
+    }
+
+    let destinationMethod = payment_method || "bank";
+    let methodId = payment_method_id ? Number(payment_method_id) : null;
+
+    if (methodId) {
+      const [methodRows] = await connection.execute(
+        `SELECT id, card_type, card_holder_name, account_name, bank_name, branch_name, masked_card_number
+         FROM payment_methods
+         WHERE id = ? AND user_id = ? LIMIT 1`,
+        [methodId, payment.user_id]
+      );
+      if (!methodRows.length) {
+        await connection.release();
+        return res.status(404).json({ error: "Payment method not found for user" });
+      }
+      const method = methodRows[0];
+      destinationMethod = formatPaymentMethodLabel(method);
+    } else if (card && card.card_holder_name) {
+      const masked = card.masked_card_number || maskCardNumber(card.card_number || "");
+      if (!masked) {
+        await connection.release();
+        return res.status(400).json({ error: "Valid card number (or masked card number) is required" });
+      }
+
+      await connection.execute(
+        `INSERT INTO payment_methods
+          (user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          card_holder_name = VALUES(card_holder_name),
+          account_name = VALUES(account_name),
+          bank_name = VALUES(bank_name),
+          branch_name = VALUES(branch_name),
+          card_type = VALUES(card_type),
+          expiry_month = VALUES(expiry_month),
+          expiry_year = VALUES(expiry_year),
+          updated_at = CURRENT_TIMESTAMP`,
+        [
+          payment.user_id,
+          card.card_holder_name,
+          card.account_name || card.card_holder_name,
+          card.bank_name || null,
+          card.branch_name || null,
+          masked,
+          card.card_type || "card",
+          Number(card.expiry_month || 0),
+          Number(card.expiry_year || 0),
+          Number(card.is_default ? 1 : 0),
+        ]
+      );
+
+      if (card.is_default) {
+        await connection.execute(
+          "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND masked_card_number <> ?",
+          [payment.user_id, masked]
+        );
+      }
+
+      destinationMethod = formatPaymentMethodLabel({
+        card_type: card.card_type || "Card",
+        card_holder_name: card.card_holder_name,
+        account_name: card.account_name || card.card_holder_name,
+        bank_name: card.bank_name || null,
+        branch_name: card.branch_name || null,
+        masked_card_number: masked,
+      });
+    }
+
+    const sourceLabel = formatPaymentMethodLabel(sourceMethod);
+    const resolvedMethod = `From ${sourceLabel} -> To ${destinationMethod}`;
+
+    await connection.execute(
+      `UPDATE payments
+       SET status = ?, payment_method = ?, payment_date = NOW(), approved_by = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [PAYMENT_STATUS.PAID, resolvedMethod, req.user.id, id]
+    );
+
+    await connection.release();
+    res.json({
+      message: "Payment marked as paid",
+      payment: {
+        id: payment.id,
+        user_name: payment.name,
+        role: payment.role,
+        model_type: payment.model_type,
+        amount: Number(payment.amount || 0),
+        status: PAYMENT_STATUS.PAID,
+        payment_method: resolvedMethod,
+        source_account: sourceLabel,
+        destination_account: destinationMethod,
+      },
+    });
+  } catch (err) {
+    console.error("Pay now error:", err);
+    res.status(500).json({ error: "Failed to process payment" });
+  }
+});
+
+// GET payment methods (super admin: any user, others: own only)
+router.get("/payment-methods", verifyToken, async (req, res) => {
+  try {
+    const requesterId = Number(req.user?.id);
+    if (!requesterId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const requestedUserId = req.query.user_id ? Number(req.query.user_id) : null;
+    const userId = isSuperAdmin(req)
+      ? requestedUserId
+      : requestedUserId && requestedUserId !== requesterId
+      ? null
+      : requesterId;
+
+    if (!isSuperAdmin(req) && requestedUserId && requestedUserId !== requesterId) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [rows] = userId
+      ? await connection.execute(
+          `SELECT id, user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+           FROM payment_methods
+           WHERE user_id = ?
+           ORDER BY is_default DESC, updated_at DESC`,
+          [userId]
+        )
+      : await connection.execute(
+          `SELECT id, user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+           FROM payment_methods
+           ORDER BY is_default DESC, updated_at DESC`
+        );
+
+    await connection.release();
+    res.json(rows);
+  } catch (err) {
+    console.error("Get payment methods error:", err);
+    res.status(500).json({ error: "Failed to fetch payment methods" });
+  }
+});
+
+// POST add payment method (super admin: any user, others: own only)
+router.post("/payment-methods", verifyToken, async (req, res) => {
+  try {
+    const requesterId = Number(req.user?.id);
+    if (!requesterId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const {
+      user_id,
+      card_holder_name,
+      account_name,
+      bank_name,
+      branch_name,
+      masked_account_number,
+      account_number,
+      masked_card_number,
+      card_number,
+      card_type,
+      expiry_month,
+      expiry_year,
+      is_default,
+    } = req.body;
+
+    const userId = isSuperAdmin(req) ? Number(user_id) : requesterId;
+    if (!isSuperAdmin(req) && user_id && Number(user_id) !== requesterId) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const resolvedAccountName = account_name || card_holder_name;
+    const resolvedBankName = bank_name || null;
+    const resolvedBranchName = branch_name || null;
+    const resolvedType = card_type || (resolvedBankName ? "Bank Account" : null);
+    const resolvedMasked =
+      masked_account_number ||
+      masked_card_number ||
+      buildMaskedAccountNumber(account_number || "") ||
+      maskCardNumber(card_number || "");
+
+    if (!userId || !resolvedAccountName || !resolvedType || !resolvedMasked) {
+      return res.status(400).json({ error: "name, account/card number and payment type are required" });
+    }
+
+    if ((resolvedBankName && !resolvedBranchName) || (!resolvedBankName && resolvedBranchName)) {
+      return res.status(400).json({ error: "bank_name and branch_name should be provided together" });
+    }
+
+    const connection = await pool.getConnection();
+    await connection.execute(
+      `INSERT INTO payment_methods
+        (user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        card_holder_name || resolvedAccountName,
+        resolvedAccountName,
+        resolvedBankName,
+        resolvedBranchName,
+        resolvedMasked,
+        resolvedType,
+        Number(expiry_month || 1),
+        Number(expiry_year || new Date().getFullYear()),
+        Number(is_default ? 1 : 0),
+      ]
+    );
+
+    if (is_default) {
+      await connection.execute(
+        "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND masked_card_number <> ?",
+        [userId, resolvedMasked]
+      );
+    }
+
+    await connection.release();
+    res.status(201).json({ message: "Payment method saved", masked_card_number: resolvedMasked });
+  } catch (err) {
+    console.error("Add payment method error:", err);
+    res.status(500).json({ error: "Failed to save payment method" });
+  }
+});
+
+// PUT update payment method (super admin or method owner)
+router.put("/payment-methods/:id", verifyToken, async (req, res) => {
+  try {
+    const requesterId = Number(req.user?.id);
+    if (!requesterId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { id } = req.params;
+    const {
+      account_name,
+      card_holder_name,
+      bank_name,
+      branch_name,
+      account_number,
+      masked_account_number,
+      card_number,
+      masked_card_number,
+      card_type,
+      expiry_month,
+      expiry_year,
+      is_default,
+    } = req.body;
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      "SELECT id, user_id, masked_card_number FROM payment_methods WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Payment method not found" });
+    }
+
+    const userId = Number(rows[0].user_id);
+    if (!isSuperAdmin(req) && userId !== requesterId) {
+      await connection.release();
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const resolvedMasked =
+      masked_account_number ||
+      masked_card_number ||
+      buildMaskedAccountNumber(account_number || "") ||
+      maskCardNumber(card_number || "") ||
+      rows[0].masked_card_number;
+
+    await connection.execute(
+      `UPDATE payment_methods
+       SET card_holder_name = COALESCE(?, card_holder_name),
+           account_name = COALESCE(?, account_name),
+           bank_name = ?,
+           branch_name = ?,
+           masked_card_number = ?,
+           card_type = COALESCE(?, card_type),
+           expiry_month = COALESCE(?, expiry_month),
+           expiry_year = COALESCE(?, expiry_year),
+           is_default = COALESCE(?, is_default),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        card_holder_name || account_name || null,
+        account_name || card_holder_name || null,
+        bank_name || null,
+        branch_name || null,
+        resolvedMasked,
+        card_type || null,
+        expiry_month ? Number(expiry_month) : null,
+        expiry_year ? Number(expiry_year) : null,
+        is_default === undefined ? null : Number(!!is_default),
+        id,
+      ]
+    );
+
+    if (is_default) {
+      await connection.execute("UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND id <> ?", [userId, id]);
+      await connection.execute("UPDATE payment_methods SET is_default = 1 WHERE id = ?", [id]);
+    }
+
+    await connection.release();
+    res.json({ message: "Payment method updated" });
+  } catch (err) {
+    console.error("Update payment method error:", err);
+    res.status(500).json({ error: "Failed to update payment method" });
+  }
+});
+
+// PUT set default payment method (super admin or method owner)
+router.put("/payment-methods/:id/default", verifyToken, async (req, res) => {
+  try {
+    const requesterId = Number(req.user?.id);
+    if (!requesterId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { id } = req.params;
+    const connection = await pool.getConnection();
+
+    const [rows] = await connection.execute(
+      "SELECT id, user_id FROM payment_methods WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Payment method not found" });
+    }
+
+    const userId = rows[0].user_id;
+    if (!isSuperAdmin(req) && Number(userId) !== requesterId) {
+      await connection.release();
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await connection.execute("UPDATE payment_methods SET is_default = 0 WHERE user_id = ?", [userId]);
+    await connection.execute("UPDATE payment_methods SET is_default = 1 WHERE id = ?", [id]);
+
+    await connection.release();
+    res.json({ message: "Default payment method updated" });
+  } catch (err) {
+    console.error("Set default payment method error:", err);
+    res.status(500).json({ error: "Failed to update default payment method" });
   }
 });
 
@@ -1976,6 +2901,7 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
   try {
     const adminId = req.user?.id;
     const { date, hours_worked, task_description } = req.body;
+    const parsedHoursWorked = parseHoursWorkedInput(hours_worked);
 
     if (!adminId) {
       return res.status(401).json({ error: "Admin not authenticated" });
@@ -1993,12 +2919,12 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
       return res.status(403).json({ error: "Only admins can log work hours" });
     }
 
-    if (!date || !hours_worked) {
+    if (!date || parsedHoursWorked === null) {
       await connection.release();
-      return res.status(400).json({ error: "Date and hours worked are required" });
+      return res.status(400).json({ error: "Date and worked time are required (e.g. 8, 8.5, or 8:30)" });
     }
 
-    if (hours_worked < 0 || hours_worked > 24) {
+    if (parsedHoursWorked < 0 || parsedHoursWorked > 24) {
       await connection.release();
       return res.status(400).json({ error: "Hours worked must be between 0 and 24" });
     }
@@ -2013,13 +2939,13 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
       // Update existing manual entry
       await connection.execute(
         "UPDATE work_hours SET hours_worked = ?, task_description = ?, updated_at = NOW() WHERE id = ?",
-        [hours_worked, task_description || null, existing[0].id]
+        [Number(parsedHoursWorked.toFixed(2)), task_description || null, existing[0].id]
       );
     } else {
       // Insert new manual entry
       await connection.execute(
         "INSERT INTO work_hours (admin_id, date, hours_worked, task_description, is_auto_tracked) VALUES (?, ?, ?, ?, FALSE)",
-        [adminId, date, hours_worked, task_description || null]
+        [adminId, date, Number(parsedHoursWorked.toFixed(2)), task_description || null]
       );
     }
 
@@ -2122,17 +3048,19 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         wh.admin_id,
         u.name as admin_name,
         u.email as admin_email,
-        u.hourly_rate,
+        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
         wh.date,
         wh.hours_worked,
         wh.task_description,
         wh.status,
         wh.created_at,
         approver.name as approved_by_name,
-        (wh.hours_worked * u.hourly_rate) as calculated_payment
+        (wh.hours_worked * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)) as calculated_payment
       FROM work_hours wh
       JOIN users u ON wh.admin_id = u.id
       LEFT JOIN users approver ON wh.approved_by = approver.id
+      LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
+      LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
       WHERE 1=1
     `;
     const params = [];
@@ -2167,14 +3095,16 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         u.id,
         u.name,
         u.email,
-        u.hourly_rate,
+        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
         COALESCE(SUM(wh.hours_worked), 0) as total_hours,
         COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked ELSE 0 END), 0) as approved_hours,
-        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked * u.hourly_rate ELSE 0 END), 0) as total_payment_due
+        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) ELSE 0 END), 0) as total_payment_due
       FROM users u
       LEFT JOIN work_hours wh ON u.id = wh.admin_id
+      LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
+      LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
       WHERE u.role = 'admin'
-      GROUP BY u.id, u.name, u.email, u.hourly_rate
+      GROUP BY u.id, u.name, u.email, COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)
       ORDER BY total_hours DESC`
     );
 
@@ -2468,6 +3398,14 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, payment_date, approved_date } = req.body;
+    const approverId = Number(req.user?.id || req.user?.userId || 0) || null;
+
+    const toMySqlDateTime = (value) => {
+      if (!value) return null;
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) return null;
+      return date.toISOString().slice(0, 19).replace("T", " ");
+    };
 
     if (!isSuperAdmin(req)) {
       return res.status(403).json({ error: "Not authorized" });
@@ -2486,48 +3424,73 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
     }
 
     const currentStatus = existing[0].status;
-    if (status) {
-      if (status === "approved" && currentStatus !== "pending") {
+    const nextStatus = status || null;
+
+    if (nextStatus && !PAYMENT_STATUSES.includes(nextStatus)) {
+      await connection.release();
+      return res.status(400).json({ error: "Invalid payment status" });
+    }
+
+    const validTransitions = {
+      [PAYMENT_STATUS.PENDING_CALCULATION]: [PAYMENT_STATUS.PENDING_APPROVAL, PAYMENT_STATUS.APPROVED, PAYMENT_STATUS.REJECTED],
+      [PAYMENT_STATUS.PENDING_APPROVAL]: [PAYMENT_STATUS.APPROVED, PAYMENT_STATUS.REJECTED],
+      [PAYMENT_STATUS.APPROVED]: [PAYMENT_STATUS.READY_TO_PAY, PAYMENT_STATUS.PAID, PAYMENT_STATUS.REJECTED],
+      [PAYMENT_STATUS.READY_TO_PAY]: [PAYMENT_STATUS.PAID, PAYMENT_STATUS.REJECTED],
+      [PAYMENT_STATUS.REJECTED]: [PAYMENT_STATUS.PENDING_APPROVAL],
+      pending: [PAYMENT_STATUS.PENDING_APPROVAL, PAYMENT_STATUS.APPROVED, PAYMENT_STATUS.REJECTED],
+      [PAYMENT_STATUS.PAID]: [],
+    };
+
+    if (nextStatus) {
+      const allowed = validTransitions[currentStatus] || [];
+      if (!allowed.includes(nextStatus)) {
         await connection.release();
-        return res.status(400).json({ error: "Only pending payments can be approved" });
-      }
-      if (status === "paid" && currentStatus !== "approved") {
-        await connection.release();
-        return res.status(400).json({ error: "Only approved payments can be paid" });
-      }
-      if (status === "rejected" && currentStatus !== "pending") {
-        await connection.release();
-        return res.status(400).json({ error: "Only pending payments can be rejected" });
+        return res.status(400).json({
+          error: `Invalid transition from ${currentStatus} to ${nextStatus}`,
+        });
       }
     }
 
     const updates = [];
     const values = [];
 
-    if (status) {
+    if (nextStatus) {
       updates.push("status = ?");
-      values.push(status);
+      values.push(nextStatus);
     }
-    if (payment_date && status === "paid") {
+    if (payment_date && nextStatus === PAYMENT_STATUS.PAID) {
+      const normalizedPaymentDate = toMySqlDateTime(payment_date);
+      if (!normalizedPaymentDate) {
+        await connection.release();
+        return res.status(400).json({ error: "Invalid payment_date format" });
+      }
       updates.push("payment_date = ?");
-      values.push(payment_date);
+      values.push(normalizedPaymentDate);
     }
-    if (approved_date && status === "approved") {
+    if (approved_date && nextStatus === PAYMENT_STATUS.APPROVED) {
+      const normalizedApprovedDate = toMySqlDateTime(approved_date);
+      if (!normalizedApprovedDate) {
+        await connection.release();
+        return res.status(400).json({ error: "Invalid approved_date format" });
+      }
       updates.push("approved_date = ?");
-      values.push(approved_date);
-      // Also store who approved it
-      updates.push("approved_by = ?");
-      values.push(req.user.id);
-    } else if (status === "approved") {
+      values.push(normalizedApprovedDate);
+      if (approverId) {
+        updates.push("approved_by = ?");
+        values.push(approverId);
+      }
+    } else if (nextStatus === PAYMENT_STATUS.APPROVED) {
       updates.push("approved_date = ?");
-      values.push(new Date());
-      updates.push("approved_by = ?");
-      values.push(req.user.id);
+      values.push(toMySqlDateTime(new Date()));
+      if (approverId) {
+        updates.push("approved_by = ?");
+        values.push(approverId);
+      }
     }
 
-    if (status === "paid" && !payment_date) {
+    if (nextStatus === PAYMENT_STATUS.PAID && !payment_date) {
       updates.push("payment_date = ?");
-      values.push(new Date());
+      values.push(toMySqlDateTime(new Date()));
     }
 
     if (updates.length === 0) {
@@ -2571,7 +3534,7 @@ router.delete("/admins/:id", verifyToken, async (req, res) => {
 // POST Add admin
 router.post("/admins", verifyToken, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, hourly_rate } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: "All fields required" });
@@ -2582,9 +3545,20 @@ router.post("/admins", verifyToken, async (req, res) => {
     const bcrypt = require("bcryptjs");
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    let resolvedHourlyRate = normalizeRateValue(hourly_rate);
+    if (resolvedHourlyRate === null) {
+      const [defaults] = await connection.execute(
+        `SELECT default_rate
+         FROM role_rates
+         WHERE role_name = 'admin' AND payment_type = 'per_hour'
+         LIMIT 1`
+      );
+      resolvedHourlyRate = Number(defaults?.[0]?.default_rate || 0);
+    }
+
     await connection.execute(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-      [name, email, hashedPassword, "admin"]
+      "INSERT INTO users (name, email, password, role, hourly_rate) VALUES (?, ?, ?, ?, ?)",
+      [name, email, hashedPassword, "admin", resolvedHourlyRate]
     );
 
     await connection.release();
@@ -3191,7 +4165,7 @@ if (feedback && annotatorId) {
           connection,
           annotatorId,
           'image_assigned_annotator',
-          `🎯 ${adminName} assigned "​${imageName}" to you for annotation | ACTION: Open Dashboard → Click image → Start annotating`,
+          `${adminName} assigned "${imageName}" to you for annotation | ACTION: Open Dashboard -> Click image -> Start annotating`,
           id
         );
         console.log(`Task created: ${taskId} for annotator ${annotatorId}`);
@@ -3205,26 +4179,40 @@ if (feedback && annotatorId) {
       try {
         const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         const [existingTesterTask] = await connection.execute(
-          `SELECT id FROM tasks WHERE image_id = ? AND user_id = ? AND task_type = 'testing' LIMIT 1`,
-          [id, testerId]
+          `SELECT id FROM tasks WHERE image_id = ? AND task_type = 'testing' LIMIT 1`,
+          [id]
         );
+        const imageName = currentImage.image_name || `Image #${id}`;
         if (existingTesterTask.length === 0) {
-          const imageName = currentImage.image_name || `Image #${id}`;
-
           await connection.execute(
             `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
              VALUES (?, ?, ?, ?, 'testing', 'pending_review', NOW())`,
             [taskId, id, testerId, adminId]
           );
-          // Create notification for tester
           await createNotification(
             connection,
             testerId,
             'image_assigned_tester',
-            `🔍 ${adminName} assigned "​${imageName}" to you for review/testing | ACTION: Open Dashboard → Click image → Approve or Reject`,
+            `${adminName} assigned "${imageName}" to you for review/testing | ACTION: Open Dashboard -> Click image -> Approve or Reject`,
             id
           );
           console.log(`Task created: ${taskId} for tester ${testerId}`);
+        } else {
+          // Task already exists from a previous cycle — reassign to the (possibly new) tester and reset status
+          await connection.execute(
+            `UPDATE tasks SET user_id = ?, assigned_by = ?, status = 'pending_review',
+             notes = NULL, assigned_date = NOW(), updated_at = NOW(), completed_date = NULL
+             WHERE id = ?`,
+            [testerId, adminId, existingTesterTask[0].id]
+          );
+          await createNotification(
+            connection,
+            testerId,
+            'image_assigned_tester',
+            `${adminName} assigned "${imageName}" to you for review/testing | ACTION: Open Dashboard -> Click image -> Approve or Reject`,
+            id
+          );
+          console.log(`Task reset to pending_review for tester ${testerId} (task id ${existingTesterTask[0].id})`);
         }
       } catch (taskErr) {
         console.error("Failed to create tester task:", taskErr);
@@ -3297,27 +4285,46 @@ router.get("/admin/payment-eligibility", verifyToken, async (req, res) => {
 // GET Admin Payments
 router.get("/admin/payments", verifyToken, async (req, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
     const connection = await pool.getConnection();
+
+    const [userRole] = await connection.execute(
+      `SELECT role FROM users WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+    if (!userRole.length || userRole[0].role !== "admin") {
+      await connection.release();
+      return res.status(403).json({ error: "Not authorized" });
+    }
 
     // Get total earned and hours for this admin
     const [payments] = await connection.execute(
       `SELECT 
               SUM(amount) as totalEarned,
               SUM(hours) as totalHours,
-              AVG(amount/hours) as perHourRate
+              AVG(CASE WHEN hours > 0 THEN amount / hours ELSE NULL END) as perHourRate
        FROM payments
-       WHERE user_id = (SELECT id FROM users WHERE email = ? LIMIT 1)`,
-      ["tharuka@gmail.com"] // In real app, get from token
+       WHERE user_id = ?`,
+      [userId]
     );
 
     // Get payment history
     const [history] = await connection.execute(
-      `SELECT date, description, type, amount, hours 
+      `SELECT
+         COALESCE(payment_date, created_at) as date,
+         CONCAT('Payment ', UPPER(COALESCE(status, 'pending'))) as description,
+         COALESCE(payment_method, 'bank') as type,
+         amount,
+         hours
        FROM payments
-       WHERE user_id = (SELECT id FROM users WHERE email = ? LIMIT 1)
-       ORDER BY date DESC
+       WHERE user_id = ?
+       ORDER BY COALESCE(payment_date, created_at) DESC
        LIMIT 20`,
-      ["tharuka@gmail.com"]
+      [userId]
     );
 
     await connection.release();
@@ -3805,7 +4812,10 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [paymentDue] = await connection.execute(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'pending'`,
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM payments
+       WHERE user_id = ?
+         AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay')`,
       [userId]
     );
 
@@ -4118,8 +5128,8 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
     const notificationType = status === 'approved' ? 'image_approved' : 'image_rejected';
 
     const notificationMessage = status === 'approved' 
-      ? `✅ ${testerName} approved "​${imageName}" | ACTION: Check your Dashboard for next steps` 
-      : `❌ ${testerName} rejected "​${imageName}" | ACTION: Review feedback and resubmit if needed`;
+      ? `${testerName} approved "${imageName}" | ACTION: Check your Dashboard for next steps` 
+      : `${testerName} rejected "${imageName}" | ACTION: Review feedback and resubmit if needed`;
 
     // Notify annotator about the review result
     if (annotatorId) {
@@ -4141,7 +5151,7 @@ router.put("/tester/tasks/:id/review", verifyToken, async (req, res) => {
         connection,
         admin.id,
         notificationType,
-        `📋 ${testerName} ${status} image: "​${imageName}" | Assigned by: ${admin.name} | ACTION: Check Dashboard for details`,
+        `${testerName} ${status} image: "${imageName}" | Assigned by: ${admin.name} | ACTION: Check Dashboard for details`,
         imageId
       );
     }
@@ -4166,7 +5176,10 @@ router.get("/tester/payments", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [paymentDue] = await connection.execute(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'pending'`,
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM payments
+       WHERE user_id = ?
+         AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay')`,
       [userId]
     );
 
@@ -4514,8 +5527,8 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
     });
 
     const notificationMessage = status === 'approved' 
-      ? `✅ ${melbourneName} approved "​${imageName}" for production | ACTION: Dataset is ready for use` 
-      : `❌ ${melbourneName} rejected "​${imageName}" | ACTION: Review feedback in Dashboard`;
+      ? `${melbourneName} approved "${imageName}" for production | ACTION: Dataset is ready for use` 
+      : `${melbourneName} rejected "${imageName}" | ACTION: Review feedback in Dashboard`;
 
     // Notify annotator
     if (annotatorId) {
@@ -4548,7 +5561,7 @@ router.put("/melbourne/datasets/:id/review", verifyToken, async (req, res) => {
         connection,
         admin.id,
         notificationType,
-        `📊 ${melbourneName} ${status} dataset: "​${imageName}" | ACTION: Check Dashboard for final status`,
+        `${melbourneName} ${status} dataset: "${imageName}" | ACTION: Check Dashboard for final status`,
         id
       );
     }
@@ -4774,4 +5787,280 @@ router.get("/detailed-annotations", verifyToken, async (req, res) => {
   }
 });
 
+
+// ==================== RATE MANAGEMENT APIs ====================
+
+const assertSuperAdmin = (req, res) => {
+  if (!isSuperAdmin(req)) {
+    res.status(403).json({ error: "Not authorized" });
+    return false;
+  }
+  return true;
+};
+
+const isValidPaymentType = (paymentType) => ["per_object", "per_hour"].includes(paymentType);
+
+const getUserRateContext = async (connection, userId, paymentType) => {
+  const [rows] = await connection.execute("SELECT id, role FROM users WHERE id = ? LIMIT 1", [userId]);
+  if (!rows.length) return { error: "User not found" };
+
+  const user = rows[0];
+  const expectedPaymentType = ROLE_PAYMENT_TYPE[user.role];
+  if (!expectedPaymentType) return { error: "Selected user role does not support custom rates" };
+  if (expectedPaymentType !== paymentType) {
+    return {
+      error: `Invalid payment type for ${user.role}. Expected ${expectedPaymentType}`,
+    };
+  }
+
+  return { user };
+};
+
+const upsertUserRateAndSync = async (connection, userId, paymentType, customRate) => {
+  const { user, error } = await getUserRateContext(connection, userId, paymentType);
+  if (error) return { error };
+
+  await connection.execute(
+    `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`,
+    [userId, paymentType, customRate]
+  );
+
+  await syncLegacyRateColumn(connection, userId, user.role, customRate);
+  return { user };
+};
+
+const deleteUserRateAndSync = async (connection, userId, paymentType) => {
+  const { user, error } = await getUserRateContext(connection, userId, paymentType);
+  if (error) return { error };
+
+  await connection.execute("DELETE FROM user_rates WHERE user_id = ? AND payment_type = ?", [userId, paymentType]);
+  await syncLegacyRateColumn(connection, userId, user.role, null);
+  return { user };
+};
+
+router.get("/role-rates", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const connection = await pool.getConnection();
+    const [rates] = await connection.execute(
+      `SELECT id, role_name, payment_type, default_rate, updated_at
+       FROM role_rates
+       ORDER BY FIELD(role_name, 'annotator', 'tester', 'admin'), payment_type`
+    );
+    await connection.release();
+    res.json(rates);
+  } catch (err) {
+    console.error("Get role rates error:", err);
+    res.status(500).json({ error: "Failed to fetch role rates" });
+  }
+});
+
+router.put("/role-rates/:id", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const { id } = req.params;
+    const { default_rate } = req.body;
+    const normalized = normalizeRateValue(default_rate);
+
+    if (normalized === null) {
+      return res.status(400).json({ error: "Valid default_rate is required" });
+    }
+
+    const connection = await pool.getConnection();
+    const [result] = await connection.execute(
+      "UPDATE role_rates SET default_rate = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [normalized, id]
+    );
+    await connection.release();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Role rate not found" });
+    }
+
+    res.json({ message: "Role rate updated successfully" });
+  } catch (err) {
+    console.error("Update role rate error:", err);
+    res.status(500).json({ error: "Failed to update role rate" });
+  }
+});
+
+router.get("/user-rates", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const connection = await pool.getConnection();
+    const [rates] = await connection.execute(
+      `SELECT 
+         ur.id,
+         ur.user_id,
+         u.name,
+         u.email,
+         u.role,
+         ur.payment_type,
+         ur.custom_rate,
+         ur.updated_at
+       FROM user_rates ur
+       JOIN users u ON ur.user_id = u.id
+       WHERE u.role IN ('annotator', 'tester', 'admin')
+       ORDER BY u.name, ur.payment_type`
+    );
+    await connection.release();
+    res.json(rates);
+  } catch (err) {
+    console.error("Get user rates error:", err);
+    res.status(500).json({ error: "Failed to fetch user rates" });
+  }
+});
+
+router.post("/user-rates", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const { user_id, payment_type, custom_rate } = req.body;
+    const userId = Number(user_id);
+    const normalized = normalizeRateValue(custom_rate);
+
+    if (!userId || !isValidPaymentType(payment_type) || normalized === null) {
+      return res.status(400).json({ error: "user_id, payment_type, and valid custom_rate are required" });
+    }
+
+    const connection = await pool.getConnection();
+    const result = await upsertUserRateAndSync(connection, userId, payment_type, normalized);
+    await connection.release();
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ message: "User rate saved successfully" });
+  } catch (err) {
+    console.error("Add user rate error:", err);
+    res.status(500).json({ error: "Failed to save user rate" });
+  }
+});
+
+router.put("/user-rates/by-user/:userId/:paymentType", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const userId = Number(req.params.userId);
+    const paymentType = req.params.paymentType;
+    const normalized = normalizeRateValue(req.body.custom_rate);
+
+    if (!userId || !isValidPaymentType(paymentType) || normalized === null) {
+      return res.status(400).json({ error: "Valid userId, paymentType, and custom_rate are required" });
+    }
+
+    const connection = await pool.getConnection();
+    const result = await upsertUserRateAndSync(connection, userId, paymentType, normalized);
+    await connection.release();
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ message: "User rate updated successfully" });
+  } catch (err) {
+    console.error("Update user rate by user error:", err);
+    res.status(500).json({ error: "Failed to update user rate" });
+  }
+});
+
+router.put("/user-rates/:id", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const { id } = req.params;
+    const normalized = normalizeRateValue(req.body.custom_rate);
+    if (normalized === null) {
+      return res.status(400).json({ error: "Valid custom_rate is required" });
+    }
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      "SELECT user_id, payment_type FROM user_rates WHERE id = ? LIMIT 1",
+      [id]
+    );
+
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "User rate not found" });
+    }
+
+    const row = rows[0];
+    const result = await upsertUserRateAndSync(connection, Number(row.user_id), row.payment_type, normalized);
+    await connection.release();
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ message: "User rate updated successfully" });
+  } catch (err) {
+    console.error("Update user rate error:", err);
+    res.status(500).json({ error: "Failed to update user rate" });
+  }
+});
+
+router.delete("/user-rates/by-user/:userId/:paymentType", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const userId = Number(req.params.userId);
+    const paymentType = req.params.paymentType;
+
+    if (!userId || !isValidPaymentType(paymentType)) {
+      return res.status(400).json({ error: "Valid userId and paymentType are required" });
+    }
+
+    const connection = await pool.getConnection();
+    const result = await deleteUserRateAndSync(connection, userId, paymentType);
+    await connection.release();
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ message: "User rate override deleted successfully" });
+  } catch (err) {
+    console.error("Delete user rate by user error:", err);
+    res.status(500).json({ error: "Failed to delete user rate" });
+  }
+});
+
+router.delete("/user-rates/:id", verifyToken, async (req, res) => {
+  if (!assertSuperAdmin(req, res)) return;
+
+  try {
+    const { id } = req.params;
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      "SELECT user_id, payment_type FROM user_rates WHERE id = ? LIMIT 1",
+      [id]
+    );
+
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "User rate not found" });
+    }
+
+    const row = rows[0];
+    const result = await deleteUserRateAndSync(connection, Number(row.user_id), row.payment_type);
+    await connection.release();
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ message: "User rate deleted successfully" });
+  } catch (err) {
+    console.error("Delete user rate error:", err);
+    res.status(500).json({ error: "Failed to delete user rate" });
+  }
+});
 module.exports = router;
+

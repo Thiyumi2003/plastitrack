@@ -4,6 +4,7 @@ import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
 export default function ManagePayments() {
+  const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
   const [paymentOverview, setPaymentOverview] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState(null);
   const [modelPayments, setModelPayments] = useState(null);
@@ -12,6 +13,13 @@ export default function ManagePayments() {
   const [expandedModels, setExpandedModels] = useState({});
   const [pendingPayments, setPendingPayments] = useState([]);
   const [expandedPayment, setExpandedPayment] = useState(null);
+  const [approvalDialog, setApprovalDialog] = useState({
+    isOpen: false,
+    payment: null,
+    status: "approved",
+    submitting: false,
+  });
+  const [approvalStatus, setApprovalStatus] = useState({ type: "", message: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
@@ -24,10 +32,26 @@ export default function ManagePayments() {
     userId: "",
     amount: "",
     paymentMethod: "bank",
+    payMinutes: "",
+    sourcePaymentMethodId: "",
   });
+  const [adminEligibility, setAdminEligibility] = useState(null);
+  const [adminEligibilityLoading, setAdminEligibilityLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [creating, setCreating] = useState(false);
+  const [methodForm, setMethodForm] = useState({
+    cardHolderName: currentUser?.name || "",
+    cardType: "Visa",
+    cardNumber: "",
+    cvv: "",
+    expiryMonth: "",
+    expiryYear: "",
+    isDefault: true,
+  });
+  const [methodStatus, setMethodStatus] = useState("");
+  const [savingMethod, setSavingMethod] = useState(false);
+  const [superAdminMethods, setSuperAdminMethods] = useState([]);
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -35,6 +59,7 @@ export default function ManagePayments() {
 
   useEffect(() => {
     fetchPaymentData();
+    fetchSuperAdminMethods();
   }, []);
 
   const fetchPaymentData = async () => {
@@ -74,13 +99,92 @@ export default function ManagePayments() {
       setAdminPaymentDetails(adminDetailsRes.data?.adminPayments || []);
 
       // Filter pending payments from history
-      const pending = historyRes.data?.history?.filter((p) => p.status === "pending") || [];
+      const pending =
+        historyRes.data?.history?.filter(
+          (p) => p.status === "pending_approval" || p.status === "pending_calculation"
+        ) || [];
       setPendingPayments(pending);
     } catch (err) {
       console.error("Fetch payment data error:", err);
       setError(err.response?.data?.error || "Failed to load payment data. Please try logging in again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSuperAdminMethods = async () => {
+    try {
+      if (!currentUser?.id) return;
+      const res = await axios.get("http://localhost:5000/api/dashboard/payment-methods", {
+        headers: getAuthHeader(),
+        params: { user_id: currentUser.id },
+      });
+      setSuperAdminMethods(res.data || []);
+    } catch (err) {
+      setMethodStatus(err.response?.data?.error || "Failed to load payment methods");
+    }
+  };
+
+  const savePaymentMethod = async (e) => {
+    e.preventDefault();
+    setMethodStatus("");
+
+    if (!methodForm.cardHolderName || !methodForm.cardNumber || !methodForm.expiryMonth || !methodForm.expiryYear) {
+      setMethodStatus("Card holder name, card number, expiry month and year are required");
+      return;
+    }
+
+    if (!/^\d{3,4}$/.test(String(methodForm.cvv || ""))) {
+      setMethodStatus("CVV must be 3 or 4 digits");
+      return;
+    }
+
+    try {
+      setSavingMethod(true);
+      await axios.post(
+        "http://localhost:5000/api/dashboard/payment-methods",
+        {
+          user_id: Number(currentUser.id),
+          card_holder_name: methodForm.cardHolderName,
+          card_number: methodForm.cardNumber,
+          card_type: methodForm.cardType,
+          expiry_month: Number(methodForm.expiryMonth),
+          expiry_year: Number(methodForm.expiryYear),
+          is_default: !!methodForm.isDefault,
+        },
+        { headers: getAuthHeader() }
+      );
+
+      setMethodStatus("Card saved successfully");
+      setMethodForm((prev) => ({
+        ...prev,
+        cardNumber: "",
+        cvv: "",
+        expiryMonth: "",
+        expiryYear: "",
+      }));
+      fetchSuperAdminMethods();
+      fetchPaymentData();
+    } catch (err) {
+      setMethodStatus(err.response?.data?.error || "Failed to save card");
+    } finally {
+      setSavingMethod(false);
+    }
+  };
+
+  const setDefaultMethod = async (methodId) => {
+    try {
+      setMethodStatus("");
+      await axios.put(
+        `http://localhost:5000/api/dashboard/payment-methods/${methodId}/default`,
+        {},
+        { headers: getAuthHeader() }
+      );
+      setMethodStatus("Default card updated");
+      fetchSuperAdminMethods();
+      fetchPaymentData();
+    } catch (err) {
+      setMethodStatus(err.response?.data?.error || "Failed to update default card");
     }
   };
 
@@ -118,6 +222,44 @@ export default function ManagePayments() {
     fetchEligibleUsers();
   }, [activeTab, createForm.modelType, createForm.role]);
 
+  useEffect(() => {
+    const fetchAdminEligibility = async () => {
+      if (activeTab !== "create" || createForm.role !== "admin" || !createForm.userId) {
+        setAdminEligibility(null);
+        setAdminEligibilityLoading(false);
+        return;
+      }
+
+      try {
+        setAdminEligibilityLoading(true);
+        const res = await axios.get(`http://localhost:5000/api/dashboard/admin-payments/eligibility/${createForm.userId}`, {
+          headers: getAuthHeader(),
+        });
+        setAdminEligibility(res.data);
+        setCreateForm((prev) => {
+          if (prev.role !== "admin") return prev;
+          const remaining = Number(res.data?.remainingMinutes || 0);
+          if (!prev.payMinutes) {
+            return { ...prev, payMinutes: remaining > 0 ? String(remaining) : "" };
+          }
+          const current = Number(prev.payMinutes || 0);
+          if (current > remaining && remaining >= 0) {
+            return { ...prev, payMinutes: String(remaining) };
+          }
+          return prev;
+        });
+      } catch (err) {
+        console.error("Fetch admin eligibility error:", err);
+        setAdminEligibility(null);
+        setCreateError(err.response?.data?.error || "Failed to load admin payment eligibility");
+      } finally {
+        setAdminEligibilityLoading(false);
+      }
+    };
+
+    fetchAdminEligibility();
+  }, [activeTab, createForm.role, createForm.userId]);
+
   const handleCreateChange = (field, value) => {
     setCreateError("");
     setCreateSuccess("");
@@ -129,8 +271,8 @@ export default function ManagePayments() {
     setCreateError("");
     setCreateSuccess("");
 
-    if (!createForm.userId || !createForm.amount) {
-      setCreateError("User and amount are required");
+    if (!createForm.userId) {
+      setCreateError("Select a user");
       return;
     }
 
@@ -141,22 +283,65 @@ export default function ManagePayments() {
 
     try {
       setCreating(true);
-      const payload = {
-        user_id: Number(createForm.userId),
-        amount: Number(createForm.amount),
-        payment_method: createForm.paymentMethod,
-      };
 
-      if (createForm.role !== "admin") {
-        payload.model_type = createForm.modelType;
+      if (createForm.role === "admin") {
+        const payMinutes = Number(createForm.payMinutes);
+
+        if (!Number.isInteger(payMinutes) || payMinutes <= 0) {
+          setCreateError("Enter valid pay minutes");
+          return;
+        }
+
+        if (!createForm.sourcePaymentMethodId) {
+          setCreateError("Select source payment account");
+          return;
+        }
+
+        if (!adminEligibility) {
+          setCreateError("Eligibility details not loaded yet");
+          return;
+        }
+
+        if (payMinutes > Number(adminEligibility.remainingMinutes || 0)) {
+          setCreateError(`Pay minutes cannot exceed remaining minutes (${adminEligibility.remainingMinutes})`);
+          return;
+        }
+
+        await axios.post(
+          "http://localhost:5000/api/dashboard/admin-payments",
+          {
+            admin_id: Number(createForm.userId),
+            pay_minutes: payMinutes,
+            source_payment_method_id: Number(createForm.sourcePaymentMethodId),
+          },
+          { headers: getAuthHeader() }
+        );
+
+        setCreateSuccess("Admin payment created and submitted for approval");
+      } else {
+        const payload = {
+          user_id: Number(createForm.userId),
+          payment_method: createForm.paymentMethod,
+          model_type: createForm.modelType,
+        };
+
+        await axios.post("http://localhost:5000/api/dashboard/payments", payload, {
+          headers: getAuthHeader(),
+        });
+
+        setCreateSuccess("Payment created and sent for approval");
       }
 
-      await axios.post("http://localhost:5000/api/dashboard/payments", payload, {
-        headers: getAuthHeader(),
+      setCreateForm({
+        role: "annotator",
+        modelType: "",
+        userId: "",
+        amount: "",
+        paymentMethod: "bank",
+        payMinutes: "",
+        sourcePaymentMethodId: "",
       });
-
-      setCreateSuccess("Payment created and sent for approval");
-      setCreateForm({ role: "annotator", modelType: "", userId: "", amount: "", paymentMethod: "bank" });
+      setAdminEligibility(null);
       fetchPaymentData();
     } catch (err) {
       setCreateError(err.response?.data?.error || "Failed to create payment");
@@ -165,27 +350,49 @@ export default function ManagePayments() {
     }
   };
 
-  const handlePaymentApproval = async (id, status) => {
-    const confirmMsg =
-      status === "approved"
-        ? "Approve this payment? This will allow the payment to be processed."
-        : "Reject this payment? The payment will not be processed.";
+  const openApprovalDialog = (payment, status) => {
+    setApprovalDialog({
+      isOpen: true,
+      payment,
+      status,
+      submitting: false,
+    });
+  };
 
-    if (!confirm(confirmMsg)) return;
+  const closeApprovalDialog = () => {
+    setApprovalDialog((prev) => {
+      if (prev.submitting) return prev;
+      return { isOpen: false, payment: null, status: "approved", submitting: false };
+    });
+  };
+
+  const handlePaymentApproval = async () => {
+    if (!approvalDialog.payment?.id) return;
+
+    const status = approvalDialog.status;
+    setApprovalDialog((prev) => ({ ...prev, submitting: true }));
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/payments/${id}`,
+        `http://localhost:5000/api/dashboard/payments/${approvalDialog.payment.id}`,
         {
           status,
           approved_date: status === "approved" ? new Date().toISOString() : null,
         },
         { headers: getAuthHeader() }
       );
-      alert(`Payment ${status} successfully`);
+      setApprovalStatus({
+        type: "success",
+        message: `Payment ${status === "approved" ? "approved" : "rejected"} successfully`,
+      });
+      setApprovalDialog({ isOpen: false, payment: null, status: "approved", submitting: false });
       fetchPaymentData();
     } catch (err) {
-      alert(err.response?.data?.error || "Failed to update payment");
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to update payment",
+      });
+      setApprovalDialog((prev) => ({ ...prev, submitting: false }));
     }
   };
 
@@ -200,10 +407,17 @@ export default function ManagePayments() {
       ? eligibleUsers?.testers || []
       : adminUsers || [];
   const selectedUser = availableUsers.find((user) => String(user.id) === String(createForm.userId));
-  const approvedCount = selectedUser?.approved_images || 0;
+  const approvedCount =
+    createForm.role === "annotator"
+      ? Number(selectedUser?.approved_objects || selectedUser?.approved_images || 0)
+      : Number(selectedUser?.reviewed_objects || selectedUser?.reviewed_images || 0);
 
   const getStatusLabel = (status) => {
     switch (status) {
+      case "pending_approval":
+        return "Pending Approval";
+      case "pending_calculation":
+        return "Pending Calculation";
       case "approved":
         return "Validated";
       case "rejected":
@@ -227,6 +441,28 @@ export default function ManagePayments() {
     return status;
   };
 
+  const formatMinutesAsHM = (minutesValue) => {
+    const totalMinutes = Math.max(0, Number(minutesValue || 0));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = Math.round(totalMinutes % 60);
+    return `${hours}h ${minutes}m`;
+  };
+
+  const formatHoursAsHM = (hoursValue) => {
+    const totalMinutes = Number(hoursValue || 0) * 60;
+    return formatMinutesAsHM(totalMinutes);
+  };
+
+  const getPaymentDisplayName = (payment) => {
+    return (
+      payment?.user_name ||
+      payment?.admin_name ||
+      payment?.name ||
+      payment?.email ||
+      "Unknown"
+    );
+  };
+
   return (
     <div className="dashboard-container">
       <Sidebar />
@@ -236,6 +472,11 @@ export default function ManagePayments() {
         </div>
 
         {error && <div className="dashboard-error">{error}</div>}
+        {approvalStatus.message && (
+          <div className={approvalStatus.type === "success" ? "dashboard-success" : "dashboard-error"}>
+            {approvalStatus.message}
+          </div>
+        )}
 
         {/* Payment Overview Cards */}
         <div className="payment-cards-section">
@@ -306,6 +547,12 @@ export default function ManagePayments() {
               Create Payment
             </button>
             <button
+              className={`tab ${activeTab === "methods" ? "active" : ""}`}
+              onClick={() => setActiveTab("methods")}
+            >
+              Payment Methods
+            </button>
+            <button
               className={`tab ${activeTab === "history" ? "active" : ""}`}
               onClick={() => setActiveTab("history")}
             >
@@ -373,7 +620,7 @@ export default function ManagePayments() {
                   pendingPayments.map((payment) => (
                     <>
                       <tr key={payment.id}>
-                        <td><strong>{payment.admin_name || "Unknown"}</strong></td>
+                        <td><strong>{getPaymentDisplayName(payment)}</strong></td>
                         <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
                         <td>{payment.model_type}</td>
                         <td>{payment.images_completed || 0}</td>
@@ -383,7 +630,7 @@ export default function ManagePayments() {
                           <div style={{ display: "flex", gap: "5px" }}>
                             <button
                               className="btn-approve"
-                              onClick={() => handlePaymentApproval(payment.id, "approved")}
+                              onClick={() => openApprovalDialog(payment, "approved")}
                               style={{
                                 padding: "6px 12px",
                                 backgroundColor: "#10b981",
@@ -398,7 +645,7 @@ export default function ManagePayments() {
                             </button>
                             <button
                               className="btn-reject"
-                              onClick={() => handlePaymentApproval(payment.id, "rejected")}
+                              onClick={() => openApprovalDialog(payment, "rejected")}
                               style={{
                                 padding: "6px 12px",
                                 backgroundColor: "#ef4444",
@@ -530,7 +777,9 @@ export default function ManagePayments() {
 
             {modelPaymentDetails.map((model) => {
               const isExpanded = expandedModels[model.modelType] ?? true;
-              const completionText = `${model.finalizedImages}/${model.totalImages} ImageSets Completed`;
+              const completedSets = Number(model.completedImageSets || model.finalizedImages || 0);
+              const totalSets = Number(model.totalImageSets || model.totalImages || 0);
+              const completionText = `${completedSets}/${totalSets} ImageSets Completed`;
               const badgeText = model.isComplete ? "Ready for Payment" : "In Progress";
               return (
                 <div key={model.modelType} className="model-card">
@@ -617,7 +866,7 @@ export default function ManagePayments() {
                       adminPaymentDetails.map((payment) => (
                         <tr key={payment.id}>
                           <td>{payment.admin_name}</td>
-                          <td>{Number(payment.hours || 0).toFixed(2)}</td>
+                          <td>{formatHoursAsHM(payment.hours)}</td>
                           <td>₨ {Number(payment.amount || 0).toLocaleString()}</td>
                           <td>
                             <span className={`status-badge status-${payment.status}`}>
@@ -648,6 +897,9 @@ export default function ManagePayments() {
                     const role = e.target.value;
                     handleCreateChange("role", role);
                     handleCreateChange("userId", "");
+                    handleCreateChange("payMinutes", "");
+                    handleCreateChange("sourcePaymentMethodId", "");
+                    setAdminEligibility(null);
                     if (role === "admin") {
                       handleCreateChange("modelType", "");
                     }
@@ -672,7 +924,7 @@ export default function ManagePayments() {
                     <option value="">Select model</option>
                     {eligibleModels.map((model) => (
                       <option key={model.modelType} value={model.modelType}>
-                        {model.modelType} ({model.finalizedImages}/{model.totalImages} finalized)
+                        {model.modelType} ({Number(model.completedImageSets || model.finalizedImages || 0)}/{Number(model.totalImageSets || model.totalImages || 0)} finalized)
                       </option>
                     ))}
                   </select>
@@ -690,7 +942,13 @@ export default function ManagePayments() {
                 <label>User</label>
                 <select
                   value={createForm.userId}
-                  onChange={(e) => handleCreateChange("userId", e.target.value)}
+                  onChange={(e) => {
+                    handleCreateChange("userId", e.target.value);
+                    if (createForm.role === "admin") {
+                      handleCreateChange("payMinutes", "");
+                      handleCreateChange("sourcePaymentMethodId", "");
+                    }
+                  }}
                   disabled={createForm.role !== "admin" && !isModelComplete}
                 >
                   <option value="">Select user</option>
@@ -701,32 +959,108 @@ export default function ManagePayments() {
                   ))}
                 </select>
                 {createForm.role !== "admin" && selectedUser && (
-                  <div className="form-hint">Approved image sets: {approvedCount}</div>
+                  <div className="form-hint">
+                    {createForm.role === "annotator"
+                      ? `Approved objects: ${approvedCount}`
+                      : `Reviewed objects: ${approvedCount}`}
+                  </div>
+                )}
+                {createForm.role === "admin" && selectedUser && (
+                  <div className="form-hint">
+                    Hourly rate: Rs {Number(adminEligibility?.hourlyRate ?? selectedUser.hourly_rate || 0).toLocaleString()} per hour
+                  </div>
                 )}
               </div>
 
-              <div className="form-row">
-                <label>Amount</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={createForm.amount}
-                  onChange={(e) => handleCreateChange("amount", e.target.value)}
-                />
-              </div>
+              {createForm.role === "admin" && adminEligibilityLoading && (
+                <div className="form-row">
+                  <label>Admin Payment Summary</label>
+                  <div className="form-hint">Loading admin worked hours...</div>
+                </div>
+              )}
 
-              <div className="form-row">
-                <label>Payment Method</label>
-                <select
-                  value={createForm.paymentMethod}
-                  onChange={(e) => handleCreateChange("paymentMethod", e.target.value)}
-                >
-                  <option value="bank">Bank Transfer</option>
-                  <option value="cash">Cash</option>
-                  <option value="mobile">Mobile</option>
-                </select>
-              </div>
+              {createForm.role === "admin" && !adminEligibilityLoading && adminEligibility && (
+                <div className="form-row">
+                  <label>Admin Payment Summary</label>
+                  <div className="form-hint">
+                    Total worked: {formatMinutesAsHM(adminEligibility.totalWorkedMinutes)}
+                  </div>
+                  <div className="form-hint">
+                    Already paid: {formatMinutesAsHM(adminEligibility.alreadyPaidMinutes)}
+                  </div>
+                  <div className="form-hint">
+                    Remaining unpaid: {formatMinutesAsHM(adminEligibility.remainingMinutes)}
+                  </div>
+                  <div className="form-hint">
+                    Minute rate: Rs {Number(adminEligibility.minuteRate || 0).toFixed(4)}
+                  </div>
+                  {!adminEligibility.hourlyRateConfigured && (
+                    <div className="dashboard-error">Admin hourly rate is not configured in Rate Management.</div>
+                  )}
+                </div>
+              )}
+
+              {createForm.role === "admin" && (
+                <div className="form-row">
+                  <label>Pay Minutes</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={Number(adminEligibility?.remainingMinutes || 0) || undefined}
+                    value={createForm.payMinutes}
+                    onChange={(e) => handleCreateChange("payMinutes", e.target.value)}
+                    placeholder={
+                      adminEligibility
+                        ? `Max ${adminEligibility.remainingMinutes} minutes`
+                        : "Enter minutes"
+                    }
+                  />
+                  {createForm.payMinutes && adminEligibility && (
+                    <>
+                      <div className="form-hint">
+                        Pay Duration: {formatMinutesAsHM(createForm.payMinutes)}
+                      </div>
+                      <div className="form-hint">
+                        Payment Amount: Rs {(Number(createForm.payMinutes || 0) * Number(adminEligibility.minuteRate || 0)).toFixed(2)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {createForm.role === "admin" && (
+                <div className="form-row">
+                  <label>Source Card (Super Admin)</label>
+                  <select
+                    value={createForm.sourcePaymentMethodId}
+                    onChange={(e) => handleCreateChange("sourcePaymentMethodId", e.target.value)}
+                  >
+                    <option value="">Select your card</option>
+                    {superAdminMethods.map((method) => (
+                      <option key={method.id} value={method.id}>
+                        {method.card_type} {method.masked_card_number} {method.is_default ? "(Default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {!superAdminMethods.length && (
+                    <div className="form-hint">No cards found. Add one in Payment Methods tab.</div>
+                  )}
+                </div>
+              )}
+
+              {createForm.role !== "admin" && (
+                <div className="form-row">
+                  <label>Payment Method</label>
+                  <select
+                    value={createForm.paymentMethod}
+                    onChange={(e) => handleCreateChange("paymentMethod", e.target.value)}
+                  >
+                    <option value="bank">Bank Transfer</option>
+                    <option value="cash">Cash</option>
+                    <option value="mobile">Mobile</option>
+                  </select>
+                </div>
+              )}
 
               {createError && <div className="dashboard-error">{createError}</div>}
               {createSuccess && <div className="dashboard-success">{createSuccess}</div>}
@@ -735,6 +1069,140 @@ export default function ManagePayments() {
                 {creating ? "Creating..." : "Create Payment"}
               </button>
             </form>
+          </div>
+        )}
+
+        {activeTab === "methods" && (
+          <div className="table-container">
+            <h3>My Cards</h3>
+            <form onSubmit={savePaymentMethod} className="payment-create-form" style={{ marginBottom: 20 }}>
+              <div className="form-row">
+                <label>Card Holder Name</label>
+                <input
+                  value={methodForm.cardHolderName}
+                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardHolderName: e.target.value }))}
+                  placeholder="Card holder name"
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Card Type</label>
+                <select
+                  value={methodForm.cardType}
+                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardType: e.target.value }))}
+                >
+                  <option value="Visa">Visa</option>
+                  <option value="Mastercard">Mastercard</option>
+                  <option value="Amex">Amex</option>
+                </select>
+              </div>
+
+              <div className="form-row">
+                <label>Card Number</label>
+                <input
+                  value={methodForm.cardNumber}
+                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardNumber: e.target.value }))}
+                  placeholder="xxxx xxxx xxxx xxxx"
+                />
+              </div>
+
+              <div className="form-row">
+                <label>CVV</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength="4"
+                  value={methodForm.cvv}
+                  onChange={(e) =>
+                    setMethodForm((prev) => ({
+                      ...prev,
+                      cvv: e.target.value.replace(/\D/g, "").slice(0, 4),
+                    }))
+                  }
+                  placeholder="123"
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Expiry Month</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="12"
+                  value={methodForm.expiryMonth}
+                  onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryMonth: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-row">
+                <label>Expiry Year</label>
+                <input
+                  type="number"
+                  min={new Date().getFullYear()}
+                  value={methodForm.expiryYear}
+                  onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryYear: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-row">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={methodForm.isDefault}
+                    onChange={(e) => setMethodForm((prev) => ({ ...prev, isDefault: e.target.checked }))}
+                    style={{ marginRight: 8 }}
+                  />
+                  Set as default card
+                </label>
+              </div>
+
+              {methodStatus && (
+                <div className={methodStatus.toLowerCase().includes("success") || methodStatus.toLowerCase().includes("saved") || methodStatus.toLowerCase().includes("updated") ? "dashboard-success" : "dashboard-error"}>
+                  {methodStatus}
+                </div>
+              )}
+
+              <button className="btn-primary" type="submit" disabled={savingMethod}>
+                {savingMethod ? "Saving..." : "Add Card"}
+              </button>
+            </form>
+
+            <h3>Saved Cards</h3>
+            <table className="payments-table">
+              <thead>
+                <tr>
+                  <th>Card Holder</th>
+                  <th>Card Type</th>
+                  <th>Card Number</th>
+                  <th>Expiry</th>
+                  <th>Default</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {superAdminMethods.map((method) => (
+                  <tr key={method.id}>
+                    <td>{method.card_holder_name}</td>
+                    <td>{method.card_type}</td>
+                    <td>{method.masked_card_number}</td>
+                    <td>{String(method.expiry_month).padStart(2, "0")}/{String(method.expiry_year).slice(-2)}</td>
+                    <td>{method.is_default ? "Yes" : "No"}</td>
+                    <td>
+                      {!method.is_default && (
+                        <button className="btn-secondary" onClick={() => setDefaultMethod(method.id)}>
+                          Make Default
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!superAdminMethods.length && (
+                  <tr>
+                    <td colSpan="6" className="no-data">No cards saved yet</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
 
@@ -763,7 +1231,7 @@ export default function ManagePayments() {
               <table className="payments-table">
                 <thead>
                   <tr>
-                    <th>Admin Name</th>
+                    <th>User Name</th>
                     <th>Amount</th>
                     <th>Model Type</th>
                     <th>Images</th>
@@ -775,7 +1243,7 @@ export default function ManagePayments() {
                 <tbody>
                   {paymentHistory?.history?.map((payment) => (
                     <tr key={payment.id}>
-                      <td>{payment.admin_name || "Unknown"}</td>
+                      <td>{getPaymentDisplayName(payment)}</td>
                       <td>₨ {(payment.amount || 0).toLocaleString()}</td>
                       <td>{payment.model_type}</td>
                       <td>{payment.images_completed || 0}</td>
@@ -790,6 +1258,45 @@ export default function ManagePayments() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {approvalDialog.isOpen && (
+          <div className="payment-confirm-overlay" onClick={closeApprovalDialog}>
+            <div className="payment-confirm-modal" onClick={(e) => e.stopPropagation()}>
+              <h3>{approvalDialog.status === "approved" ? "Approve Payment" : "Reject Payment"}</h3>
+              <p>
+                {approvalDialog.status === "approved"
+                  ? "Confirm approval for this payment. It will move to the next processing step."
+                  : "Confirm rejection for this payment. This action marks the request as rejected."}
+              </p>
+
+              <div className="payment-confirm-meta">
+                <div><strong>User:</strong> {getPaymentDisplayName(approvalDialog.payment)}</div>
+                <div><strong>Amount:</strong> Rs {Number(approvalDialog.payment?.amount || 0).toLocaleString()}</div>
+                <div><strong>Model:</strong> {approvalDialog.payment?.model_type || "-"}</div>
+                <div><strong>Created:</strong> {approvalDialog.payment?.created_at ? new Date(approvalDialog.payment.created_at).toLocaleDateString() : "-"}</div>
+              </div>
+
+              <div className="payment-confirm-actions">
+                <button className="btn-secondary" type="button" onClick={closeApprovalDialog} disabled={approvalDialog.submitting}>
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  type="button"
+                  onClick={handlePaymentApproval}
+                  disabled={approvalDialog.submitting}
+                  style={approvalDialog.status === "rejected" ? { background: "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)" } : undefined}
+                >
+                  {approvalDialog.submitting
+                    ? "Please wait..."
+                    : approvalDialog.status === "approved"
+                    ? "Approve Payment"
+                    : "Reject Payment"}
+                </button>
+              </div>
             </div>
           </div>
         )}

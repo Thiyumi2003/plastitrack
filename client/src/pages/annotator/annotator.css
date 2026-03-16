@@ -61,6 +61,16 @@
   backdrop-filter: blur(20px);
 }
 
+.dashboard-success {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  color: #34d399;
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(20px);
+}
+
 .dashboard-loading {
   text-align: center;
   padding: 40px;
@@ -587,6 +597,24 @@
   border-radius: 8px;
   font-size: 0.9rem;
   transition: all 0.2s ease;
+}
+
+select.text-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: rgba(15, 23, 42, 0.82);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+select.text-input option {
+  background: #ffffff;
+  color: #111827;
+}
+
+select.text-input:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .text-input:focus {

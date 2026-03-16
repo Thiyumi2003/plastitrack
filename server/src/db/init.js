@@ -388,8 +388,11 @@ async function initDatabase() {
         amount DECIMAL(10, 2) NOT NULL,
         model_type VARCHAR(100),
         images_completed INT DEFAULT 0,
-        status ENUM('pending', 'approved', 'paid', 'rejected') DEFAULT 'pending',
+        status ENUM('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid', 'rejected') DEFAULT 'pending_calculation',
+        objects_count INT DEFAULT 0,
+        rate_used DECIMAL(10,2) DEFAULT 0,
         payment_method VARCHAR(100),
+        payment_method_id INT NULL,
         payment_date TIMESTAMP,
         approved_date TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -402,6 +405,32 @@ async function initDatabase() {
 
     await ensureColumn("payments", "hours", "DECIMAL(10,2) DEFAULT 0");
     await ensureColumn("payments", "approved_by", "INT DEFAULT NULL");
+    await ensureColumn("payments", "objects_count", "INT DEFAULT 0");
+    await ensureColumn("payments", "rate_used", "DECIMAL(10,2) DEFAULT 0");
+    await ensureColumn("payments", "payment_method_id", "INT NULL");
+    await ensureColumn("payments", "paid_minutes", "INT DEFAULT 0 COMMENT 'For admin payments: number of minutes paid'");
+    await ensureColumn("payments", "minute_rate", "DECIMAL(10,4) DEFAULT 0 COMMENT 'For admin payments: rate per minute'");
+
+    // Safe status migration: allow legacy + new values, remap data, then enforce final enum.
+    try {
+      await connection.query(
+        `ALTER TABLE payments MODIFY status ENUM('pending', 'pending_calculation', 'pending_approval', 'approved', 'ready', 'ready_to_pay', 'paid', 'rejected') DEFAULT 'pending_approval'`
+      );
+    } catch (err) {
+      console.warn("Payments status temporary enum update:", err.code || err.message);
+    }
+
+    await connection.query("UPDATE payments SET status = 'pending_approval' WHERE status = 'pending'");
+    await connection.query("UPDATE payments SET status = 'ready_to_pay' WHERE status = 'ready'");
+
+    try {
+      await connection.query(
+        `ALTER TABLE payments MODIFY status ENUM('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid', 'rejected') DEFAULT 'pending_calculation'`
+      );
+      console.log("✓ Payments status enum upgraded");
+    } catch (err) {
+      console.warn("Payments status enum final update:", err.code || err.message);
+    }
     
     // Add foreign key for approved_by if it doesn't exist
     try {
@@ -416,6 +445,51 @@ async function initDatabase() {
         console.log("✓ approved_by foreign key already exists");
       } else {
         console.warn("Could not add approved_by FK:", err.code);
+      }
+    }
+
+    // Create payment methods table (store masked payment identifiers only)
+    const createPaymentMethodsTableQuery = `
+      CREATE TABLE IF NOT EXISTS payment_methods (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        card_holder_name VARCHAR(255) NOT NULL,
+        account_name VARCHAR(255) NULL,
+        bank_name VARCHAR(120) NULL,
+        branch_name VARCHAR(120) NULL,
+        masked_card_number VARCHAR(25) NOT NULL,
+        card_type VARCHAR(50) NOT NULL,
+        expiry_month INT NOT NULL,
+        expiry_year INT NOT NULL,
+        is_default BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_user_masked_card (user_id, masked_card_number),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) COMMENT 'Stores payment methods with masked card numbers only'
+    `;
+    await connection.query(createPaymentMethodsTableQuery);
+    console.log("✓ Payment methods table created or already exists");
+
+    await ensureColumn("payment_methods", "account_name", "VARCHAR(255) NULL AFTER card_holder_name");
+    await ensureColumn("payment_methods", "bank_name", "VARCHAR(120) NULL AFTER account_name");
+    await ensureColumn("payment_methods", "branch_name", "VARCHAR(120) NULL AFTER bank_name");
+    await connection.query(
+      "UPDATE payment_methods SET account_name = card_holder_name WHERE (account_name IS NULL OR account_name = '')"
+    );
+
+    // Add FK from payments.payment_method_id to payment_methods.id if missing.
+    try {
+      await connection.query(`
+        ALTER TABLE payments
+        ADD CONSTRAINT fk_payments_payment_method
+        FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL
+      `);
+    } catch (err) {
+      if (err.code === "ER_DUP_KEYNAME" || err.code === "ER_FK_DUP_NAME") {
+        console.log("✓ payment_method_id foreign key already exists");
+      } else {
+        console.warn("Could not add payment_method_id FK:", err.code || err.message);
       }
     }
 
@@ -507,6 +581,35 @@ async function initDatabase() {
     await ensureColumn("users", "auto_track_hours", "BOOLEAN DEFAULT TRUE COMMENT 'Auto-track working hours for admins'");
     await ensureColumn("users", "is_active", "BOOLEAN DEFAULT TRUE COMMENT 'User account active status'");
 
+    // Create role-based default rates table
+    const createRoleRatesTableQuery = `
+      CREATE TABLE IF NOT EXISTS role_rates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        role_name ENUM('annotator', 'tester', 'admin') NOT NULL,
+        payment_type ENUM('per_object', 'per_hour') NOT NULL,
+        default_rate DECIMAL(10,2) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_role_payment (role_name, payment_type)
+      ) COMMENT 'Stores default payment rates by role'
+    `;
+    await connection.query(createRoleRatesTableQuery);
+    console.log("✓ Role rates table created or already exists");
+
+    // Create user-specific custom override rates table
+    const createUserRatesTableQuery = `
+      CREATE TABLE IF NOT EXISTS user_rates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        payment_type ENUM('per_object', 'per_hour') NOT NULL,
+        custom_rate DECIMAL(10,2) NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_user_payment (user_id, payment_type),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) COMMENT 'Stores user-level payment rate overrides'
+    `;
+    await connection.query(createUserRatesTableQuery);
+    console.log("✓ User rates table created or already exists");
+
     // Ensure sample users always exist (and keep superadmin credentials recoverable).
     const bcrypt = require("bcryptjs");
     const ensureSampleUser = async ({ name, email, password, role, forcePasswordReset = false }) => {
@@ -563,6 +666,52 @@ async function initDatabase() {
       password: "melbourne123",
       role: "melbourne_user",
     });
+
+    // Seed role defaults from existing legacy user rates where possible.
+    await connection.query(
+      `INSERT INTO role_rates (role_name, payment_type, default_rate)
+       VALUES
+         ('annotator', 'per_object', COALESCE((SELECT ROUND(AVG(annotator_rate), 2) FROM users WHERE role = 'annotator' AND annotator_rate IS NOT NULL), 0)),
+         ('tester', 'per_object', COALESCE((SELECT ROUND(AVG(tester_rate), 2) FROM users WHERE role = 'tester' AND tester_rate IS NOT NULL), 0)),
+         ('admin', 'per_hour', COALESCE((SELECT ROUND(AVG(hourly_rate), 2) FROM users WHERE role = 'admin' AND hourly_rate IS NOT NULL), 1000))
+       ON DUPLICATE KEY UPDATE default_rate = default_rate`
+    );
+    console.log("✓ Role rates seeded (first run only)");
+
+    // Backfill user override rates only when user-specific rate differs from role default.
+    await connection.query(
+      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+       SELECT u.id, 'per_object', u.annotator_rate
+       FROM users u
+       JOIN role_rates rr ON rr.role_name = 'annotator' AND rr.payment_type = 'per_object'
+       WHERE u.role = 'annotator'
+         AND u.annotator_rate IS NOT NULL
+         AND u.annotator_rate <> rr.default_rate
+       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
+    );
+
+    await connection.query(
+      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+       SELECT u.id, 'per_object', u.tester_rate
+       FROM users u
+       JOIN role_rates rr ON rr.role_name = 'tester' AND rr.payment_type = 'per_object'
+       WHERE u.role = 'tester'
+         AND u.tester_rate IS NOT NULL
+         AND u.tester_rate <> rr.default_rate
+       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
+    );
+
+    await connection.query(
+      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+       SELECT u.id, 'per_hour', u.hourly_rate
+       FROM users u
+       JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
+       WHERE u.role = 'admin'
+         AND u.hourly_rate IS NOT NULL
+         AND u.hourly_rate <> rr.default_rate
+       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
+    );
+    console.log("✓ User rate overrides backfilled from existing user records");
 
     // Backfill completed_date for existing completed tasks
     try {

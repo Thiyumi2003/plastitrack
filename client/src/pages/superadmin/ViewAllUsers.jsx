@@ -4,6 +4,24 @@ import { Edit2, Trash2, UserX, UserCheck } from "lucide-react";
 import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
+const getProfileSrc = (profilePicture) => {
+  if (!profilePicture) return null;
+  if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+    return profilePicture;
+  }
+  if (profilePicture.startsWith("/")) {
+    return `http://localhost:5000${profilePicture}`;
+  }
+  return `http://localhost:5000/${profilePicture}`;
+};
+
+const getAvatarText = (name) => {
+  if (!name) return "?";
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+};
+
 export default function ViewAllUsers() {
   const [users, setUsers] = useState([]);
   const [filteredUsers, setFilteredUsers] = useState([]);
@@ -188,7 +206,19 @@ export default function ViewAllUsers() {
               {filteredUsers.map((user) => (
                 <tr key={user.id}>
                   <td>
-                    <div className="user-avatar">{user.name?.charAt(0).toUpperCase()}</div>
+                    <div className="user-id-cell">
+                      <div className="user-id-avatar">
+                        {getProfileSrc(user.profile_picture) ? (
+                          <img
+                            src={getProfileSrc(user.profile_picture)}
+                            alt={user.name || "User"}
+                            className="user-id-avatar-img"
+                          />
+                        ) : (
+                          <span>{getAvatarText(user.name)}</span>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td>{user.name}</td>
                   <td>{user.email}</td>

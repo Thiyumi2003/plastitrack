@@ -4,12 +4,30 @@ import { Plus, Edit2, Trash2 } from "lucide-react";
 import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
+const getProfileSrc = (profilePicture) => {
+  if (!profilePicture) return null;
+  if (profilePicture.startsWith("http://") || profilePicture.startsWith("https://")) {
+    return profilePicture;
+  }
+  if (profilePicture.startsWith("/")) {
+    return `http://localhost:5000${profilePicture}`;
+  }
+  return `http://localhost:5000/${profilePicture}`;
+};
+
+const getAvatarText = (name) => {
+  if (!name) return "?";
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+};
+
 export default function ManageAdmins() {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ name: "", email: "", password: "" });
+  const [formData, setFormData] = useState({ name: "", email: "", password: "", hourly_rate: "" });
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -39,7 +57,7 @@ export default function ManageAdmins() {
       await axios.post("http://localhost:5000/api/dashboard/admins", formData, {
         headers: getAuthHeader(),
       });
-      setFormData({ name: "", email: "", password: "" });
+      setFormData({ name: "", email: "", password: "", hourly_rate: "" });
       setShowForm(false);
       fetchAdmins();
     } catch (err) {
@@ -105,6 +123,17 @@ export default function ManageAdmins() {
                   required
                 />
               </div>
+              <div className="form-group">
+                <label>Hourly Rate (LKR)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.hourly_rate}
+                  onChange={(e) => setFormData({ ...formData, hourly_rate: e.target.value })}
+                  placeholder="Leave empty to use default admin rate"
+                />
+              </div>
               <div className="form-actions">
                 <button type="submit" className="btn-primary">
                   Add Admin
@@ -125,7 +154,7 @@ export default function ManageAdmins() {
           <table className="admins-table">
             <thead>
               <tr>
-                <th>ID</th>
+                <th>Profile</th>
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
@@ -136,7 +165,21 @@ export default function ManageAdmins() {
             <tbody>
               {admins.map((admin) => (
                 <tr key={admin.id}>
-                  <td>#{admin.id}</td>
+                  <td>
+                    <div className="user-id-cell">
+                      <div className="user-id-avatar">
+                        {getProfileSrc(admin.profile_picture) ? (
+                          <img
+                            src={getProfileSrc(admin.profile_picture)}
+                            alt={admin.name || "Admin"}
+                            className="user-id-avatar-img"
+                          />
+                        ) : (
+                          <span>{getAvatarText(admin.name)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </td>
                   <td>{admin.name}</td>
                   <td>{admin.email}</td>
                   <td>

@@ -7,6 +7,7 @@ import OtpVerify from "./pages/OtpVerify";
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
 import ManageAdmins from "./pages/superadmin/ManageAdmins";
 import ViewAllUsers from "./pages/superadmin/ViewAllUsers";
+import ManageRates from "./pages/superadmin/ManageRates";
 import Reports from "./pages/superadmin/Reports";
 import ManagePayments from "./pages/superadmin/ManagePayments";
 import ManageAdminWorkHours from "./pages/superadmin/ManageAdminWorkHours";
@@ -102,6 +103,14 @@ export default function App() {
           element={
             <ProtectedRoute requiredRole="super_admin">
               <ViewAllUsers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/manage-rates"
+          element={
+            <ProtectedRoute requiredRole="super_admin">
+              <ManageRates />
             </ProtectedRoute>
           }
         />
