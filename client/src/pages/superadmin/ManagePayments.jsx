@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import Sidebar from "./Sidebar";
+import logo from "../../images/logo (2).png";
 import "./superadmin.css";
 
 export default function ManagePayments() {
@@ -12,11 +15,21 @@ export default function ManagePayments() {
   const [adminPaymentDetails, setAdminPaymentDetails] = useState([]);
   const [expandedModels, setExpandedModels] = useState({});
   const [pendingPayments, setPendingPayments] = useState([]);
+  const [readyPayments, setReadyPayments] = useState([]);
+  const [pendingWorkHours, setPendingWorkHours] = useState([]);
   const [expandedPayment, setExpandedPayment] = useState(null);
   const [approvalDialog, setApprovalDialog] = useState({
     isOpen: false,
     payment: null,
     status: "approved",
+    submitting: false,
+  });
+  const [payDialog, setPayDialog] = useState({
+    isOpen: false,
+    payment: null,
+    recipientMethods: [],
+    selectedRecipientMethodId: "",
+    loading: false,
     submitting: false,
   });
   const [approvalStatus, setApprovalStatus] = useState({ type: "", message: "" });
@@ -40,6 +53,9 @@ export default function ManagePayments() {
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [creating, setCreating] = useState(false);
+  const [autoGenerateResult, setAutoGenerateResult] = useState(null);
+  const [payingPaymentId, setPayingPaymentId] = useState(null);
+  const [downloadingReceiptId, setDownloadingReceiptId] = useState(null);
   const [methodForm, setMethodForm] = useState({
     cardHolderName: currentUser?.name || "",
     cardType: "Visa",
@@ -52,6 +68,7 @@ export default function ManagePayments() {
   const [methodStatus, setMethodStatus] = useState("");
   const [savingMethod, setSavingMethod] = useState(false);
   const [superAdminMethods, setSuperAdminMethods] = useState([]);
+  const [selectedMethodId, setSelectedMethodId] = useState(null);
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -60,7 +77,24 @@ export default function ManagePayments() {
   useEffect(() => {
     fetchPaymentData();
     fetchSuperAdminMethods();
+    fetchPendingWorkHours();
   }, []);
+
+  const fetchPendingWorkHours = async () => {
+    try {
+      const res = await axios.get(
+        "http://localhost:5000/api/dashboard/superadmin/work-hours",
+        {
+          headers: getAuthHeader(),
+          params: { status: "pending" },
+        }
+      );
+      setPendingWorkHours(res.data?.workHours || []);
+    } catch (err) {
+      console.error("Fetch pending work hours error:", err);
+      setPendingWorkHours([]);
+    }
+  };
 
   const fetchPaymentData = async () => {
     try {
@@ -103,7 +137,12 @@ export default function ManagePayments() {
         historyRes.data?.history?.filter(
           (p) => p.status === "pending_approval" || p.status === "pending_calculation"
         ) || [];
+      const ready =
+        historyRes.data?.history?.filter(
+          (p) => p.status === "approved" || p.status === "ready_to_pay"
+        ) || [];
       setPendingPayments(pending);
+      setReadyPayments(ready);
     } catch (err) {
       console.error("Fetch payment data error:", err);
       setError(err.response?.data?.error || "Failed to load payment data. Please try logging in again.");
@@ -119,7 +158,14 @@ export default function ManagePayments() {
         headers: getAuthHeader(),
         params: { user_id: currentUser.id },
       });
-      setSuperAdminMethods(res.data || []);
+      const methods = res.data || [];
+      setSuperAdminMethods(methods);
+      setSelectedMethodId((prev) => {
+        if (!methods.length) return null;
+        if (prev && methods.some((m) => Number(m.id) === Number(prev))) return prev;
+        const preferred = methods.find((m) => m.is_default) || methods[0];
+        return preferred?.id || null;
+      });
     } catch (err) {
       setMethodStatus(err.response?.data?.error || "Failed to load payment methods");
     }
@@ -350,6 +396,29 @@ export default function ManagePayments() {
     }
   };
 
+  const handleAutoGeneratePayments = async () => {
+    try {
+      setCreating(true);
+      setCreateError("");
+      setCreateSuccess("");
+
+      const res = await axios.post(
+        "http://localhost:5000/api/dashboard/payments/auto-generate",
+        {},
+        { headers: getAuthHeader() }
+      );
+
+      const result = res.data || {};
+      setAutoGenerateResult(result);
+      setCreateSuccess(result.message || "Automatic payment generation completed");
+      fetchPaymentData();
+    } catch (err) {
+      setCreateError(err.response?.data?.error || "Failed to auto-generate payments");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const openApprovalDialog = (payment, status) => {
     setApprovalDialog({
       isOpen: true,
@@ -386,6 +455,9 @@ export default function ManagePayments() {
         message: `Payment ${status === "approved" ? "approved" : "rejected"} successfully`,
       });
       setApprovalDialog({ isOpen: false, payment: null, status: "approved", submitting: false });
+      if (status === "approved") {
+        setActiveTab("ready");
+      }
       fetchPaymentData();
     } catch (err) {
       setApprovalStatus({
@@ -393,6 +465,142 @@ export default function ManagePayments() {
         message: err.response?.data?.error || "Failed to update payment",
       });
       setApprovalDialog((prev) => ({ ...prev, submitting: false }));
+    }
+  };
+
+  const handleWorkHoursApproval = async (workHourId, status) => {
+    if (!workHourId) return;
+
+    try {
+      await axios.put(
+        `http://localhost:5000/api/dashboard/superadmin/work-hours/${workHourId}/status`,
+        { status },
+        { headers: getAuthHeader() }
+      );
+      setApprovalStatus({
+        type: "success",
+        message: `Work hours ${status === "approved" ? "approved" : "rejected"} successfully`,
+      });
+      fetchPendingWorkHours();
+      fetchPaymentData();
+      if (status === "approved") {
+        setActiveTab("ready");
+      }
+    } catch (err) {
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to update work hours",
+      });
+    }
+  };
+
+  const openPayDialog = async (payment) => {
+    const sourceMethodId = Number(selectedMethodId || defaultMethod?.id || 0);
+
+    if (!sourceMethodId) {
+      setApprovalStatus({
+        type: "error",
+        message: "Select or add a default payment card before paying",
+      });
+      setActiveTab("methods");
+      return;
+    }
+
+    try {
+      setPayDialog({
+        isOpen: true,
+        payment,
+        recipientMethods: [],
+        selectedRecipientMethodId: "",
+        loading: true,
+        submitting: false,
+      });
+
+      const res = await axios.get("http://localhost:5000/api/dashboard/payment-methods", {
+        headers: getAuthHeader(),
+        params: { user_id: payment.user_id },
+      });
+
+      const recipientMethods = res.data || [];
+      const preferredMethod = recipientMethods.find((method) => method.is_default) || recipientMethods[0] || null;
+
+      setPayDialog((prev) => ({
+        ...prev,
+        recipientMethods,
+        selectedRecipientMethodId: preferredMethod ? String(preferredMethod.id) : "",
+        loading: false,
+      }));
+    } catch (err) {
+      setPayDialog({
+        isOpen: false,
+        payment: null,
+        recipientMethods: [],
+        selectedRecipientMethodId: "",
+        loading: false,
+        submitting: false,
+      });
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to load recipient payment methods",
+      });
+    }
+  };
+
+  const closePayDialog = () => {
+    setPayDialog((prev) => {
+      if (prev.submitting) return prev;
+      return {
+        isOpen: false,
+        payment: null,
+        recipientMethods: [],
+        selectedRecipientMethodId: "",
+        loading: false,
+        submitting: false,
+      };
+    });
+  };
+
+  const confirmPayNow = async () => {
+    if (!payDialog.payment?.id) return;
+
+    const sourceMethodId = Number(selectedMethodId || defaultMethod?.id || 0);
+    if (!sourceMethodId) {
+      setApprovalStatus({
+        type: "error",
+        message: "Select or add a default payment card before paying",
+      });
+      closePayDialog();
+      setActiveTab("methods");
+      return;
+    }
+
+    try {
+      setPayingPaymentId(payDialog.payment.id);
+      setPayDialog((prev) => ({ ...prev, submitting: true }));
+      await axios.post(
+        `http://localhost:5000/api/dashboard/payments/${payDialog.payment.id}/pay`,
+        {
+          source_payment_method_id: sourceMethodId,
+          payment_method_id: payDialog.selectedRecipientMethodId ? Number(payDialog.selectedRecipientMethodId) : null,
+          payment_method: payDialog.payment.payment_method || "bank",
+        },
+        { headers: getAuthHeader() }
+      );
+
+      setApprovalStatus({
+        type: "success",
+        message: "Payment processed successfully",
+      });
+      closePayDialog();
+      setActiveTab("history");
+      fetchPaymentData();
+    } catch (err) {
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to process payment",
+      });
+    } finally {
+      setPayingPaymentId(null);
     }
   };
 
@@ -414,6 +622,10 @@ export default function ManagePayments() {
 
   const getStatusLabel = (status) => {
     switch (status) {
+      case "paid":
+        return "Paid";
+      case "ready_to_pay":
+        return "Ready To Pay";
       case "pending_approval":
         return "Pending Approval";
       case "pending_calculation":
@@ -441,6 +653,10 @@ export default function ManagePayments() {
     return status;
   };
 
+  const canDownloadReceipt = (payment) => {
+    return payment?.status === "paid";
+  };
+
   const formatMinutesAsHM = (minutesValue) => {
     const totalMinutes = Math.max(0, Number(minutesValue || 0));
     const hours = Math.floor(totalMinutes / 60);
@@ -462,6 +678,464 @@ export default function ManagePayments() {
       "Unknown"
     );
   };
+
+  const getModelTypeDisplay = (payment) => {
+    return payment?.model_type_display || payment?.model_type || "-";
+  };
+
+  const getModelCardDisplay = (model) => {
+    if (model?.modelTypeDisplay) {
+      return model.modelTypeDisplay;
+    }
+    const firstImageName = model?.images?.[0]?.imageName || "";
+    const parts = String(firstImageName).split("_").filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0]}_${parts[1]}`;
+    }
+    return model?.modelType || "-";
+  };
+
+  const formatCurrency = (amount) => {
+    return `Rs ${Number(amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  };
+
+  const formatReceiptDate = (value) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+  };
+
+  const escapeHtml = (value) => {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  };
+
+  const buildReceiptMarkup = (receipt) => {
+    const commonRows = [
+      ["Receipt No", receipt.receiptNumber],
+      ["User", receipt.userName],
+      ["Email", receipt.userEmail],
+      ["Role", receipt.userRole],
+      ["Status", getStatusLabel(receipt.status)],
+      ["Amount", formatCurrency(receipt.amount)],
+      ["Payment Method", receipt.paymentMethod || "-"],
+      ["Created Date", formatReceiptDate(receipt.createdAt)],
+      ["Approved Date", formatReceiptDate(receipt.approvedDate)],
+      ["Paid Date", formatReceiptDate(receipt.paymentDate)],
+      ["Approved By", receipt.approvedBy || "-"],
+    ];
+
+    if (receipt.modelType || receipt.modelTypeDisplay) {
+      commonRows.splice(6, 0, ["Model Type", receipt.modelTypeDisplay || receipt.modelType]);
+    }
+
+    let detailSection = "<p>No detailed receipt lines available.</p>";
+
+    if (receipt.userRole === "admin") {
+      detailSection = `
+        <h2>Admin Work Hours</h2>
+        <div class="summary-grid">
+          <div class="summary-box"><span>Paid Minutes</span><strong>${escapeHtml(receipt.paidMinutes)}</strong></div>
+          <div class="summary-box"><span>Paid Hours</span><strong>${escapeHtml(formatMinutesAsHM(receipt.paidMinutes))}</strong></div>
+          <div class="summary-box"><span>Hourly Rate</span><strong>${escapeHtml(formatCurrency(receipt.summary?.hourlyRate || 0))}</strong></div>
+          <div class="summary-box"><span>Minute Rate</span><strong>${escapeHtml(Number(receipt.summary?.minuteRate || 0).toFixed(4))}</strong></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Worked Hours</th>
+              <th>Allocated</th>
+              <th>Allocated Minutes</th>
+              <th>Session</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${receipt.lineItems.length
+              ? receipt.lineItems
+                  .map(
+                    (item) => `
+                      <tr>
+                        <td>${escapeHtml(formatReceiptDate(item.workDate))}</td>
+                        <td>${escapeHtml(item.description || "-")}</td>
+                        <td>${escapeHtml(formatHoursAsHM(item.workedHours))}</td>
+                        <td>${escapeHtml(formatMinutesAsHM(item.allocatedMinutes))}</td>
+                        <td>${escapeHtml(item.allocatedMinutes)}</td>
+                        <td>${escapeHtml(
+                          item.sessionStart || item.sessionEnd
+                            ? `${formatReceiptDate(item.sessionStart)} - ${formatReceiptDate(item.sessionEnd)}`
+                            : "-"
+                        )}</td>
+                      </tr>`
+                  )
+                  .join("")
+              : '<tr><td colspan="6">No work hour rows found for this payment.</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    } else if (["annotator", "tester"].includes(receipt.userRole)) {
+      detailSection = `
+        <h2>${escapeHtml(receipt.userRole === "annotator" ? "Annotator Image Sets" : "Tester Image Sets")}</h2>
+        <div class="summary-grid">
+          <div class="summary-box"><span>Image Sets</span><strong>${escapeHtml(receipt.summary?.imageSetCount || 0)}</strong></div>
+          <div class="summary-box"><span>Total Objects</span><strong>${escapeHtml(receipt.summary?.totalObjects || 0)}</strong></div>
+          <div class="summary-box"><span>Rate / Object</span><strong>${escapeHtml(formatCurrency(receipt.summary?.perObjectRate || 0))}</strong></div>
+          <div class="summary-box"><span>Recorded Images</span><strong>${escapeHtml(receipt.imagesCompleted || receipt.lineItems.length || 0)}</strong></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Image Set</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Objects</th>
+              <th>Calculated Amount</th>
+              <th>Completed Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${receipt.lineItems.length
+              ? receipt.lineItems
+                  .map(
+                    (item) => `
+                      <tr>
+                        <td>${escapeHtml(item.imageName)}</td>
+                        <td>${escapeHtml(item.modelLabel || item.modelType || "-")}</td>
+                        <td>${escapeHtml(getStatusLabel(item.status))}</td>
+                        <td>${escapeHtml(item.objectsCount)}</td>
+                        <td>${escapeHtml(formatCurrency(item.paidAmount || 0))}</td>
+                        <td>${escapeHtml(formatReceiptDate(item.updatedAt || item.createdAt))}</td>
+                      </tr>`
+                  )
+                  .join("")
+              : '<tr><td colspan="6">No image-set rows found for this payment.</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    }
+
+    return `
+      <style>
+        .receipt-root {
+          width: 1120px;
+          background: linear-gradient(180deg, #f8fbff 0%, #ffffff 22%);
+          color: #0f172a;
+          font-family: Arial, sans-serif;
+          padding: 28px;
+          box-sizing: border-box;
+        }
+        .receipt-brand {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 18px 22px;
+          border-radius: 18px;
+          background: linear-gradient(135deg, #0f172a, #1d4ed8 62%, #38bdf8);
+          color: #ffffff;
+          margin-bottom: 22px;
+        }
+        .receipt-brand-left {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+        .receipt-brand-logo {
+          width: 64px;
+          height: 64px;
+          border-radius: 16px;
+          background: rgba(255, 255, 255, 0.14);
+          padding: 8px;
+          object-fit: contain;
+          box-sizing: border-box;
+        }
+        .receipt-brand-text small {
+          display: block;
+          font-size: 12px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          opacity: 0.82;
+          margin-bottom: 6px;
+        }
+        .receipt-brand-text h1 {
+          margin: 0;
+          font-size: 30px;
+          line-height: 1.1;
+        }
+        .receipt-brand-text p {
+          margin: 8px 0 0;
+          font-size: 14px;
+          opacity: 0.92;
+        }
+        .receipt-brand-badge {
+          text-align: right;
+        }
+        .receipt-brand-badge span {
+          display: block;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          opacity: 0.82;
+          margin-bottom: 6px;
+        }
+        .receipt-brand-badge strong {
+          display: block;
+          font-size: 18px;
+        }
+        .receipt-section-title {
+          margin: 0 0 14px;
+          font-size: 20px;
+          color: #0f172a;
+        }
+        .meta-grid, .summary-grid { display: grid; gap: 12px; margin-bottom: 20px; }
+        .meta-grid { grid-template-columns: repeat(2, minmax(240px, 1fr)); }
+        .summary-grid { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
+        .meta-item, .summary-box {
+          border: 1px solid #cbd5e1;
+          border-radius: 12px;
+          padding: 12px 14px;
+          background: #ffffff;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+        }
+        .meta-item span, .summary-box span { display: block; font-size: 12px; color: #64748b; margin-bottom: 6px; text-transform: uppercase; }
+        .meta-item strong, .summary-box strong { font-size: 15px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; background: #ffffff; }
+        th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; vertical-align: top; }
+        th { background: #e2e8f0; }
+        .footer-note {
+          margin-top: 24px;
+          font-size: 12px;
+          color: #64748b;
+          border-top: 1px solid #cbd5e1;
+          padding-top: 14px;
+        }
+      </style>
+      <div class="receipt-root">
+        <div class="receipt-brand">
+          <div class="receipt-brand-left">
+            <img src="${logo}" alt="PlastiTrack" class="receipt-brand-logo" />
+            <div class="receipt-brand-text">
+              <small>PlastiTrack System</small>
+              <h1>Payment Receipt</h1>
+              <p>Plastic waste annotation workflow and payment management</p>
+            </div>
+          </div>
+          <div class="receipt-brand-badge">
+            <span>Receipt</span>
+            <strong>${escapeHtml(receipt.receiptNumber)}</strong>
+          </div>
+        </div>
+
+        <h2 class="receipt-section-title">Payment Summary</h2>
+        <div class="meta-grid">
+            ${commonRows
+              .map(
+                ([label, value]) => `
+                  <div class="meta-item">
+                    <span>${escapeHtml(label)}</span>
+                    <strong>${escapeHtml(value || "-")}</strong>
+                  </div>`
+              )
+              .join("")}
+        </div>
+        ${detailSection}
+        <p class="footer-note">Generated by PlastiTrack payment management on ${escapeHtml(formatReceiptDate(new Date()))}.</p>
+      </div>
+    `;
+  };
+
+  const appendCanvasToPdf = (pdf, canvas, title, subtitle) => {
+    const marginX = 8;
+    const topOffset = 24;
+    const bottomOffset = 10;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const usableHeight = pageHeight - topOffset - bottomOffset;
+    const imgWidth = pageWidth - marginX * 2;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let renderedHeight = 0;
+    let pageNum = 1;
+
+    while (renderedHeight < imgHeight) {
+      if (renderedHeight > 0) {
+        pdf.addPage();
+        pageNum += 1;
+      }
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(title, marginX, 10);
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(subtitle, marginX, 16);
+
+      const startPixelY = (renderedHeight * canvas.height) / imgHeight;
+      const endPixelY = Math.min(((renderedHeight + usableHeight) * canvas.height) / imgHeight, canvas.height);
+      const portionHeight = endPixelY - startPixelY;
+
+      const portionCanvas = document.createElement("canvas");
+      portionCanvas.width = canvas.width;
+      portionCanvas.height = portionHeight;
+
+      const context = portionCanvas.getContext("2d");
+      if (context) {
+        context.drawImage(
+          canvas,
+          0,
+          startPixelY,
+          canvas.width,
+          portionHeight,
+          0,
+          0,
+          canvas.width,
+          portionHeight
+        );
+      }
+
+      const portionImgData = portionCanvas.toDataURL("image/png", 0.98);
+      const portionImgHeight = (portionHeight * imgWidth) / canvas.width;
+      pdf.addImage(portionImgData, "PNG", marginX, topOffset, imgWidth, portionImgHeight);
+
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`Page ${pageNum}`, pageWidth - 24, pageHeight - 4);
+
+      renderedHeight += usableHeight;
+    }
+  };
+
+  const downloadReceipt = async (paymentId) => {
+    if (!paymentId) return;
+
+    try {
+      setDownloadingReceiptId(paymentId);
+      const res = await axios.get(`http://localhost:5000/api/dashboard/payments/${paymentId}/receipt`, {
+        headers: getAuthHeader(),
+      });
+      const receipt = res.data?.receipt;
+      if (!receipt) {
+        throw new Error("Receipt data not found");
+      }
+
+      const receiptMarkup = buildReceiptMarkup(receipt);
+      const receiptContainer = document.createElement("div");
+      receiptContainer.style.position = "fixed";
+      receiptContainer.style.left = "-10000px";
+      receiptContainer.style.top = "0";
+      receiptContainer.style.width = "1120px";
+      receiptContainer.style.zIndex = "-1";
+      receiptContainer.innerHTML = receiptMarkup;
+      document.body.appendChild(receiptContainer);
+
+      const logoImg = receiptContainer.querySelector("img");
+      if (logoImg && !logoImg.complete) {
+        await new Promise((resolve, reject) => {
+          logoImg.onload = () => resolve();
+          logoImg.onerror = () => reject(new Error("Failed to load receipt logo"));
+        });
+      }
+
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+
+      const canvas = await html2canvas(receiptContainer, {
+        scale: 2,
+        logging: false,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+
+      const pdf = new jsPDF("portrait", "mm", "a4");
+      appendCanvasToPdf(
+        pdf,
+        canvas,
+        `PlastiTrack Receipt - ${receipt.receiptNumber}`,
+        `Generated ${new Date().toLocaleString()}`
+      );
+      pdf.save(`${receipt.receiptNumber || `payment-receipt-${paymentId}`}.pdf`);
+
+      document.body.removeChild(receiptContainer);
+    } catch (err) {
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || err.message || "Failed to download receipt",
+      });
+    } finally {
+      const orphanNode = document.querySelector('div[style*="left: -10000px"]');
+      if (orphanNode && orphanNode.parentNode) {
+        orphanNode.parentNode.removeChild(orphanNode);
+      }
+      setDownloadingReceiptId(null);
+    }
+  };
+
+  const isBankMethod = (method) => {
+    if (!method) return false;
+    return Boolean(
+      method.bank_name ||
+        method.branch_name ||
+        method.account_name ||
+        String(method.card_type || "").toLowerCase().includes("bank")
+    );
+  };
+
+  const getMethodBrandLabel = (method) => {
+    if (!method) return "CARD";
+    return isBankMethod(method) ? "BANK ACCOUNT" : String(method.card_type || "Card").toUpperCase();
+  };
+
+  const getMethodOwnerLabel = (method) => {
+    return method?.account_name || method?.card_holder_name || "Unknown";
+  };
+
+  const getMethodSecondaryLabel = (method) => {
+    return isBankMethod(method) ? "Bank / Branch" : "Expiry";
+  };
+
+  const getMethodSecondaryValue = (method) => {
+    if (!method) return "-";
+    if (isBankMethod(method)) {
+      return [method.bank_name, method.branch_name].filter(Boolean).join(" / ") || "-";
+    }
+    return `${String(method.expiry_month).padStart(2, "0")}/${String(method.expiry_year).slice(-2)}`;
+  };
+
+  const getMethodOptionLabel = (method) => {
+    if (!method) return "";
+    const type = getMethodBrandLabel(method);
+    const primary = method.masked_card_number || "****";
+    const owner = getMethodOwnerLabel(method);
+    const secondary = getMethodSecondaryValue(method);
+    return `${type} ${primary} (${owner}${secondary && secondary !== "-" ? ` • ${secondary}` : ""})`;
+  };
+
+  const selectedMethod = superAdminMethods.find((m) => Number(m.id) === Number(selectedMethodId)) || superAdminMethods[0] || null;
+  const defaultMethod = superAdminMethods.find((m) => m.is_default) || selectedMethod || null;
+  const selectedMethodBrand = getMethodBrandLabel(selectedMethod);
+  const selectedMethodHolder = getMethodOwnerLabel(selectedMethod) || methodForm.cardHolderName || "CARD HOLDER";
+  const selectedMethodMasked = selectedMethod?.masked_card_number || "**** **** **** ****";
+  const selectedMethodExpiry = getMethodSecondaryValue(selectedMethod);
+  const defaultMethodMasked = defaultMethod?.masked_card_number || "No card";
+  const defaultMethodHolder = getMethodOwnerLabel(defaultMethod) || "Add a payment card";
+  const defaultMethodBrand = getMethodBrandLabel(defaultMethod);
+  const payDialogRecipientMethod = payDialog.recipientMethods.find(
+    (method) => String(method.id) === String(payDialog.selectedRecipientMethodId)
+  ) || null;
+  const paidRecentTransactions = (paymentOverview?.recentTransactions || []).filter(
+    (payment) => payment?.status === "paid"
+  );
+  const pendingObjectPayments = pendingPayments.filter(
+    (payment) => payment?.user_role !== "admin"
+  );
+  const totalPendingApprovals = pendingObjectPayments.length + pendingWorkHours.length;
 
   return (
     <div className="dashboard-container">
@@ -508,15 +1182,24 @@ export default function ManagePayments() {
             </div>
           </div>
 
-          <div className="payment-card">
+          <button
+            type="button"
+            className="payment-card payment-card-button"
+            onClick={() => {
+              setActiveTab("methods");
+              if (defaultMethod?.id) {
+                setSelectedMethodId(defaultMethod.id);
+              }
+            }}
+          >
             <div className="payment-icon">💳</div>
             <div className="payment-content">
-              <div className="payment-value">
-                {paymentOverview?.withdrawalMethods?.length || 0}
-              </div>
-              <div className="payment-label">Withdrawal Methods</div>
+              <div className="payment-method-preview">{defaultMethodMasked}</div>
+              <div className="payment-label">Default Withdrawal Card</div>
+              <div className="payment-card-note">{defaultMethodBrand} • {defaultMethodHolder}</div>
+              <div className="payment-card-note">Click to change card</div>
             </div>
-          </div>
+          </button>
         </div>
 
         {/* Tabs */}
@@ -532,19 +1215,19 @@ export default function ManagePayments() {
               className={`tab ${activeTab === "pending" ? "active" : ""}`}
               onClick={() => setActiveTab("pending")}
             >
-              Pending Approvals ({pendingPayments.length})
+              Pending Approvals ({totalPendingApprovals})
+            </button>
+            <button
+              className={`tab ${activeTab === "ready" ? "active" : ""}`}
+              onClick={() => setActiveTab("ready")}
+            >
+              Ready To Pay ({readyPayments.length})
             </button>
             <button
               className={`tab ${activeTab === "model" ? "active" : ""}`}
               onClick={() => setActiveTab("model")}
             >
               Model Based Payments
-            </button>
-            <button
-              className={`tab ${activeTab === "create" ? "active" : ""}`}
-              onClick={() => setActiveTab("create")}
-            >
-              Create Payment
             </button>
             <button
               className={`tab ${activeTab === "methods" ? "active" : ""}`}
@@ -563,39 +1246,112 @@ export default function ManagePayments() {
 
         {/* Tab Content */}
         {activeTab === "overview" && (
-          <div className="table-container">
-            <h3>Withdrawal Methods</h3>
-            <table className="payments-table">
-              <thead>
-                <tr>
-                  <th>Payment Method</th>
-                  <th>Count</th>
-                  <th>Total Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paymentOverview?.withdrawalMethods?.map((method, idx) => (
-                  <tr key={idx}>
-                    <td className="method-name">{method.payment_method || "Bank Transfer"}</td>
-                    <td>{method.count || 0}</td>
-                    <td>₨ {(method.total || 0).toLocaleString()}</td>
-                  </tr>
-                ))}
-                {!paymentOverview?.withdrawalMethods?.length && (
+          <div>
+            <div className="table-container" style={{ marginBottom: 20 }}>
+              <h3>Withdrawal Methods</h3>
+              <table className="payments-table">
+                <thead>
                   <tr>
-                    <td colSpan="3" className="no-data">
-                      No payment data available
-                    </td>
+                    <th>Payment Method</th>
+                    <th>Count</th>
+                    <th>Total Amount</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {paymentOverview?.withdrawalMethods?.map((method, idx) => (
+                    <tr key={idx}>
+                      <td className="method-name">{method.payment_method || "Bank Transfer"}</td>
+                      <td>{method.count || 0}</td>
+                      <td>₨ {(method.total || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {!paymentOverview?.withdrawalMethods?.length && (
+                    <tr>
+                      <td colSpan="3" className="no-data">
+                        No payment data available
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-container">
+              <h3>Recent Transactions</h3>
+              <table className="payments-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Method</th>
+                    <th>Date</th>
+                    <th>Receipt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paidRecentTransactions.map((payment) => (
+                    <tr key={payment.id}>
+                      <td>{payment.user_name || "Unknown"}</td>
+                      <td>{payment.user_role || "-"}</td>
+                      <td>{formatCurrency(payment.amount || 0)}</td>
+                      <td>
+                        <span className={`status-badge status-${getStatusClass(payment.status)}`}>
+                          {getStatusLabel(payment.status)}
+                        </span>
+                      </td>
+                      <td>{payment.payment_method || "-"}</td>
+                      <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
+                      <td>
+                        {canDownloadReceipt(payment) ? (
+                          <button
+                            className="btn-secondary"
+                            type="button"
+                            onClick={() => downloadReceipt(payment.id)}
+                            disabled={downloadingReceiptId === payment.id}
+                          >
+                            {downloadingReceiptId === payment.id ? "Downloading..." : "Download Receipt"}
+                          </button>
+                        ) : (
+                          <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Available after payment</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {!paidRecentTransactions.length && (
+                    <tr>
+                      <td colSpan="7" className="no-data">
+                        No paid transactions available
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
         {activeTab === "pending" && (
           <div className="table-container">
-            <h3>Pending Payment Approvals</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+              <h3 style={{ margin: 0 }}>Pending Object-Based Payment Approvals (Annotator / Tester)</h3>
+              <button className="btn-primary" type="button" onClick={handleAutoGeneratePayments} disabled={creating}>
+                {creating ? "Generating..." : "Generate Pending Payments"}
+              </button>
+            </div>
+
+            <div className="form-hint" style={{ marginBottom: 8 }}>
+              Auto generation rules: annotator approved objects on completed models, tester reviewed objects on completed models, and admin remaining unpaid worked minutes.
+            </div>
+            {createError && <div className="dashboard-error">{createError}</div>}
+            {createSuccess && <div className="dashboard-success">{createSuccess}</div>}
+            {autoGenerateResult && (
+              <div className="form-hint" style={{ marginBottom: 10 }}>
+                Created: {Number(autoGenerateResult.createdCount || 0)} | Skipped: {Number(autoGenerateResult.skippedCount || 0)}
+              </div>
+            )}
+
             <table className="payments-table">
               <thead>
                 <tr>
@@ -610,19 +1366,19 @@ export default function ManagePayments() {
                 </tr>
               </thead>
               <tbody>
-                {pendingPayments.length === 0 ? (
+                {pendingObjectPayments.length === 0 ? (
                   <tr>
                     <td colSpan="8" className="no-data">
-                      No pending payments
+                      No pending annotator/tester payments
                     </td>
                   </tr>
                 ) : (
-                  pendingPayments.map((payment) => (
+                  pendingObjectPayments.map((payment) => (
                     <>
                       <tr key={payment.id}>
                         <td><strong>{getPaymentDisplayName(payment)}</strong></td>
                         <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
-                        <td>{payment.model_type}</td>
+                        <td>{getModelTypeDisplay(payment)}</td>
                         <td>{payment.images_completed || 0}</td>
                         <td>{payment.payment_method || "-"}</td>
                         <td>{new Date(payment.created_at).toLocaleDateString()}</td>
@@ -763,6 +1519,133 @@ export default function ManagePayments() {
                 )}
               </tbody>
             </table>
+
+            {/* Pending Work Hours Section */}
+            <div style={{ marginTop: "30px" }}>
+              <h3 style={{ margin: "0 0 12px 0" }}>Pending Admin Work Hours Approvals</h3>
+              <table className="payments-table">
+                <thead>
+                  <tr>
+                    <th>Admin Name</th>
+                    <th>Hours</th>
+                    <th>Rate</th>
+                    <th>Amount</th>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingWorkHours.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="no-data">
+                        No pending work hours approvals
+                      </td>
+                    </tr>
+                  ) : (
+                    pendingWorkHours.map((workHour) => (
+                      <tr key={workHour.id}>
+                        <td><strong>{workHour.admin_name || "Unknown"}</strong></td>
+                        <td>{Number(workHour.hours_worked || 0).toFixed(2)} hrs</td>
+                        <td>₨ {Number(workHour.hourly_rate || 0).toLocaleString()}</td>
+                        <td><strong>₨ {Number(workHour.calculated_payment || 0).toLocaleString()}</strong></td>
+                        <td>{new Date(workHour.date).toLocaleDateString()}</td>
+                        <td>{workHour.task_description || "-"}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: "5px" }}>
+                            <button
+                              className="btn-approve"
+                              onClick={() => handleWorkHoursApproval(workHour.id, "approved")}
+                              style={{
+                                padding: "6px 12px",
+                                backgroundColor: "#10b981",
+                                color: "white",
+                                border: "none",
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                              }}
+                            >
+                              ✓ Approve
+                            </button>
+                            <button
+                              className="btn-reject"
+                              onClick={() => handleWorkHoursApproval(workHour.id, "rejected")}
+                              style={{
+                                padding: "6px 12px",
+                                backgroundColor: "#ef4444",
+                                color: "white",
+                                border: "none",
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                              }}
+                            >
+                              ✗ Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "ready" && (
+          <div className="table-container">
+            <h3>Ready To Pay</h3>
+            <table className="payments-table">
+              <thead>
+                <tr>
+                  <th>User Name</th>
+                  <th>Amount</th>
+                  <th>Model Type</th>
+                  <th>Images</th>
+                  <th>Status</th>
+                  <th>Method</th>
+                  <th>Approved Date</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readyPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="no-data">
+                      No payments ready to pay
+                    </td>
+                  </tr>
+                ) : (
+                  readyPayments.map((payment) => (
+                    <tr key={payment.id}>
+                      <td>{getPaymentDisplayName(payment)}</td>
+                      <td>₨ {(payment.amount || 0).toLocaleString()}</td>
+                      <td>{getModelTypeDisplay(payment)}</td>
+                      <td>{payment.images_completed || 0}</td>
+                      <td>
+                        <span className={`status-badge status-${payment.status}`}>
+                          {payment.status === "approved" ? "Ready to Pay" : getStatusLabel(payment.status)}
+                        </span>
+                      </td>
+                      <td>{payment.payment_method || "-"}</td>
+                      <td>{payment.approved_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
+                      <td>
+                        <button
+                          className="btn-primary"
+                          type="button"
+                          onClick={() => openPayDialog(payment)}
+                          disabled={payingPaymentId === payment.id}
+                        >
+                          {payingPaymentId === payment.id ? "Paying..." : "Pay"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         )}
 
@@ -792,7 +1675,7 @@ export default function ManagePayments() {
                       {isExpanded ? "▾" : "▸"}
                     </button>
                     <div className="model-title">
-                      <div className="model-name">{model.modelType}</div>
+                      <div className="model-name">{getModelCardDisplay(model)}</div>
                       <div className="model-subtitle">{completionText}</div>
                     </div>
                     <div className="model-summary">
@@ -885,324 +1768,153 @@ export default function ManagePayments() {
           </div>
         )}
 
-        {activeTab === "create" && (
-          <div className="table-container">
-            <h3>Create Payment</h3>
-            <form onSubmit={handleCreatePayment} className="payment-create-form">
-              <div className="form-row">
-                <label>Role</label>
-                <select
-                  value={createForm.role}
-                  onChange={(e) => {
-                    const role = e.target.value;
-                    handleCreateChange("role", role);
-                    handleCreateChange("userId", "");
-                    handleCreateChange("payMinutes", "");
-                    handleCreateChange("sourcePaymentMethodId", "");
-                    setAdminEligibility(null);
-                    if (role === "admin") {
-                      handleCreateChange("modelType", "");
-                    }
-                  }}
-                >
-                  <option value="annotator">Annotator</option>
-                  <option value="tester">Tester</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-
-              {createForm.role !== "admin" && (
-                <div className="form-row">
-                  <label>Model Type</label>
-                  <select
-                    value={createForm.modelType}
-                    onChange={(e) => {
-                      handleCreateChange("modelType", e.target.value);
-                      handleCreateChange("userId", "");
-                    }}
-                  >
-                    <option value="">Select model</option>
-                    {eligibleModels.map((model) => (
-                      <option key={model.modelType} value={model.modelType}>
-                        {model.modelType} ({Number(model.completedImageSets || model.finalizedImages || 0)}/{Number(model.totalImageSets || model.totalImages || 0)} finalized)
-                      </option>
-                    ))}
-                  </select>
-                  {createForm.modelType && (
-                    <div className="form-hint">
-                      {isModelComplete
-                        ? "Model completed. Payments allowed for approved image sets."
-                        : "Model not completed. Finish all image sets before payment."}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="form-row">
-                <label>User</label>
-                <select
-                  value={createForm.userId}
-                  onChange={(e) => {
-                    handleCreateChange("userId", e.target.value);
-                    if (createForm.role === "admin") {
-                      handleCreateChange("payMinutes", "");
-                      handleCreateChange("sourcePaymentMethodId", "");
-                    }
-                  }}
-                  disabled={createForm.role !== "admin" && !isModelComplete}
-                >
-                  <option value="">Select user</option>
-                  {availableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name} ({user.email})
-                    </option>
-                  ))}
-                </select>
-                {createForm.role !== "admin" && selectedUser && (
-                  <div className="form-hint">
-                    {createForm.role === "annotator"
-                      ? `Approved objects: ${approvedCount}`
-                      : `Reviewed objects: ${approvedCount}`}
-                  </div>
-                )}
-                {createForm.role === "admin" && selectedUser && (
-                  <div className="form-hint">
-                    Hourly rate: Rs {Number(adminEligibility?.hourlyRate ?? selectedUser.hourly_rate || 0).toLocaleString()} per hour
-                  </div>
-                )}
-              </div>
-
-              {createForm.role === "admin" && adminEligibilityLoading && (
-                <div className="form-row">
-                  <label>Admin Payment Summary</label>
-                  <div className="form-hint">Loading admin worked hours...</div>
-                </div>
-              )}
-
-              {createForm.role === "admin" && !adminEligibilityLoading && adminEligibility && (
-                <div className="form-row">
-                  <label>Admin Payment Summary</label>
-                  <div className="form-hint">
-                    Total worked: {formatMinutesAsHM(adminEligibility.totalWorkedMinutes)}
-                  </div>
-                  <div className="form-hint">
-                    Already paid: {formatMinutesAsHM(adminEligibility.alreadyPaidMinutes)}
-                  </div>
-                  <div className="form-hint">
-                    Remaining unpaid: {formatMinutesAsHM(adminEligibility.remainingMinutes)}
-                  </div>
-                  <div className="form-hint">
-                    Minute rate: Rs {Number(adminEligibility.minuteRate || 0).toFixed(4)}
-                  </div>
-                  {!adminEligibility.hourlyRateConfigured && (
-                    <div className="dashboard-error">Admin hourly rate is not configured in Rate Management.</div>
-                  )}
-                </div>
-              )}
-
-              {createForm.role === "admin" && (
-                <div className="form-row">
-                  <label>Pay Minutes</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max={Number(adminEligibility?.remainingMinutes || 0) || undefined}
-                    value={createForm.payMinutes}
-                    onChange={(e) => handleCreateChange("payMinutes", e.target.value)}
-                    placeholder={
-                      adminEligibility
-                        ? `Max ${adminEligibility.remainingMinutes} minutes`
-                        : "Enter minutes"
-                    }
-                  />
-                  {createForm.payMinutes && adminEligibility && (
-                    <>
-                      <div className="form-hint">
-                        Pay Duration: {formatMinutesAsHM(createForm.payMinutes)}
-                      </div>
-                      <div className="form-hint">
-                        Payment Amount: Rs {(Number(createForm.payMinutes || 0) * Number(adminEligibility.minuteRate || 0)).toFixed(2)}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {createForm.role === "admin" && (
-                <div className="form-row">
-                  <label>Source Card (Super Admin)</label>
-                  <select
-                    value={createForm.sourcePaymentMethodId}
-                    onChange={(e) => handleCreateChange("sourcePaymentMethodId", e.target.value)}
-                  >
-                    <option value="">Select your card</option>
-                    {superAdminMethods.map((method) => (
-                      <option key={method.id} value={method.id}>
-                        {method.card_type} {method.masked_card_number} {method.is_default ? "(Default)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {!superAdminMethods.length && (
-                    <div className="form-hint">No cards found. Add one in Payment Methods tab.</div>
-                  )}
-                </div>
-              )}
-
-              {createForm.role !== "admin" && (
-                <div className="form-row">
-                  <label>Payment Method</label>
-                  <select
-                    value={createForm.paymentMethod}
-                    onChange={(e) => handleCreateChange("paymentMethod", e.target.value)}
-                  >
-                    <option value="bank">Bank Transfer</option>
-                    <option value="cash">Cash</option>
-                    <option value="mobile">Mobile</option>
-                  </select>
-                </div>
-              )}
-
-              {createError && <div className="dashboard-error">{createError}</div>}
-              {createSuccess && <div className="dashboard-success">{createSuccess}</div>}
-
-              <button className="btn-primary" type="submit" disabled={creating}>
-                {creating ? "Creating..." : "Create Payment"}
-              </button>
-            </form>
-          </div>
-        )}
-
         {activeTab === "methods" && (
           <div className="table-container">
-            <h3>My Cards</h3>
-            <form onSubmit={savePaymentMethod} className="payment-create-form" style={{ marginBottom: 20 }}>
-              <div className="form-row">
-                <label>Card Holder Name</label>
-                <input
-                  value={methodForm.cardHolderName}
-                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardHolderName: e.target.value }))}
-                  placeholder="Card holder name"
-                />
-              </div>
+            <h3>Select Payment Method</h3>
 
-              <div className="form-row">
-                <label>Card Type</label>
-                <select
-                  value={methodForm.cardType}
-                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardType: e.target.value }))}
-                >
-                  <option value="Visa">Visa</option>
-                  <option value="Mastercard">Mastercard</option>
-                  <option value="Amex">Amex</option>
-                </select>
-              </div>
-
-              <div className="form-row">
-                <label>Card Number</label>
-                <input
-                  value={methodForm.cardNumber}
-                  onChange={(e) => setMethodForm((prev) => ({ ...prev, cardNumber: e.target.value }))}
-                  placeholder="xxxx xxxx xxxx xxxx"
-                />
-              </div>
-
-              <div className="form-row">
-                <label>CVV</label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength="4"
-                  value={methodForm.cvv}
-                  onChange={(e) =>
-                    setMethodForm((prev) => ({
-                      ...prev,
-                      cvv: e.target.value.replace(/\D/g, "").slice(0, 4),
-                    }))
-                  }
-                  placeholder="123"
-                />
-              </div>
-
-              <div className="form-row">
-                <label>Expiry Month</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="12"
-                  value={methodForm.expiryMonth}
-                  onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryMonth: e.target.value }))}
-                />
-              </div>
-
-              <div className="form-row">
-                <label>Expiry Year</label>
-                <input
-                  type="number"
-                  min={new Date().getFullYear()}
-                  value={methodForm.expiryYear}
-                  onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryYear: e.target.value }))}
-                />
-              </div>
-
-              <div className="form-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={methodForm.isDefault}
-                    onChange={(e) => setMethodForm((prev) => ({ ...prev, isDefault: e.target.checked }))}
-                    style={{ marginRight: 8 }}
-                  />
-                  Set as default card
-                </label>
-              </div>
-
-              {methodStatus && (
-                <div className={methodStatus.toLowerCase().includes("success") || methodStatus.toLowerCase().includes("saved") || methodStatus.toLowerCase().includes("updated") ? "dashboard-success" : "dashboard-error"}>
-                  {methodStatus}
-                </div>
-              )}
-
-              <button className="btn-primary" type="submit" disabled={savingMethod}>
-                {savingMethod ? "Saving..." : "Add Card"}
-              </button>
-            </form>
-
-            <h3>Saved Cards</h3>
-            <table className="payments-table">
-              <thead>
-                <tr>
-                  <th>Card Holder</th>
-                  <th>Card Type</th>
-                  <th>Card Number</th>
-                  <th>Expiry</th>
-                  <th>Default</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div className="pm-layout">
+              <div className="pm-left">
                 {superAdminMethods.map((method) => (
-                  <tr key={method.id}>
-                    <td>{method.card_holder_name}</td>
-                    <td>{method.card_type}</td>
-                    <td>{method.masked_card_number}</td>
-                    <td>{String(method.expiry_month).padStart(2, "0")}/{String(method.expiry_year).slice(-2)}</td>
-                    <td>{method.is_default ? "Yes" : "No"}</td>
-                    <td>
-                      {!method.is_default && (
-                        <button className="btn-secondary" onClick={() => setDefaultMethod(method.id)}>
-                          Make Default
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <button
+                    key={method.id}
+                    type="button"
+                    className={`pm-card ${Number(selectedMethodId) === Number(method.id) ? "active" : ""}`}
+                    onClick={() => setSelectedMethodId(method.id)}
+                  >
+                    <div className="pm-card-top">
+                      <span>{getMethodBrandLabel(method)}</span>
+                      {method.is_default && <small>Default</small>}
+                    </div>
+                    <div className="pm-card-number">{method.masked_card_number}</div>
+                    <div className="pm-card-bottom">
+                      <span>{getMethodOwnerLabel(method)}</span>
+                      <span>{getMethodSecondaryValue(method)}</span>
+                    </div>
+                  </button>
                 ))}
+
                 {!superAdminMethods.length && (
-                  <tr>
-                    <td colSpan="6" className="no-data">No cards saved yet</td>
-                  </tr>
+                  <div className="pm-card empty">
+                    <div className="pm-card-number">No saved cards</div>
+                    <div className="pm-card-bottom"><span>Add a card using the form</span></div>
+                  </div>
                 )}
-              </tbody>
-            </table>
+              </div>
+
+              <div className="pm-center">
+                <form onSubmit={savePaymentMethod} className="payment-create-form">
+                  <div className="form-row">
+                    <label>Card Holder Name</label>
+                    <input
+                      value={methodForm.cardHolderName}
+                      onChange={(e) => setMethodForm((prev) => ({ ...prev, cardHolderName: e.target.value }))}
+                      placeholder="Card holder name"
+                    />
+                  </div>
+
+                  <div className="form-row">
+                    <label>Card Type</label>
+                    <select
+                      value={methodForm.cardType}
+                      onChange={(e) => setMethodForm((prev) => ({ ...prev, cardType: e.target.value }))}
+                    >
+                      <option value="Visa">Visa</option>
+                      <option value="Mastercard">Mastercard</option>
+                      <option value="Amex">Amex</option>
+                    </select>
+                  </div>
+
+                  <div className="form-row">
+                    <label>Card Number</label>
+                    <input
+                      value={methodForm.cardNumber}
+                      onChange={(e) => setMethodForm((prev) => ({ ...prev, cardNumber: e.target.value }))}
+                      placeholder="xxxx xxxx xxxx xxxx"
+                    />
+                  </div>
+
+                  
+                    <div className="form-row pm-inline-field">
+                      <label>Expiry Month</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="12"
+                        value={methodForm.expiryMonth}
+                        onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryMonth: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="form-row pm-inline-field">
+                      <label>Expiry Year</label>
+                      <input
+                        type="number"
+                        min={new Date().getFullYear()}
+                        value={methodForm.expiryYear}
+                        onChange={(e) => setMethodForm((prev) => ({ ...prev, expiryYear: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="form-row pm-inline-field">
+                      <label>CVV</label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength="4"
+                        value={methodForm.cvv}
+                        onChange={(e) =>
+                          setMethodForm((prev) => ({
+                            ...prev,
+                            cvv: e.target.value.replace(/\D/g, "").slice(0, 4),
+                          }))
+                        }
+                        placeholder="123"
+                      />
+                    </div>
+                  
+
+                  <div className="form-row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={methodForm.isDefault}
+                        onChange={(e) => setMethodForm((prev) => ({ ...prev, isDefault: e.target.checked }))}
+                        style={{ marginRight: 8 }}
+                      />
+                      Set as default card
+                    </label>
+                  </div>
+
+                  {methodStatus && (
+                    <div className={methodStatus.toLowerCase().includes("success") || methodStatus.toLowerCase().includes("saved") || methodStatus.toLowerCase().includes("updated") ? "dashboard-success" : "dashboard-error"}>
+                      {methodStatus}
+                    </div>
+                  )}
+
+                  <div className="pm-actions">
+                    <button className="btn-primary" type="submit" disabled={savingMethod}>
+                      {savingMethod ? "Saving..." : "Add Card"}
+                    </button>
+                    {selectedMethod && !selectedMethod.is_default && (
+                      <button className="btn-secondary" type="button" onClick={() => setDefaultMethod(selectedMethod.id)}>
+                        Make Selected Default
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
+
+              <div className="pm-right">
+                <h4>Card Summary</h4>
+                <div className="pm-summary-box">
+                  <div className="pm-summary-brand">{selectedMethodBrand}</div>
+                  <div className="pm-summary-number">{selectedMethodMasked}</div>
+                  <div className="pm-summary-line"><span>Card Holder</span><strong>{selectedMethodHolder}</strong></div>
+                  <div className="pm-summary-line"><span>{getMethodSecondaryLabel(selectedMethod)}</span><strong>{selectedMethodExpiry}</strong></div>
+                  <div className="pm-summary-line"><span>Saved Cards</span><strong>{superAdminMethods.length}</strong></div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1238,6 +1950,7 @@ export default function ManagePayments() {
                     <th>Status</th>
                     <th>Method</th>
                     <th>Date</th>
+                    <th>Receipt</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1245,7 +1958,7 @@ export default function ManagePayments() {
                     <tr key={payment.id}>
                       <td>{getPaymentDisplayName(payment)}</td>
                       <td>₨ {(payment.amount || 0).toLocaleString()}</td>
-                      <td>{payment.model_type}</td>
+                      <td>{getModelTypeDisplay(payment)}</td>
                       <td>{payment.images_completed || 0}</td>
                       <td>
                         <span className={`status-badge status-${payment.status}`}>
@@ -1254,6 +1967,20 @@ export default function ManagePayments() {
                       </td>
                       <td>{payment.payment_method || "-"}</td>
                       <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0]}</td>
+                      <td>
+                        {canDownloadReceipt(payment) ? (
+                          <button
+                            className="btn-secondary"
+                            type="button"
+                            onClick={() => downloadReceipt(payment.id)}
+                            disabled={downloadingReceiptId === payment.id}
+                          >
+                            {downloadingReceiptId === payment.id ? "Downloading..." : "Download Receipt"}
+                          </button>
+                        ) : (
+                          <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Paid only</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1275,7 +2002,7 @@ export default function ManagePayments() {
               <div className="payment-confirm-meta">
                 <div><strong>User:</strong> {getPaymentDisplayName(approvalDialog.payment)}</div>
                 <div><strong>Amount:</strong> Rs {Number(approvalDialog.payment?.amount || 0).toLocaleString()}</div>
-                <div><strong>Model:</strong> {approvalDialog.payment?.model_type || "-"}</div>
+                <div><strong>Model:</strong> {getModelTypeDisplay(approvalDialog.payment)}</div>
                 <div><strong>Created:</strong> {approvalDialog.payment?.created_at ? new Date(approvalDialog.payment.created_at).toLocaleDateString() : "-"}</div>
               </div>
 
@@ -1295,6 +2022,87 @@ export default function ManagePayments() {
                     : approvalDialog.status === "approved"
                     ? "Approve Payment"
                     : "Reject Payment"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {payDialog.isOpen && (
+          <div className="payment-confirm-overlay" onClick={closePayDialog}>
+            <div className="payment-confirm-modal pay-dialog-modal" onClick={(e) => e.stopPropagation()}>
+              <h3>Pay Payment</h3>
+              <p>Select the recipient card and confirm the super admin source card for this payment.</p>
+
+              {payDialog.loading ? (
+                <div className="form-hint">Loading payment method details...</div>
+              ) : (
+                <>
+                  <div className="pay-dialog-grid">
+                    <div className="pay-dialog-panel">
+                      <div className="pay-dialog-title">Super Admin Source Card</div>
+                      <div className="pay-dialog-card">
+                        <div className="pay-dialog-brand">{defaultMethodBrand}</div>
+                        <div className="pay-dialog-number">{defaultMethodMasked}</div>
+                        <div className="pay-dialog-meta">{defaultMethodHolder}</div>
+                        <div className="pay-dialog-meta">{getMethodSecondaryLabel(defaultMethod)} {getMethodSecondaryValue(defaultMethod)}</div>
+                      </div>
+                    </div>
+
+                    <div className="pay-dialog-panel">
+                      <div className="pay-dialog-title">Recipient Card</div>
+                      {payDialog.recipientMethods.length ? (
+                        <>
+                          <select
+                            value={payDialog.selectedRecipientMethodId}
+                            onChange={(e) =>
+                              setPayDialog((prev) => ({
+                                ...prev,
+                                selectedRecipientMethodId: e.target.value,
+                              }))
+                            }
+                          >
+                            {payDialog.recipientMethods.map((method) => (
+                              <option key={method.id} value={method.id}>
+                                {getMethodOptionLabel(method)} {method.is_default ? "(Default)" : ""}
+                              </option>
+                            ))}
+                          </select>
+
+                          {payDialogRecipientMethod && (
+                            <div className="pay-dialog-card destination">
+                              <div className="pay-dialog-brand">{getMethodBrandLabel(payDialogRecipientMethod)}</div>
+                              <div className="pay-dialog-number">{payDialogRecipientMethod.masked_card_number}</div>
+                              <div className="pay-dialog-meta">{getMethodOwnerLabel(payDialogRecipientMethod)}</div>
+                              <div className="pay-dialog-meta">{getMethodSecondaryLabel(payDialogRecipientMethod)} {getMethodSecondaryValue(payDialogRecipientMethod)}</div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="dashboard-error">Recipient has no saved payment method.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="payment-confirm-meta">
+                    <div><strong>User:</strong> {getPaymentDisplayName(payDialog.payment)}</div>
+                    <div><strong>Amount:</strong> Rs {Number(payDialog.payment?.amount || 0).toLocaleString()}</div>
+                    <div><strong>Model:</strong> {getModelTypeDisplay(payDialog.payment)}</div>
+                  </div>
+                </>
+              )}
+
+              <div className="payment-confirm-actions">
+                <button className="btn-secondary" type="button" onClick={closePayDialog} disabled={payDialog.submitting}>
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  type="button"
+                  onClick={confirmPayNow}
+                  disabled={payDialog.loading || payDialog.submitting || !payDialog.selectedRecipientMethodId}
+                >
+                  {payDialog.submitting ? "Processing..." : "Confirm Pay"}
                 </button>
               </div>
             </div>

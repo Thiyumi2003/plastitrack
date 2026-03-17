@@ -261,7 +261,7 @@ const calculateAdminPaymentEligibility = async (connection, adminId) => {
       `SELECT COALESCE(SUM(p.paid_minutes), 0) as total_paid_minutes
        FROM payments p
        JOIN users u ON p.user_id = u.id
-       WHERE p.user_id = ? AND u.role = 'admin' AND p.status IN ('approved', 'ready_to_pay', 'paid')`,
+       WHERE p.user_id = ? AND u.role = 'admin' AND p.status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')`,
       [adminId]
     );
 
@@ -1513,9 +1513,13 @@ router.get("/reports/payment-report", verifyToken, async (req, res) => {
       whereClause += " AND p.created_at <= ?";
       params.push(endDate);
     }
-    if (statusFilter && statusFilter !== 'all') {
-      whereClause += " AND p.status = ?";
-      params.push(statusFilter);
+    if (statusFilter && statusFilter !== "all") {
+      if (statusFilter === "pending") {
+        whereClause += " AND p.status IN ('pending_calculation', 'pending_approval')";
+      } else {
+        whereClause += " AND p.status = ?";
+        params.push(statusFilter);
+      }
     }
 
     // Get payment data with user information
@@ -1523,15 +1527,47 @@ router.get("/reports/payment-report", verifyToken, async (req, res) => {
       `SELECT 
         p.id,
         p.user_id,
-        u.name as annotatorName,
-        u.email as annotatorEmail,
+        u.name as user_name,
+        u.email as user_email,
+        u.role as user_role,
         p.images_completed as completedTasks,
+        p.images_completed,
+        p.objects_count,
+        p.hours,
+        p.paid_minutes,
+        p.minute_rate,
+        p.rate_used,
         p.amount,
         p.status,
+        p.payment_method,
+        p.payment_method_id,
         p.payment_date,
         p.approved_date,
         p.created_at,
+        p.updated_at,
         p.model_type,
+        CASE
+          WHEN p.model_type IS NULL OR p.model_type = '' THEN p.model_type
+          WHEN u.role = 'annotator' THEN (
+            SELECT SUBSTRING_INDEX(i1.image_name, '_', 2)
+            FROM images i1
+            WHERE i1.annotator_id = p.user_id
+              AND i1.model_type = p.model_type
+              AND i1.image_name IS NOT NULL
+            ORDER BY i1.id ASC
+            LIMIT 1
+          )
+          WHEN u.role = 'tester' THEN (
+            SELECT SUBSTRING_INDEX(i2.image_name, '_', 2)
+            FROM images i2
+            WHERE i2.tester_id = p.user_id
+              AND i2.model_type = p.model_type
+              AND i2.image_name IS NOT NULL
+            ORDER BY i2.id ASC
+            LIMIT 1
+          )
+          ELSE p.model_type
+        END as model_type_display,
         approver.name as approvedBy
        FROM payments p
        INNER JOIN users u ON p.user_id = u.id
@@ -1546,24 +1582,42 @@ router.get("/reports/payment-report", verifyToken, async (req, res) => {
     const payments = rows.map((row) => ({
       id: row.id,
       userId: row.user_id,
-      annotatorName: row.annotatorName,
-      annotatorEmail: row.annotatorEmail,
-      completedTasks: row.completedTasks || 0,
-      amount: Number(row.amount || 0).toFixed(2),
+      userName: row.user_name,
+      userEmail: row.user_email,
+      userRole: row.user_role,
+      completedTasks: Number(row.completedTasks || 0),
+      imagesCompleted: Number(row.images_completed || 0),
+      objectsCount: Number(row.objects_count || 0),
+      hours: Number(row.hours || 0),
+      paidMinutes: Number(row.paid_minutes || 0),
+      minuteRate: Number(row.minute_rate || 0),
+      rateUsed: Number(row.rate_used || 0),
+      amount: Number(row.amount || 0),
       status: row.status,
+      paymentMethod: row.payment_method,
+      paymentMethodId: row.payment_method_id,
       paymentDate: row.payment_date,
       approvedDate: row.approved_date,
       approvedBy: row.approvedBy || 'Pending',
       modelType: row.model_type,
+      modelTypeDisplay: row.model_type_display || row.model_type,
       createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      // Backward compatibility for existing report views.
+      annotatorName: row.user_name,
+      annotatorEmail: row.user_email,
     }));
 
     // Calculate summary statistics
     const totalAmount = payments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const pendingCount = payments.filter(p => p.status === 'pending').length;
-    const approvedCount = payments.filter(p => p.status === 'approved').length;
-    const paidCount = payments.filter(p => p.status === 'paid').length;
-    const rejectedCount = payments.filter(p => p.status === 'rejected').length;
+    const pendingCount = payments.filter(
+      (p) => p.status === "pending" || p.status === "pending_calculation" || p.status === "pending_approval"
+    ).length;
+    const approvedCount = payments.filter(
+      (p) => p.status === "approved" || p.status === "ready_to_pay"
+    ).length;
+    const paidCount = payments.filter((p) => p.status === "paid").length;
+    const rejectedCount = payments.filter((p) => p.status === "rejected").length;
 
     res.json({
       filters: { 
@@ -1574,7 +1628,7 @@ router.get("/reports/payment-report", verifyToken, async (req, res) => {
       payments,
       summary: {
         totalPayments: payments.length,
-        totalAmount: totalAmount.toFixed(2),
+        totalAmount,
         pendingCount,
         approvedCount,
         paidCount,
@@ -2047,6 +2101,28 @@ router.get("/payment-history", verifyToken, async (req, res) => {
         u.role as user_role,
         p.amount,
         p.model_type,
+        CASE
+          WHEN p.model_type IS NULL OR p.model_type = '' THEN p.model_type
+          WHEN u.role = 'annotator' THEN (
+            SELECT SUBSTRING_INDEX(i1.image_name, '_', 2)
+            FROM images i1
+            WHERE i1.annotator_id = p.user_id
+              AND i1.model_type = p.model_type
+              AND i1.image_name IS NOT NULL
+            ORDER BY i1.id ASC
+            LIMIT 1
+          )
+          WHEN u.role = 'tester' THEN (
+            SELECT SUBSTRING_INDEX(i2.image_name, '_', 2)
+            FROM images i2
+            WHERE i2.tester_id = p.user_id
+              AND i2.model_type = p.model_type
+              AND i2.image_name IS NOT NULL
+            ORDER BY i2.id ASC
+            LIMIT 1
+          )
+          ELSE p.model_type
+        END as model_type_display,
         p.images_completed,
         p.objects_count,
         p.hours,
@@ -2087,6 +2163,240 @@ router.get("/payment-history", verifyToken, async (req, res) => {
   }
 });
 
+// GET Payment receipt details (super admin only)
+router.get("/payments/:id/receipt", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const paymentId = Number(req.params.id);
+    if (!paymentId) {
+      return res.status(400).json({ error: "Valid payment id is required" });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      const [paymentRows] = await connection.execute(
+        `SELECT
+          p.id,
+          p.user_id,
+          p.amount,
+          p.model_type,
+          p.images_completed,
+          p.objects_count,
+          p.hours,
+          p.paid_minutes,
+          p.minute_rate,
+          p.rate_used,
+          p.status,
+          p.payment_method,
+          p.payment_method_id,
+          p.payment_date,
+          p.approved_date,
+          p.created_at,
+          p.updated_at,
+          u.name as user_name,
+          u.email as user_email,
+          u.role as user_role,
+          approver.name as approved_by_name
+         FROM payments p
+         LEFT JOIN users u ON u.id = p.user_id
+         LEFT JOIN users approver ON approver.id = p.approved_by
+         WHERE p.id = ?
+         LIMIT 1`,
+        [paymentId]
+      );
+
+      if (!paymentRows.length) {
+        return res.status(404).json({ error: "Payment not found" });
+      }
+
+      const payment = paymentRows[0];
+      if (payment.status !== PAYMENT_STATUS.PAID) {
+        return res.status(400).json({ error: "Receipt can only be downloaded for paid transactions" });
+      }
+
+      const deriveModelLabel = (imageName, fallbackModelType) => {
+        const fallback = fallbackModelType || null;
+        if (!imageName) return fallback;
+        const parts = String(imageName).split("_").filter(Boolean);
+        if (parts.length >= 2) {
+          return `${parts[0]}_${parts[1]}`;
+        }
+        return fallback;
+      };
+
+      const receipt = {
+        receiptNumber: `PTR-${String(payment.id).padStart(6, "0")}`,
+        paymentId: payment.id,
+        userId: payment.user_id,
+        userName: payment.user_name,
+        userEmail: payment.user_email,
+        userRole: payment.user_role,
+        amount: Number(payment.amount || 0),
+        modelType: payment.model_type,
+        modelTypeDisplay: payment.model_type,
+        imagesCompleted: Number(payment.images_completed || 0),
+        objectsCount: Number(payment.objects_count || 0),
+        hours: Number(payment.hours || 0),
+        paidMinutes: Number(payment.paid_minutes || 0),
+        minuteRate: Number(payment.minute_rate || 0),
+        rateUsed: Number(payment.rate_used || 0),
+        status: payment.status,
+        paymentMethod: payment.payment_method || "-",
+        paymentDate: payment.payment_date,
+        approvedDate: payment.approved_date,
+        createdAt: payment.created_at,
+        updatedAt: payment.updated_at,
+        approvedBy: payment.approved_by_name || null,
+        lineItems: [],
+        summary: {},
+      };
+
+      if (payment.user_role === "admin") {
+        const [priorPaymentsRows] = await connection.execute(
+          `SELECT COALESCE(SUM(COALESCE(paid_minutes, 0)), 0) as prior_paid_minutes
+           FROM payments
+           WHERE user_id = ?
+             AND id <> ?
+             AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')
+             AND (
+               created_at < ? OR
+               (created_at = ? AND id < ?)
+             )`,
+          [payment.user_id, payment.id, payment.created_at, payment.created_at, payment.id]
+        );
+
+        const priorPaidMinutes = Number(priorPaymentsRows?.[0]?.prior_paid_minutes || 0);
+        const [workHourRows] = await connection.execute(
+          `SELECT
+            id,
+            date,
+            hours_worked,
+            task_description,
+            status,
+            session_start,
+            session_end,
+            created_at,
+            updated_at
+           FROM work_hours
+           WHERE admin_id = ? AND status = 'approved'
+           ORDER BY date ASC, id ASC`,
+          [payment.user_id]
+        );
+
+        let consumedMinutes = priorPaidMinutes;
+        let remainingMinutes = Number(payment.paid_minutes || Math.round(Number(payment.hours || 0) * 60) || 0);
+        const allocatedRows = [];
+
+        for (const row of workHourRows) {
+          if (remainingMinutes <= 0) break;
+
+          const workedMinutes = Math.max(0, Math.round(Number(row.hours_worked || 0) * 60));
+          if (workedMinutes <= 0) continue;
+
+          if (consumedMinutes >= workedMinutes) {
+            consumedMinutes -= workedMinutes;
+            continue;
+          }
+
+          const availableMinutes = workedMinutes - consumedMinutes;
+          const allocatedMinutes = Math.min(availableMinutes, remainingMinutes);
+
+          if (allocatedMinutes > 0) {
+            allocatedRows.push({
+              workHourId: row.id,
+              workDate: row.date,
+              description: row.task_description || "-",
+              workedHours: Number(row.hours_worked || 0),
+              workedMinutes,
+              allocatedMinutes,
+              allocatedHours: Number((allocatedMinutes / 60).toFixed(2)),
+              sessionStart: row.session_start,
+              sessionEnd: row.session_end,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            });
+          }
+
+          remainingMinutes -= allocatedMinutes;
+          consumedMinutes = 0;
+        }
+
+        receipt.lineItems = allocatedRows;
+        receipt.summary = {
+          priorPaidMinutes,
+          allocatedMinutes: allocatedRows.reduce((sum, row) => sum + Number(row.allocatedMinutes || 0), 0),
+          allocatedHours: Number(
+            (allocatedRows.reduce((sum, row) => sum + Number(row.allocatedMinutes || 0), 0) / 60).toFixed(2)
+          ),
+          hourlyRate: Number(payment.rate_used || 0),
+          minuteRate: Number(payment.minute_rate || 0),
+          remainingUnmatchedMinutes: Math.max(0, remainingMinutes),
+        };
+      } else if (["annotator", "tester"].includes(payment.user_role)) {
+        const roleColumn = payment.user_role === "annotator" ? "annotator_id" : "tester_id";
+        const allowedStatuses = payment.user_role === "annotator" ? ["approved"] : ["approved", "rejected"];
+        const statusPlaceholders = allowedStatuses.map(() => "?").join(", ");
+        const [imageRows] = await connection.execute(
+          `SELECT
+            i.id,
+            i.image_name,
+            i.model_type,
+            i.objects_count,
+            i.status,
+            i.created_at,
+            i.updated_at
+           FROM images i
+           WHERE i.${roleColumn} = ?
+             AND i.model_type = ?
+             AND i.status IN (${statusPlaceholders})
+             AND i.updated_at <= ?
+           ORDER BY i.updated_at ASC, i.id ASC`,
+          [payment.user_id, payment.model_type, ...allowedStatuses, payment.created_at]
+        );
+
+        const perObjectRate = Number(payment.rate_used || 0);
+        receipt.lineItems = imageRows.map((row) => ({
+          modelLabel: deriveModelLabel(row.image_name, row.model_type),
+          imageId: row.id,
+          imageName: row.image_name,
+          modelType: row.model_type,
+          status: row.status,
+          objectsCount: Number(row.objects_count || 0),
+          paidAmount: Number((Number(row.objects_count || 0) * perObjectRate).toFixed(2)),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+
+        const uniqueModelLabels = Array.from(
+          new Set(receipt.lineItems.map((row) => row.modelLabel).filter(Boolean))
+        );
+        if (uniqueModelLabels.length === 1) {
+          receipt.modelTypeDisplay = uniqueModelLabels[0];
+        } else if (uniqueModelLabels.length > 1) {
+          receipt.modelTypeDisplay = uniqueModelLabels.join(", ");
+        }
+
+        receipt.summary = {
+          imageSetCount: receipt.lineItems.length,
+          totalObjects: receipt.lineItems.reduce((sum, row) => sum + Number(row.objectsCount || 0), 0),
+          perObjectRate,
+        };
+      }
+
+      res.json({ receipt });
+    } finally {
+      await connection.release();
+    }
+  } catch (err) {
+    console.error("Payment receipt error:", err);
+    res.status(500).json({ error: "Failed to fetch payment receipt" });
+  }
+});
+
 // GET Model-based payment details (super admin only)
 router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
   try {
@@ -2124,11 +2434,22 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
 
     const modelMap = new Map();
 
+    const deriveModelTypeDisplay = (imageName, fallbackModelType) => {
+      const fallback = fallbackModelType || "Unknown";
+      if (!imageName) return fallback;
+      const parts = String(imageName).split("_").filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0]}_${parts[1]}`;
+      }
+      return fallback;
+    };
+
     rows.forEach((row) => {
       const modelType = row.model_type || "Unknown";
       if (!modelMap.has(modelType)) {
         modelMap.set(modelType, {
           modelType,
+          modelTypeDisplay: deriveModelTypeDisplay(row.image_name, modelType),
           totalImages: 0,
           finalizedImages: 0,
           approvedImages: 0,
@@ -2139,6 +2460,9 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
       }
 
       const model = modelMap.get(modelType);
+      if (!model.modelTypeDisplay || model.modelTypeDisplay === modelType) {
+        model.modelTypeDisplay = deriveModelTypeDisplay(row.image_name, modelType);
+      }
       const objectsCount = Number(row.objects_count || 0);
       const annotatorRate = Number(row.annotator_rate || 0);
       const testerRate = Number(row.tester_rate || 0);
@@ -2276,12 +2600,252 @@ router.get("/model-payments", verifyToken, async (req, res) => {
   }
 });
 
+// POST Automatically generate pending payments (super admin only)
+router.post("/payments/auto-generate", verifyToken, async (req, res) => {
+  if (!isSuperAdmin(req)) {
+    return res.status(403).json({ error: "Not authorized" });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    const created = [];
+    const skipped = [];
+    const insertAutoPaymentRecord = async (payload) => {
+      const {
+        userId,
+        amount,
+        modelType = null,
+        imageSets = 0,
+        objectsCount = 0,
+        hours = 0,
+        paidMinutes = null,
+        minuteRate = null,
+        rateUsed = 0,
+      } = payload;
+
+      const [result] = await connection.execute(
+        `INSERT INTO payments (
+          user_id,
+          amount,
+          model_type,
+          images_completed,
+          objects_count,
+          hours,
+          paid_minutes,
+          minute_rate,
+          rate_used,
+          payment_method,
+          status,
+          payment_date,
+          approved_date,
+          approved_by,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          userId,
+          Number(amount.toFixed(2)),
+          modelType,
+          Number(imageSets || 0),
+          Number(objectsCount || 0),
+          Number(hours || 0),
+          paidMinutes === null ? null : Number(paidMinutes || 0),
+          minuteRate === null ? null : Number(minuteRate || 0),
+          Number(rateUsed || 0),
+          "bank",
+          PAYMENT_STATUS.PENDING_APPROVAL,
+          null,
+          null,
+          null,
+        ]
+      );
+
+      return result.insertId;
+    };
+
+    const [completeModels] = await connection.execute(
+      `SELECT model_type
+       FROM images
+       WHERE model_type IS NOT NULL AND model_type <> ''
+       GROUP BY model_type
+       HAVING COUNT(*) = SUM(CASE WHEN status IN ('approved', 'rejected') THEN 1 ELSE 0 END)`
+    );
+
+    const modelTypes = completeModels.map((row) => row.model_type);
+
+    for (const modelType of modelTypes) {
+      const [annotators] = await connection.execute(
+        `SELECT
+          u.id as user_id,
+          COUNT(*) as image_sets,
+          COALESCE(SUM(i.objects_count), 0) as object_count
+         FROM images i
+         INNER JOIN users u ON u.id = i.annotator_id AND u.role = 'annotator'
+         WHERE i.model_type = ?
+           AND i.status = 'approved'
+           AND i.annotator_id IS NOT NULL
+         GROUP BY u.id`,
+        [modelType]
+      );
+
+      for (const row of annotators) {
+        const userId = Number(row.user_id);
+        const objectCount = Number(row.object_count || 0);
+        if (!userId || objectCount <= 0) continue;
+
+        const [existing] = await connection.execute(
+          `SELECT id FROM payments
+           WHERE user_id = ? AND model_type = ?
+             AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')
+           LIMIT 1`,
+          [userId, modelType]
+        );
+
+        if (existing.length > 0) {
+          skipped.push({ role: "annotator", userId, modelType, reason: "payment already exists" });
+          continue;
+        }
+
+        const rate = await getRoleRate(connection, userId, "annotator");
+        const amount = objectCount * rate;
+        if (amount <= 0) {
+          skipped.push({ role: "annotator", userId, modelType, reason: "rate or amount is zero" });
+          continue;
+        }
+
+        const paymentId = await insertAutoPaymentRecord({
+          userId,
+          amount,
+          modelType,
+          imageSets: Number(row.image_sets || 0),
+          objectsCount: objectCount,
+          hours: 0,
+          rateUsed: rate,
+        });
+
+        created.push({ paymentId, role: "annotator", userId, modelType, amount: Number(amount.toFixed(2)) });
+      }
+
+      const [testers] = await connection.execute(
+        `SELECT
+          u.id as user_id,
+          COUNT(*) as image_sets,
+          COALESCE(SUM(i.objects_count), 0) as object_count
+         FROM images i
+         INNER JOIN users u ON u.id = i.tester_id AND u.role = 'tester'
+         WHERE i.model_type = ?
+           AND i.status IN ('approved', 'rejected')
+           AND i.tester_id IS NOT NULL
+         GROUP BY u.id`,
+        [modelType]
+      );
+
+      for (const row of testers) {
+        const userId = Number(row.user_id);
+        const objectCount = Number(row.object_count || 0);
+        if (!userId || objectCount <= 0) continue;
+
+        const [existing] = await connection.execute(
+          `SELECT id FROM payments
+           WHERE user_id = ? AND model_type = ?
+             AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')
+           LIMIT 1`,
+          [userId, modelType]
+        );
+
+        if (existing.length > 0) {
+          skipped.push({ role: "tester", userId, modelType, reason: "payment already exists" });
+          continue;
+        }
+
+        const rate = await getRoleRate(connection, userId, "tester");
+        const amount = objectCount * rate;
+        if (amount <= 0) {
+          skipped.push({ role: "tester", userId, modelType, reason: "rate or amount is zero" });
+          continue;
+        }
+
+        const paymentId = await insertAutoPaymentRecord({
+          userId,
+          amount,
+          modelType,
+          imageSets: Number(row.image_sets || 0),
+          objectsCount: objectCount,
+          hours: 0,
+          rateUsed: rate,
+        });
+
+        created.push({ paymentId, role: "tester", userId, modelType, amount: Number(amount.toFixed(2)) });
+      }
+    }
+
+    const [admins] = await connection.execute(
+      `SELECT id FROM users WHERE role = 'admin'`
+    );
+
+    for (const admin of admins) {
+      const adminId = Number(admin.id);
+      if (!adminId) continue;
+
+      const eligibility = await calculateAdminPaymentEligibility(connection, adminId);
+      if (eligibility.error || !eligibility.paymentEligible || Number(eligibility.remainingMinutes || 0) <= 0) {
+        skipped.push({ role: "admin", userId: adminId, reason: eligibility.error || "not eligible" });
+        continue;
+      }
+
+      const payMinutes = Number(eligibility.remainingMinutes || 0);
+      const amount = payMinutes * Number(eligibility.minuteRate || 0);
+
+      if (amount <= 0) {
+        skipped.push({ role: "admin", userId: adminId, reason: "rate or amount is zero" });
+        continue;
+      }
+
+      const paymentId = await insertAutoPaymentRecord({
+        userId: adminId,
+        amount,
+        modelType: null,
+        imageSets: 0,
+        objectsCount: 0,
+        hours: Number((payMinutes / 60).toFixed(2)),
+        paidMinutes: payMinutes,
+        minuteRate: Number(eligibility.minuteRate || 0),
+        rateUsed: Number(eligibility.hourlyRate || 0),
+      });
+
+      created.push({ paymentId, role: "admin", userId: adminId, paidMinutes: payMinutes, amount: Number(amount.toFixed(2)) });
+    }
+
+    res.status(201).json({
+      message: `Auto payment generation completed. Created ${created.length} payment(s).`,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      created,
+      skipped,
+    });
+  } catch (err) {
+    console.error("Auto-generate payments error:", err);
+    res.status(500).json({
+      error: "Failed to auto-generate payments",
+      details: err.message,
+      code: err.code || null,
+    });
+  } finally {
+    await connection.release();
+  }
+});
+
 // POST Calculate/Create payment by role rules
 router.post("/payments", verifyToken, async (req, res) => {
   try {
     if (!isSuperAdmin(req)) {
       return res.status(403).json({ error: "Not authorized" });
     }
+
+    return res.status(410).json({
+      error: "Manual payment creation is disabled. Use auto-generate payments.",
+      endpoint: "/api/dashboard/payments/auto-generate",
+    });
 
     const { user_id, model_type, payment_method } = req.body;
     const userId = Number(user_id);
@@ -2363,6 +2927,11 @@ router.post("/admin-payments", verifyToken, async (req, res) => {
       return res.status(403).json({ error: "Not authorized" });
     }
 
+    return res.status(410).json({
+      error: "Manual admin payment creation is disabled. Use auto-generate payments.",
+      endpoint: "/api/dashboard/payments/auto-generate",
+    });
+
     const { admin_id, pay_minutes, source_payment_method_id } = req.body;
     const adminId = Number(admin_id);
 
@@ -2443,6 +3012,7 @@ router.post("/admin-payments", verifyToken, async (req, res) => {
           calculation.minuteRate,
           calculation.eligibility.hourlyRate,
           source_payment_method_id,
+          null,
           null,
           null,
         ]

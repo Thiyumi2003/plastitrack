@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, Users, BarChart3, CreditCard, DollarSign, LogOut, Clock, User } from "lucide-react";
+import { Menu, X, LayoutDashboard, Users, BarChart3, CreditCard, DollarSign, LogOut, User } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "./sidebar.css";
@@ -29,9 +29,8 @@ export default function Sidebar() {
     { label: "Manage Admins", icon: Users, path: "/manage-admins" },
     { label: "View All Users", icon: Users, path: "/view-users" },
     { label: "Rate Management", icon: DollarSign, path: "/manage-rates" },
-    { label: "Reports", icon: BarChart3, path: "/reports" },
     { label: "Manage Payments", icon: CreditCard, path: "/payments" },
-    { label: "Admin Work Hours", icon: Clock, path: "/admin-work-hours" },
+    { label: "Reports", icon: BarChart3, path: "/reports" },
     { label: "Profile", icon: User, path: "/profile" },
   ];
 

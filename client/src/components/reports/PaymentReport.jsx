@@ -5,7 +5,7 @@ import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./Filt
 
 /**
  * Payment Report Component
- * Tracks annotator payments with status filtering and detailed tables
+ * Displays full payment-level details for all roles.
  */
 export const PaymentReport = () => {
   const { fetchData, loading, error, clearCache } = useReportsData();
@@ -64,10 +64,13 @@ export const PaymentReport = () => {
     switch (status) {
       case "paid":
         return { bg: "#d4edda", color: "#155724" };
+      case "ready_to_pay":
       case "approved":
         return { bg: "#d1ecf1", color: "#0c5460" };
       case "rejected":
         return { bg: "#f8d7da", color: "#721c24" };
+      case "pending_calculation":
+      case "pending_approval":
       case "pending":
         return { bg: "#fff3cd", color: "#856404" };
       default:
@@ -75,28 +78,52 @@ export const PaymentReport = () => {
     }
   };
 
+  const formatDate = (value) => (value ? new Date(value).toLocaleString() : "-");
+
   const handleExportExcel = () => {
-    const data = payments.map((payment) => ({
-      "Annotator Name": payment.annotatorName,
-      "Completed Tasks": payment.completedTasks,
-      "Payment Amount (Rs)": payment.amount,
-      "Status": payment.status.toUpperCase(),
+    const data = payments.map((payment, index) => ({
+      "Payment ID": index + 1,
+      "User Name": payment.userName || payment.annotatorName,
+      Role: payment.userRole || "-",
+      "User Email": payment.userEmail || payment.annotatorEmail || "-",
+      "Model Type": payment.modelTypeDisplay || payment.modelType || "-",
+      "Images Completed": payment.imagesCompleted ?? payment.completedTasks ?? 0,
+      "Objects Count": payment.objectsCount ?? 0,
+      Hours: Number(payment.hours || 0).toFixed(2),
+      "Paid Minutes": payment.paidMinutes ?? 0,
+      "Rate Used": Number(payment.rateUsed || 0).toFixed(2),
+      "Minute Rate": Number(payment.minuteRate || 0).toFixed(2),
+      "Payment Amount (Rs)": Number(payment.amount || 0).toFixed(2),
+      Status: String(payment.status || "").toUpperCase(),
+      Method: payment.paymentMethod || "-",
       "Approved By": payment.approvedBy || "-",
-      "Payment Date": payment.paymentDate ? new Date(payment.paymentDate).toLocaleDateString() : "-",
+      "Approved Date": formatDate(payment.approvedDate),
+      "Payment Date": formatDate(payment.paymentDate),
+      "Created At": formatDate(payment.createdAt),
     }));
     ExportService.exportToExcel(data, "payment-report.xlsx", "Payments");
   };
 
   const handleExportPDF = async () => {
-    const rows = (payments || []).map((payment) => ({
-      "Annotator Name": payment.annotatorName,
-      "Completed Tasks": payment.completedTasks,
-      "Amount (Rs)": payment.amount,
+    const rows = (payments || []).map((payment, index) => ({
+      "Payment ID": index + 1,
+      "User Name": payment.userName || payment.annotatorName,
+      Role: payment.userRole || "-",
+      "User Email": payment.userEmail || payment.annotatorEmail || "-",
+      "Model Type": payment.modelTypeDisplay || payment.modelType || "-",
+      "Images Completed": payment.imagesCompleted ?? payment.completedTasks ?? 0,
+      "Objects Count": payment.objectsCount ?? 0,
+      Hours: Number(payment.hours || 0).toFixed(2),
+      "Paid Minutes": payment.paidMinutes ?? 0,
+      "Rate Used": Number(payment.rateUsed || 0).toFixed(2),
+      "Minute Rate": Number(payment.minuteRate || 0).toFixed(2),
+      "Amount (Rs)": Number(payment.amount || 0).toFixed(2),
       Status: payment.status,
+      Method: payment.paymentMethod || "-",
       "Approved By": payment.approvedBy || "-",
-      "Payment Date": payment.paymentDate
-        ? new Date(payment.paymentDate).toLocaleDateString()
-        : "-",
+      "Approved Date": formatDate(payment.approvedDate),
+      "Payment Date": formatDate(payment.paymentDate),
+      "Created At": formatDate(payment.createdAt),
     }));
 
     await ExportService.exportReportTemplateToPDF(
@@ -119,12 +146,24 @@ export const PaymentReport = () => {
           {
             title: "Payment Details",
             columns: [
-              "Annotator Name",
-              "Completed Tasks",
+              "Payment ID",
+              "User Name",
+              "Role",
+              "User Email",
+              "Model Type",
+              "Images Completed",
+              "Objects Count",
+              "Hours",
+              "Paid Minutes",
+              "Rate Used",
+              "Minute Rate",
               "Amount (Rs)",
               "Status",
+              "Method",
               "Approved By",
+              "Approved Date",
               "Payment Date",
+              "Created At",
             ],
             rows,
           },
@@ -143,7 +182,7 @@ export const PaymentReport = () => {
     <div id="payment-report">
       <ReportHeader
         title="Payment Report"
-        description="Annotator payment tracking and approval status"
+        description="Complete payment report with all transaction details"
         onExportExcel={handleExportExcel}
         onExportPDF={handleExportPDF}
       />
@@ -154,7 +193,15 @@ export const PaymentReport = () => {
         showDateFilters
         showRoleFilter={false}
         showStatusFilter
-        statusOptions={["pending", "approved", "paid", "rejected"]}
+        statusOptions={[
+          "pending",
+          "pending_calculation",
+          "pending_approval",
+          "approved",
+          "ready_to_pay",
+          "paid",
+          "rejected",
+        ]}
       />
 
       {loading ? (
@@ -227,25 +274,47 @@ export const PaymentReport = () => {
                 <table className="reports-table">
                   <thead>
                     <tr>
-                      <th>Annotator Name</th>
-                      <th>Completed Tasks</th>
+                      <th>Payment ID</th>
+                      <th>User Name</th>
+                      <th>Role</th>
+                      <th>Email</th>
+                      <th>Model</th>
+                      <th>Images</th>
+                      <th>Objects</th>
+                      <th>Hours</th>
+                      <th>Paid Minutes</th>
+                      <th>Rate Used</th>
+                      <th>Minute Rate</th>
                       <th>Amount (Rs)</th>
                       <th>Status</th>
+                      <th>Method</th>
                       <th>Approved By</th>
+                      <th>Approved Date</th>
                       <th>Payment Date</th>
+                      <th>Created At</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedData.map((payment) => {
+                    {paginatedData.map((payment, index) => {
                       const statusColor = getStatusColor(payment.status);
+                      const paymentOrder = (currentPage - 1) * pageSize + index + 1;
                       return (
                         <tr key={payment.id}>
+                          <td>{paymentOrder}</td>
                           <td style={{ fontWeight: "500" }}>
-                            {payment.annotatorName}
+                            {payment.userName || payment.annotatorName}
                           </td>
-                          <td>{payment.completedTasks}</td>
+                          <td>{payment.userRole || "-"}</td>
+                          <td>{payment.userEmail || payment.annotatorEmail || "-"}</td>
+                          <td>{payment.modelTypeDisplay || payment.modelType || "-"}</td>
+                          <td>{payment.imagesCompleted ?? payment.completedTasks ?? 0}</td>
+                          <td>{payment.objectsCount ?? 0}</td>
+                          <td>{Number(payment.hours || 0).toFixed(2)}</td>
+                          <td>{payment.paidMinutes ?? 0}</td>
+                          <td>{Number(payment.rateUsed || 0).toFixed(2)}</td>
+                          <td>{Number(payment.minuteRate || 0).toFixed(2)}</td>
                           <td style={{ fontWeight: "500", color: "#2c3e50" }}>
-                            Rs. {payment.amount.toLocaleString("en-IN")}
+                            Rs. {Number(payment.amount || 0).toLocaleString("en-IN")}
                           </td>
                           <td>
                             <span
@@ -258,16 +327,14 @@ export const PaymentReport = () => {
                                 color: statusColor.color,
                               }}
                             >
-                              {payment.status.charAt(0).toUpperCase() +
-                                payment.status.slice(1)}
+                              {String(payment.status || "-").replace(/_/g, " ")}
                             </span>
                           </td>
+                          <td>{payment.paymentMethod || "-"}</td>
                           <td>{payment.approvedBy || "-"}</td>
-                          <td>
-                            {payment.paymentDate
-                              ? new Date(payment.paymentDate).toLocaleDateString()
-                              : "-"}
-                          </td>
+                          <td>{formatDate(payment.approvedDate)}</td>
+                          <td>{formatDate(payment.paymentDate)}</td>
+                          <td>{formatDate(payment.createdAt)}</td>
                         </tr>
                       );
                     })}
