@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import TesterSidebar from "./TesterSidebar";
 import "../annotator/annotator.css";
 
 export default function TesterDashboard() {
@@ -76,15 +75,13 @@ export default function TesterDashboard() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <TesterSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! 👋</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! 👋</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         <div className="kpi-section">
           <div className="kpi-card">
@@ -104,63 +101,60 @@ export default function TesterDashboard() {
           </div>
         </div>
 
-        <div className="tasks-section">
-          <h2>Pending Image Sets</h2>
-          <div className="table-container">
-            <table className="tasks-table">
-              <thead>
-                <tr>
-                  <th>IMAGE NAME</th>
-                  <th>TASK ID</th>
-                  <th>STATUS</th>
-                  <th>ASSIGNED DATE</th>
-                  <th>ASSIGNED BY</th>
-                  <th>FEEDBACK</th>
-                  <th>ACTION</th>
+      <div className="tasks-section">
+        <h2>Pending Image Sets</h2>
+        <div className="table-container">
+          <table className="tasks-table">
+            <thead>
+              <tr>
+                <th>IMAGE NAME</th>
+                <th>TASK ID</th>
+                <th>STATUS</th>
+                <th>ASSIGNED DATE</th>
+                <th>ASSIGNED BY</th>
+                <th>FEEDBACK</th>
+                <th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => (
+                <tr key={task.id}>
+                  <td>
+                    <div className="task-image-col">{task.image_name}</div>
+                  </td>
+                  <td>{task.task_id}</td>
+                  <td>
+                    <span
+                      className={`status-badge status-${task.status?.replace("_", "-")}`}
+                    >
+                      {task.status === "approved"
+                        ? "Approved"
+                        : task.status === "rejected"
+                        ? "Rejected"
+                        : task.status?.charAt(0).toUpperCase() + task.status?.slice(1)}
+                    </span>
+                  </td>
+                  <td>{task.assigned_date ? new Date(task.assigned_date).toLocaleDateString() : "-"}</td>
+                  <td>{task.assigned_by_name || "-"}</td>
+                  <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
+                    {task.notes ? (
+                      <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
+                    ) : (
+                      <span style={{ color: "#999" }}>-</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      className="action-btn"
+                      onClick={() => openReviewModal(task)}
+                    >
+                      Start Review
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {tasks.map((task) => (
-                  <tr key={task.id}>
-                    <td>
-                      <div className="task-image-col">
-                        {task.image_name}
-                      </div>
-                    </td>
-                    <td>{task.task_id}</td>
-                    <td>
-                      <span
-                        className={`status-badge status-${task.status?.replace("_", "-")}`}
-                      >
-                        {task.status === "approved"
-                          ? "Approved"
-                          : task.status === "rejected"
-                          ? "Rejected"
-                          : task.status?.charAt(0).toUpperCase() + task.status?.slice(1)}
-                      </span>
-                    </td>
-                    <td>{task.assigned_date ? new Date(task.assigned_date).toLocaleDateString() : "-"}</td>
-                    <td>{task.assigned_by_name || "-"}</td>
-                    <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={task.notes || ""}>
-                      {task.notes ? (
-                        <span style={{ color: "#666", fontSize: "13px" }}>{task.notes}</span>
-                      ) : (
-                        <span style={{ color: "#999" }}>-</span>
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        className="action-btn"
-                        onClick={() => openReviewModal(task)}
-                      >
-                        Start Review
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -238,6 +232,6 @@ export default function TesterDashboard() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

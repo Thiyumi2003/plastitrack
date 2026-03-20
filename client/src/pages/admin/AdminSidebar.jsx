@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import axios from "axios";
 import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, DollarSign, Clock, User } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
@@ -8,7 +9,6 @@ import "../superadmin/sidebar.css";
 export default function AdminSidebar() {
   const [isOpen, setIsOpen] = useState(true);
   const navigate = useNavigate();
-  const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   const getProfileSrc = (profilePicture) => {
@@ -24,15 +24,33 @@ export default function AdminSidebar() {
 
   const profileSrc = getProfileSrc(user.profile_picture);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    navigate("/login");
+  const handleLogout = async () => {
+    const token = localStorage.getItem("token");
+
+    try {
+      if (token) {
+        await axios.post(
+          "http://localhost:5000/api/auth/logout",
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+      }
+    } catch (err) {
+      console.error("Logout request failed:", err);
+    } finally {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
   };
 
   const menuItems = [
     { name: "Dashboard", icon: LayoutDashboard, path: "/admin/dashboard" },
-    { name: "Manage Images", icon: Image, path: "/admin/images" },
+    { name: "Manage Images", icon: Image, path: "/admin/manage-images" },
     { name: "Users", icon: Users, path: "/admin/users" },
     { name: "Reports", icon: FileText, path: "/admin/reports" },
     { name: "Payments", icon: Wallet, path: "/admin/payments" },
@@ -74,16 +92,15 @@ export default function AdminSidebar() {
           <nav className="sidebar-nav">
             {menuItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
               return (
-                <button
+                <NavLink
                   key={item.path}
-                  className={`nav-item ${isActive ? "active" : ""}`}
-                  onClick={() => navigate(item.path)}
+                  to={item.path}
+                  className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
                 >
                   <Icon size={20} />
                   <span>{item.name}</span>
-                </button>
+                </NavLink>
               );
             })}
           </nav>

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import AnnotatorSidebar from "./AnnotatorSidebar";
 import "./annotator.css";
 import { ALL_BRANCH_OPTIONS, BANK_OPTIONS } from "../../constants/bankOptions";
 
@@ -120,45 +119,98 @@ export default function AnnotatorPayments() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <AnnotatorSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Payment Summary</h1>
+    <>
+      <div className="dashboard-header">
+        <h1>Earnings & Payments</h1>
+        <p>View your payment summary and earning breakdown</p>
+      </div>
+
+      {error && <div className="dashboard-error">{error}</div>}
+
+      {/* Payment Summary Cards */}
+      <div className="kpi-section">
+        <div className="kpi-card">
+          <div className="kpi-icon">⏳</div>
+          <div className="kpi-label">Pending Approval</div>
+          <div className="kpi-value">₨ {payments?.pendingApproval?.toLocaleString() || 0}</div>
         </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
-
-        <div className="payment-summary">
-          <div className="payment-card-item">
-            <div className="payment-card-title">Payment Due</div>
-            <div className="payment-card-value">₨ {payments?.paymentDue?.toLocaleString() || 0}</div>
-          </div>
-
-          <div className="payment-card-item">
-            <div className="payment-card-title">Total (Completed)</div>
-            <div className="payment-card-value">{payments?.tasksCompleted || 0}</div>
-          </div>
-
-          <div className="payment-card-item">
-            <div className="payment-card-title">Total Amount Due</div>
-            <div className="payment-card-value">₨ {payments?.totalAmountDue?.toLocaleString() || 0}</div>
-          </div>
-
-          <div className="payment-card-item">
-            <div className="payment-card-title">Completed Amount</div>
-            <div className="payment-card-value">₨ {payments?.completedAmount?.toLocaleString() || 0}</div>
-          </div>
-
-          <div className="payment-card-item">
-            <div className="payment-card-title">Previous Amount</div>
-            <div className="payment-card-value">₨ {payments?.previousAmount?.toLocaleString() || 0}</div>
-          </div>
+        <div className="kpi-card" style={{ borderTop: "3px solid #667eea" }}>
+          <div className="kpi-icon">✓</div>
+          <div className="kpi-label">Approved Amount</div>
+          <div className="kpi-value" style={{ color: "#667eea" }}>₨ {payments?.approvedAmount?.toLocaleString() || 0}</div>
         </div>
 
-        <div className="payment-warning">
-          <p>⚠️ Note: Requests regarding Rs. or contribution to payment calculation</p>
+        <div className="kpi-card" style={{ borderTop: "3px solid #10b981" }}>
+          <div className="kpi-icon">💳</div>
+          <div className="kpi-label">Paid Amount</div>
+          <div className="kpi-value" style={{ color: "#10b981" }}>₨ {payments?.paidAmount?.toLocaleString() || 0}</div>
         </div>
+
+        <div className="kpi-card">
+          <div className="kpi-icon">📊</div>
+          <div className="kpi-label">Total Approved Image Sets</div>
+          <div className="kpi-value">{payments?.totalApprovedImageSets || 0}</div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-icon">📦</div>
+          <div className="kpi-label">Total Approved Objects</div>
+          <div className="kpi-value">{payments?.totalApprovedObjects || 0}</div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-icon">💰</div>
+          <div className="kpi-label">Current Rate</div>
+          <div className="kpi-value">₨ {payments?.currentRate?.toLocaleString() || 0}/obj</div>
+        </div>
+      </div>
+
+      {/* Payment Breakdown Table */}
+      {payments?.paymentBreakdown && payments.paymentBreakdown.length > 0 && (
+        <div className="payment-history-section">
+          <h2>Payment Breakdown by Image Set</h2>
+          <div className="table-container" style={{ overflowX: "auto" }}>
+            <table className="payment-history-table">
+              <thead>
+                <tr>
+                  <th>MODEL / IMAGE SET</th>
+                  <th>APPROVED OBJECTS</th>
+                  <th>RATE PER OBJECT</th>
+                  <th>AMOUNT</th>
+                  <th>PAYMENT STATUS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.paymentBreakdown.map((item, idx) => (
+                  <tr key={idx}>
+                    <td>{item.model_name || item.image_set_name || "-"}</td>
+                    <td>{item.approved_objects_count || 0}</td>
+                    <td>₨ {(item.rate_per_object || 0).toLocaleString()}</td>
+                    <td style={{ fontWeight: "600" }}>₨ {(item.amount || 0).toLocaleString()}</td>
+                    <td>
+                      <span
+                        className={`status-badge status-${
+                          item.payment_status === "paid"
+                            ? "approved"
+                            : item.payment_status === "pending"
+                            ? "pending"
+                            : "completed"
+                        }`}
+                      >
+                        {item.payment_status?.charAt(0).toUpperCase() +
+                          item.payment_status?.slice(1)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Methods Section */}
 
         <div className="profile-section">
           <h2>My Payment Details</h2>
@@ -278,38 +330,37 @@ export default function AnnotatorPayments() {
           </div>
         </div>
 
-        {payments?.paymentHistory && payments.paymentHistory.length > 0 && (
-          <div className="payment-history-section">
-            <h2>Payment History</h2>
-            <div className="table-container">
-              <table className="payment-history-table">
-                <thead>
-                  <tr>
-                    <th>DATE</th>
-                    <th>AMOUNT</th>
-                    <th>STATUS</th>
-                    <th>METHOD</th>
+      {payments?.paymentHistory && payments.paymentHistory.length > 0 && (
+        <div className="payment-history-section">
+          <h2>Payment History</h2>
+          <div className="table-container">
+            <table className="payment-history-table">
+              <thead>
+                <tr>
+                  <th>DATE</th>
+                  <th>AMOUNT</th>
+                  <th>STATUS</th>
+                  <th>METHOD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.paymentHistory.map((payment, idx) => (
+                  <tr key={idx}>
+                    <td>{new Date(payment.payment_date).toLocaleDateString()}</td>
+                    <td>₨ {payment.amount?.toLocaleString()}</td>
+                    <td>
+                      <span className={`status-badge status-${payment.status}`}>
+                        {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1)}
+                      </span>
+                    </td>
+                    <td>{payment.payment_method || "Bank Transfer"}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {payments.paymentHistory.map((payment, idx) => (
-                    <tr key={idx}>
-                      <td>{new Date(payment.payment_date).toLocaleDateString()}</td>
-                      <td>₨ {payment.amount?.toLocaleString()}</td>
-                      <td>
-                        <span className={`status-badge status-${payment.status}`}>
-                          {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1)}
-                        </span>
-                      </td>
-                      <td>{payment.payment_method || "Bank Transfer"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Plus, Edit2, Trash2 } from "lucide-react";
-import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
 const getProfileSrc = (profilePicture) => {
@@ -26,7 +25,9 @@ export default function ManageAdmins() {
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingAdminId, setEditingAdminId] = useState(null);
   const [formData, setFormData] = useState({ name: "", email: "", password: "", hourly_rate: "" });
 
   const getAuthHeader = () => ({
@@ -53,10 +54,37 @@ export default function ManageAdmins() {
 
   const handleAddAdmin = async (e) => {
     e.preventDefault();
+    setError("");
+    setSuccess("");
+
+    if (editingAdminId) {
+      try {
+        await axios.put(
+          `http://localhost:5000/api/dashboard/users/${editingAdminId}`,
+          {
+            name: formData.name,
+            email: formData.email,
+            role: "admin",
+            hourly_rate: formData.hourly_rate === "" ? null : Number(formData.hourly_rate),
+          },
+          { headers: getAuthHeader() }
+        );
+        setSuccess("Admin updated successfully");
+        setFormData({ name: "", email: "", password: "", hourly_rate: "" });
+        setEditingAdminId(null);
+        setShowForm(false);
+        fetchAdmins();
+      } catch (err) {
+        setError(err.response?.data?.error || "Failed to update admin");
+      }
+      return;
+    }
+
     try {
       await axios.post("http://localhost:5000/api/dashboard/admins", formData, {
         headers: getAuthHeader(),
       });
+      setSuccess("Admin added successfully");
       setFormData({ name: "", email: "", password: "", hourly_rate: "" });
       setShowForm(false);
       fetchAdmins();
@@ -67,34 +95,55 @@ export default function ManageAdmins() {
 
   const handleDeleteAdmin = async (id) => {
     if (!window.confirm("Are you sure you want to delete this admin?")) return;
+    setError("");
+    setSuccess("");
     try {
-      await axios.delete(`http://localhost:5000/api/dashboard/admins/${id}`, {
+      await axios.delete(`http://localhost:5000/api/dashboard/users/${id}`, {
         headers: getAuthHeader(),
       });
+      setSuccess("Admin deleted successfully");
       fetchAdmins();
     } catch (err) {
       setError(err.response?.data?.error || "Failed to delete admin");
     }
   };
 
+  const handleEditAdmin = (admin) => {
+    setError("");
+    setSuccess("");
+    setEditingAdminId(admin.id);
+    setFormData({
+      name: admin.name || "",
+      email: admin.email || "",
+      password: "",
+      hourly_rate: admin.hourly_rate ?? "",
+    });
+    setShowForm(true);
+  };
+
+  const handleCancelForm = () => {
+    setShowForm(false);
+    setEditingAdminId(null);
+    setFormData({ name: "", email: "", password: "", hourly_rate: "" });
+  };
+
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Manage Admins</h1>
-          <button className="btn-add" onClick={() => setShowForm(!showForm)}>
-            <Plus size={20} /> Add Admin
-          </button>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Manage Admins</h1>
+        <button className="btn-add" onClick={() => setShowForm(!showForm)}>
+          <Plus size={20} /> Add Admin
+        </button>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
+      {success && <div className="dashboard-success">{success}</div>}
 
         {showForm && (
           <div className="form-card">
-            <h3>Add New Admin</h3>
+            <h3>{editingAdminId ? "Edit Admin" : "Add New Admin"}</h3>
             <form onSubmit={handleAddAdmin}>
               <div className="form-group">
                 <label>Name</label>
@@ -114,15 +163,17 @@ export default function ManageAdmins() {
                   required
                 />
               </div>
-              <div className="form-group">
-                <label>Password</label>
-                <input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  required
-                />
-              </div>
+              {!editingAdminId && (
+                <div className="form-group">
+                  <label>Password</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    required
+                  />
+                </div>
+              )}
               <div className="form-group">
                 <label>Hourly Rate (LKR)</label>
                 <input
@@ -136,12 +187,12 @@ export default function ManageAdmins() {
               </div>
               <div className="form-actions">
                 <button type="submit" className="btn-primary">
-                  Add Admin
+                  {editingAdminId ? "Update Admin" : "Add Admin"}
                 </button>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => setShowForm(false)}
+                  onClick={handleCancelForm}
                 >
                   Cancel
                 </button>
@@ -150,60 +201,63 @@ export default function ManageAdmins() {
           </div>
         )}
 
-        <div className="table-container">
-          <table className="admins-table">
-            <thead>
-              <tr>
-                <th>Profile</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Created Date</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admins.map((admin) => (
-                <tr key={admin.id}>
-                  <td>
-                    <div className="user-id-cell">
-                      <div className="user-id-avatar">
-                        {getProfileSrc(admin.profile_picture) ? (
-                          <img
-                            src={getProfileSrc(admin.profile_picture)}
-                            alt={admin.name || "Admin"}
-                            className="user-id-avatar-img"
-                          />
-                        ) : (
-                          <span>{getAvatarText(admin.name)}</span>
-                        )}
-                      </div>
+      <div className="table-container">
+        <table className="admins-table">
+          <thead>
+            <tr>
+              <th>Profile</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Created Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {admins.map((admin) => (
+              <tr key={admin.id}>
+                <td>
+                  <div className="user-id-cell">
+                    <div className="user-id-avatar">
+                      {getProfileSrc(admin.profile_picture) ? (
+                        <img
+                          src={getProfileSrc(admin.profile_picture)}
+                          alt={admin.name || "Admin"}
+                          className="user-id-avatar-img"
+                        />
+                      ) : (
+                        <span>{getAvatarText(admin.name)}</span>
+                      )}
                     </div>
-                  </td>
-                  <td>{admin.name}</td>
-                  <td>{admin.email}</td>
-                  <td>
-                    <span className="role-badge">{admin.role}</span>
-                  </td>
-                  <td>{admin.created_at?.split("T")[0]}</td>
-                  <td>
-                    <button className="btn-edit" title="Edit">
-                      <Edit2 size={16} />
-                    </button>
-                    <button
-                      className="btn-delete"
-                      onClick={() => handleDeleteAdmin(admin.id)}
-                      title="Delete"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </td>
+                <td>{admin.name}</td>
+                <td>{admin.email}</td>
+                <td>
+                  <span className="role-badge">{admin.role}</span>
+                </td>
+                <td>{admin.created_at?.split("T")[0]}</td>
+                <td>
+                  <button
+                    className="btn-edit"
+                    onClick={() => handleEditAdmin(admin)}
+                    title="Edit"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    className="btn-delete"
+                    onClick={() => handleDeleteAdmin(admin.id)}
+                    title="Delete"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-    </div>
+    </>
   );
 }

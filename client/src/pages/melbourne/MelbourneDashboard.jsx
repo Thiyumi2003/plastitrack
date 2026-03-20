@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import MelbourneSidebar from "./MelbourneSidebar";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatChartDate } from "../../utils/dateUtils";
 import "../annotator/annotator.css";
@@ -116,15 +115,13 @@ export default function MelbourneDashboard() {
   })) || [];
 
   return (
-    <div className="dashboard-container">
-      <MelbourneSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Melbourne User Dashboard</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Melbourne User Dashboard</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         {/* KPI Cards - Admin Overview + Review Stats */}
         <div className="kpi-section">
@@ -284,7 +281,6 @@ export default function MelbourneDashboard() {
             <p style={{ marginTop: "8px", color: "#888", fontSize: "12px" }}>Snapshot at {new Date(systemPerf.timestamp || Date.now()).toLocaleString()}</p>
           </div>
         )}
-      </div>
-    </div>
+    </>
   );
 }

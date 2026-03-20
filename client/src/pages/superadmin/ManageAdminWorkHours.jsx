@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Calendar, Clock, CheckCircle, XCircle, DollarSign } from "lucide-react";
-import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
 export default function ManageAdminWorkHours() {
@@ -80,14 +79,12 @@ export default function ManageAdminWorkHours() {
   const totalPaymentDue = adminSummaryArray.reduce((sum, admin) => sum + (Number(admin.total_payment_due) || 0), 0);
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Admin Work Hours Management</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Admin Work Hours Management</h1>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         {/* Summary Cards */}
         <div className="payment-cards-section">
@@ -328,7 +325,6 @@ export default function ManageAdminWorkHours() {
             </table>
           </div>
         )}
-      </div>
-    </div>
+    </>
   );
 }

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
 const getRoleLabel = (role) => {
@@ -170,15 +169,13 @@ export default function ManageRates() {
   if (loading) return <div className="dashboard-loading">Loading rate management...</div>;
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Rate Management</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Rate Management</h1>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
-        {success && <div className="dashboard-success">{success}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
+      {success && <div className="dashboard-success">{success}</div>}
 
         <div className="tabs-section">
           <div className="tabs">
@@ -358,10 +355,9 @@ export default function ManageRates() {
           </>
         )}
 
-        <div className="rate-legend">
-          <strong>Logic:</strong> Role rates are defaults, and user custom rates override role defaults.
-        </div>
+      <div className="rate-legend">
+        <strong>Logic:</strong> Role rates are defaults, and user custom rates override role defaults.
       </div>
-    </div>
+    </>
   );
 }

@@ -1,6 +1,32 @@
 /* Reuse super admin styles */
 @import "../superadmin/superadmin.css";
 
+.admin-layout-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(12px);
+}
+
+.admin-layout-title {
+  color: #e2e8f0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-layout-date {
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 0.85rem;
+}
+
 /* Additional admin-specific styles */
 .images-grid {
   display: grid;

@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from "react";
 import axios from "axios";
-import AdminSidebar from "./AdminSidebar";
 import ErrorBoundary from "../../components/reports/ErrorBoundary";
 import { ExportService } from "../../services/ExportService";
 import { AnnotationSummaryReport } from "../../components/reports/AnnotationSummaryReport";
@@ -258,12 +257,10 @@ export default function AdminReports() {
   const ActiveComponent = reports.find((r) => r.id === activeReport)?.component;
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Reports and Analytics</h1>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+    <>
+      <div className="dashboard-header">
+        <h1>Reports and Analytics</h1>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <button
               onClick={handleDownloadAllPDF}
               disabled={isDownloadingAll}
@@ -273,9 +270,9 @@ export default function AdminReports() {
             >
               {isDownloadingAll ? "Preparing PDF..." : "Download All PDF"}
             </button>
-            <div className="header-date">{new Date().toLocaleDateString()}</div>
-          </div>
+          <div className="header-date">{new Date().toLocaleDateString()}</div>
         </div>
+      </div>
 
         {generalError && (
           <div
@@ -306,8 +303,8 @@ export default function AdminReports() {
           </div>
         )}
 
-        <div>
-          <div
+      <div>
+        <div
             style={{
               display: "flex",
               gap: "8px",
@@ -338,17 +335,16 @@ export default function AdminReports() {
                 {report.icon} {report.label}
               </button>
             ))}
-          </div>
-
-          {ActiveComponent && (
-            <ErrorBoundary key={activeReport}>
-              <div style={{ animation: "fadeIn 0.3s ease" }}>
-                <ActiveComponent />
-              </div>
-            </ErrorBoundary>
-          )}
         </div>
+
+        {ActiveComponent && (
+          <ErrorBoundary key={activeReport}>
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
+              <ActiveComponent />
+            </div>
+          </ErrorBoundary>
+        )}
       </div>
-    </div>
+    </>
   );
 }

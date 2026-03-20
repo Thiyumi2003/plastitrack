@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 
 export default function ManageImages() {
@@ -136,6 +135,27 @@ export default function ManageImages() {
     }
   };
 
+  const handleApproveRework = async (imageId) => {
+    try {
+      const image = images.find((img) => img.id === imageId);
+      if (!image?.annotator_id) {
+        alert("No annotator assigned to approve rework.");
+        return;
+      }
+
+      await axios.put(
+        `http://localhost:5000/api/dashboard/admin/images/${imageId}/approve-rework`,
+        { annotatorId: image.annotator_id },
+        { headers: getAuthHeader() }
+      );
+
+      alert("Rework approved for the same annotator.");
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to approve rework");
+    }
+  };
+
   const handleSendToMelbourne = async (imageId, userId) => {
     if (!userId) return;
     try {
@@ -198,6 +218,8 @@ export default function ManageImages() {
       created: "Created",
       assigned_to_annotator: "Assigned to annotator",
       annotation_completed: "Annotation completed",
+      rework_requested: "Rework requested",
+      rework_approved: "Rework approved",
       assigned_to_tester: "Sent for review",
       reviewed: "Reviewed",
       rejected: "Rejected",
@@ -518,15 +540,13 @@ export default function ManageImages() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Admin Manage Images</h1>
-          <button className="btn-primary" onClick={() => setShowUploadModal(true)}>
-            + Add Image
-          </button>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Admin Manage Images</h1>
+        <button className="btn-primary" onClick={() => setShowUploadModal(true)}>
+          + Add Image
+        </button>
+      </div>
 
         {error && <div style={{ padding: "12px", backgroundColor: "#fee2e2", borderLeft: "4px solid #ef4444", color: "#991b1b", marginBottom: "20px", borderRadius: "4px" }}>{error}</div>}
 
@@ -647,6 +667,12 @@ export default function ManageImages() {
                     onClick={() => openImageDetails(img.id, "rejection")}
                   >
                     View Rejection
+                  </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => handleApproveRework(img.id)}
+                  >
+                    Approve Rework
                   </button>
                   <button
                     className="action-btn warning"
@@ -1101,7 +1127,6 @@ export default function ManageImages() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </>
   );
 }

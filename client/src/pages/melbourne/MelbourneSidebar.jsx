@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, LayoutDashboard, User, LogOut } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
@@ -8,7 +8,6 @@ import "../superadmin/sidebar.css";
 export default function MelbourneSidebar() {
   const [isOpen, setIsOpen] = useState(true);
   const navigate = useNavigate();
-  const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   const getProfileSrc = (profilePicture) => {
@@ -70,16 +69,15 @@ export default function MelbourneSidebar() {
           <nav className="sidebar-nav">
             {menuItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
               return (
-                <button
+                <NavLink
                   key={item.path}
-                  className={`nav-item ${isActive ? "active" : ""}`}
-                  onClick={() => navigate(item.path)}
+                  to={item.path}
+                  className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
                 >
                   <Icon size={20} />
                   <span>{item.label}</span>
-                </button>
+                </NavLink>
               );
             })}
           </nav>

@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import MelbourneSidebar from "./MelbourneSidebar";
 import "../annotator/annotator.css";
 
 export default function MelbourneProfile() {
+  const fileInputRef = useRef(null);
   const [profile, setProfile] = useState({
     firstName: "",
     lastName: "",
@@ -28,7 +28,7 @@ export default function MelbourneProfile() {
     const user = JSON.parse(localStorage.getItem("user") || "{}");
     setProfile({
       firstName: user.name?.split(" ")[0] || "",
-      lastName: user.name?.split(" ")[1] || "",
+      lastName: user.name?.split(" ").slice(1).join(" ") || "",
       email: user.email || "",
       phone: user.phone || "",
       profilePicture: user.profile_picture || null,
@@ -103,7 +103,7 @@ export default function MelbourneProfile() {
       await axios.put(
         "http://localhost:5000/api/dashboard/melbourne/profile",
         {
-          name: `${profile.firstName} ${profile.lastName}`,
+          name: `${profile.firstName} ${profile.lastName}`.trim(),
           email: profile.email,
           phone: profile.phone,
         },
@@ -111,7 +111,7 @@ export default function MelbourneProfile() {
       );
       setMessage("Profile updated successfully!");
       const user = JSON.parse(localStorage.getItem("user") || "{}");
-      user.name = `${profile.firstName} ${profile.lastName}`;
+      user.name = `${profile.firstName} ${profile.lastName}`.trim();
       user.email = profile.email;
       user.phone = profile.phone;
       localStorage.setItem("user", JSON.stringify(user));
@@ -160,45 +160,107 @@ export default function MelbourneProfile() {
   };
 
   return (
-    <div className="dashboard-container">
-      <MelbourneSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Profile Settings</h1>
-          <p>Manage your account information and preferences</p>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Profile Settings</h1>
+        <p>Manage your account information and preferences</p>
+      </div>
 
-        {message && (
-          <div className={`message ${message.includes("successfully") ? "success" : "error"}`}>
-            {message}
-          </div>
-        )}
+      {message && (
+        <div
+          className={message.includes("successfully") ? "dashboard-success" : "dashboard-error"}
+          style={{ marginBottom: "20px" }}
+        >
+          {message}
+        </div>
+      )}
 
         <div className="profile-section">
           <h2>Profile Picture</h2>
-          <div className="profile-picture-box">
+          <div
+            style={{
+              display: "flex",
+              gap: "30px",
+              alignItems: "flex-start",
+              backgroundColor: "rgba(255, 255, 255, 0.03)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              borderRadius: "12px",
+              padding: "30px",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {profile.profilePicture ? (
               <img
                 src={`http://localhost:5000${profile.profilePicture}`}
                 alt="Profile"
-                className="avatar-large"
-                style={{ objectFit: "cover" }}
+                style={{
+                  width: "150px",
+                  height: "150px",
+                  borderRadius: "12px",
+                  objectFit: "cover",
+                  marginBottom: "16px",
+                  border: "3px solid rgba(16, 185, 129, 0.3)",
+                }}
               />
             ) : (
-              <div className="avatar-large">
-                {profile.firstName?.charAt(0) || ""}{profile.lastName?.charAt(0) || ""}
+              <div
+                style={{
+                  width: "150px",
+                  height: "150px",
+                  borderRadius: "12px",
+                  backgroundColor: "rgba(102, 126, 234, 0.2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "48px",
+                  fontWeight: "600",
+                  color: "#667eea",
+                  marginBottom: "16px",
+                }}
+              >
+                {profile.firstName?.charAt(0) || "M"}
               </div>
             )}
-            <div className="upload-info">
-              <p>Upload a new profile picture</p>
-              <p className="small-text">JPG, PNG or GIF. Max size 2MB</p>
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <h3 style={{ color: "#fff", marginBottom: "12px" }}>Upload Profile Picture</h3>
+              <p style={{ color: "rgba(255, 255, 255, 0.6)", marginBottom: "16px", lineHeight: "1.6" }}>
+                Choose a JPG, PNG, or GIF image. Maximum file size is 2MB.
+                <br />
+                Your profile picture will be visible to your team.
+              </p>
+
               <input
+                ref={fileInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/gif"
                 onChange={handleProfilePictureUpload}
                 disabled={uploading}
-                style={{ marginTop: "10px" }}
+                style={{ display: "none" }}
               />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  backgroundColor: "#667eea",
+                  color: "#fff",
+                  border: "none",
+                  padding: "12px 24px",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: "600",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  transition: "all 0.2s ease",
+                  opacity: uploading ? 0.7 : 1,
+                }}
+              >
+                {uploading ? "Uploading..." : "Choose File"}
+              </button>
             </div>
           </div>
         </div>
@@ -252,7 +314,21 @@ export default function MelbourneProfile() {
           </div>
 
           <div className="button-group">
-            <button className="btn-cancel">Cancel</button>
+            <button
+              className="btn-cancel"
+              onClick={() => {
+                const user = JSON.parse(localStorage.getItem("user") || "{}");
+                setProfile({
+                  firstName: user.name?.split(" ")[0] || "",
+                  lastName: user.name?.split(" ").slice(1).join(" ") || "",
+                  email: user.email || "",
+                  phone: user.phone || "",
+                  profilePicture: user.profile_picture || null,
+                });
+              }}
+            >
+              Cancel
+            </button>
             <button
               className="btn-save"
               onClick={handleSaveProfile}
@@ -263,54 +339,53 @@ export default function MelbourneProfile() {
           </div>
         </div>
 
-        <div className="profile-section">
-          <h2>Change Password</h2>
+      <div className="profile-section">
+        <h2>Change Password</h2>
+        <div className="form-group">
+          <label className="input-label">Current Password</label>
+          <input
+            type="password"
+            className="text-input"
+            name="current"
+            value={password.current}
+            onChange={handlePasswordChange}
+            placeholder="Enter your current password"
+          />
+        </div>
+
+        <div className="form-row">
           <div className="form-group">
-            <label className="input-label">Current Password</label>
+            <label className="input-label">New Password</label>
             <input
               type="password"
               className="text-input"
-              name="current"
-              value={password.current}
+              name="new"
+              value={password.new}
               onChange={handlePasswordChange}
-              placeholder="Enter your current password"
+              placeholder="Enter new password"
             />
           </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label className="input-label">New Password</label>
-              <input
-                type="password"
-                className="text-input"
-                name="new"
-                value={password.new}
-                onChange={handlePasswordChange}
-                placeholder="Enter new password"
-              />
-            </div>
-            <div className="form-group">
-              <label className="input-label">Confirm New Password</label>
-              <input
-                type="password"
-                className="text-input"
-                name="confirm"
-                value={password.confirm}
-                onChange={handlePasswordChange}
-                placeholder="Confirm new password"
-              />
-            </div>
+          <div className="form-group">
+            <label className="input-label">Confirm New Password</label>
+            <input
+              type="password"
+              className="text-input"
+              name="confirm"
+              value={password.confirm}
+              onChange={handlePasswordChange}
+              placeholder="Confirm new password"
+            />
           </div>
-
-          <button
-            className="btn-password"
-            onClick={handleChangePassword}
-            disabled={loading}
-          >
-            🔑 Update Password
-          </button>
         </div>
+
+        <button
+          className="btn-password"
+          onClick={handleChangePassword}
+          disabled={loading}
+        >
+          Update Password
+        </button>
       </div>
-    </div>
+    </>
   );
 }

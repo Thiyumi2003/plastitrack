@@ -1,5 +1,7 @@
 ﻿
 const express = require("express");
+const axios = require("axios");
+const nodemailer = require("nodemailer");
 const pool = require("../db/pool");
 const multer = require("multer");
 const path = require("path");
@@ -47,6 +49,20 @@ const PAYMENT_STATUS = {
 };
 
 const PAYMENT_STATUSES = Object.values(PAYMENT_STATUS);
+const JWT_SECRET = process.env.JWT_SECRET || "supersecret123";
+const SERVER_PUBLIC_URL = process.env.SERVER_PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+
+const paymentMailTransporter = process.env.MAIL_USER && process.env.MAIL_PASS
+  ? nodemailer.createTransport({
+      host: process.env.MAIL_HOST || "smtp.gmail.com",
+      port: Number(process.env.MAIL_PORT || 587),
+      secure: false,
+      auth: {
+        user: process.env.MAIL_USER,
+        pass: String(process.env.MAIL_PASS || "").replace(/\s/g, ""),
+      },
+    })
+  : null;
 
 const normalizeRateValue = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -356,6 +372,196 @@ const formatPaymentMethodLabel = (method = {}) => {
   return `${method.card_type || "Card"} ${masked}`.trim();
 };
 
+const escapeHtml = (value) => {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+};
+
+const createReceiptAccessToken = (paymentId, userId) => {
+  return jwt.sign(
+    {
+      purpose: "payment_receipt_view",
+      paymentId: Number(paymentId),
+      userId: Number(userId),
+    },
+    JWT_SECRET,
+    { expiresIn: process.env.RECEIPT_LINK_EXPIRES_IN || "14d" }
+  );
+};
+
+const buildReceiptViewUrl = (paymentId, userId) => {
+  const token = createReceiptAccessToken(paymentId, userId);
+  return `${SERVER_PUBLIC_URL}/api/dashboard/payments/${paymentId}/receipt-view?token=${encodeURIComponent(token)}`;
+};
+
+const sendPaymentEmailNotification = async ({ recipientEmail, recipientName, payment, receiptUrl }) => {
+  const normalizedRecipient = String(recipientEmail || "").trim().toLowerCase();
+  const isValidEmail = /^\S+@\S+\.\S+$/.test(normalizedRecipient);
+
+  if (!paymentMailTransporter || !normalizedRecipient) {
+    return { sent: false, channel: "email", reason: "email not configured or recipient missing" };
+  }
+
+  if (!isValidEmail) {
+    return { sent: false, channel: "email", reason: "recipient email is invalid" };
+  }
+
+  const subject = `Payment Processed - Receipt ${payment.receiptNumber}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; color: #0f172a;">
+      <div style="padding: 24px; background: linear-gradient(135deg, #0f172a, #1d4ed8); color: #fff; border-radius: 16px 16px 0 0;">
+        <h2 style="margin: 0 0 8px;">PlastiTrack Payment Processed</h2>
+        <p style="margin: 0; opacity: 0.92;">Your payment has been completed successfully.</p>
+      </div>
+      <div style="border: 1px solid #cbd5e1; border-top: none; border-radius: 0 0 16px 16px; padding: 24px; background: #fff;">
+        <p>Hello ${escapeHtml(recipientName || "User")},</p>
+        <p>Your payment has been marked as paid. You can review the receipt using the secure link below.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 18px 0;">
+          <tr><td style="padding: 8px 0; color: #64748b;">Receipt No</td><td style="padding: 8px 0;"><strong>${escapeHtml(payment.receiptNumber)}</strong></td></tr>
+          <tr><td style="padding: 8px 0; color: #64748b;">Amount</td><td style="padding: 8px 0;"><strong>Rs ${Number(payment.amount || 0).toLocaleString()}</strong></td></tr>
+          <tr><td style="padding: 8px 0; color: #64748b;">Role</td><td style="padding: 8px 0;">${escapeHtml(payment.role || "-")}</td></tr>
+          <tr><td style="padding: 8px 0; color: #64748b;">Model</td><td style="padding: 8px 0;">${escapeHtml(payment.modelType || "-")}</td></tr>
+          <tr><td style="padding: 8px 0; color: #64748b;">Paid Date</td><td style="padding: 8px 0;">${escapeHtml(formatDateTime(payment.paymentDate))}</td></tr>
+        </table>
+        <p style="margin: 20px 0;">
+          <a href="${receiptUrl}" style="display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 18px; border-radius: 10px; font-weight: 700;">View Receipt</a>
+        </p>
+        <p style="font-size: 13px; color: #64748b;">If the button does not work, open this link:<br />${escapeHtml(receiptUrl)}</p>
+      </div>
+    </div>
+  `;
+
+  const text = [
+    `Hello ${recipientName || "User"},`,
+    "",
+    "Your PlastiTrack payment has been processed.",
+    `Receipt No: ${payment.receiptNumber}`,
+    `Amount: Rs ${Number(payment.amount || 0).toLocaleString()}`,
+    `Role: ${payment.role || "-"}`,
+    `Model: ${payment.modelType || "-"}`,
+    `Paid Date: ${formatDateTime(payment.paymentDate)}`,
+    "",
+    `View receipt: ${receiptUrl}`,
+  ].join("\n");
+
+  const info = await paymentMailTransporter.sendMail({
+    from: process.env.MAIL_FROM || process.env.MAIL_USER,
+    to: normalizedRecipient,
+    subject,
+    html,
+    text,
+  });
+
+  const accepted = Array.isArray(info?.accepted) ? info.accepted : [];
+  const rejected = Array.isArray(info?.rejected) ? info.rejected : [];
+  if (!accepted.length && rejected.length) {
+    return {
+      sent: false,
+      channel: "email",
+      reason: `recipient rejected by mail server: ${rejected.join(", ")}`,
+    };
+  }
+
+  return {
+    sent: true,
+    channel: "email",
+    to: normalizedRecipient,
+    accepted: accepted.join(", ") || normalizedRecipient,
+  };
+};
+
+const sendPaymentSmsNotification = async ({ phone, recipientName, payment, receiptUrl }) => {
+  if (!phone) {
+    return { sent: false, channel: "sms", reason: "recipient phone missing" };
+  }
+
+  if (!process.env.SMS_API_URL || !process.env.SMS_API_KEY) {
+    return { sent: false, channel: "sms", reason: "sms provider not configured" };
+  }
+
+  const message = `PlastiTrack: Hi ${recipientName || "User"}, your payment ${payment.receiptNumber} for Rs ${Number(payment.amount || 0).toLocaleString()} is completed. Receipt: ${receiptUrl}`;
+
+  await axios.post(
+    process.env.SMS_API_URL,
+    {
+      to: phone,
+      message,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.SMS_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 10000,
+    }
+  );
+
+  return { sent: true, channel: "sms" };
+};
+
+const dispatchPaymentNotifications = async ({
+  paymentId,
+  userId,
+  recipientName,
+  recipientEmail,
+  recipientPhone,
+  amount,
+  role,
+  modelType,
+  paymentDate,
+}) => {
+  const receiptUrl = buildReceiptViewUrl(paymentId, userId);
+  const receiptNumber = `PTR-${String(paymentId).padStart(6, "0")}`;
+  const notificationPayload = {
+    receiptNumber,
+    amount: Number(amount || 0),
+    role,
+    modelType,
+    paymentDate: paymentDate || new Date(),
+  };
+
+  const notificationResults = [];
+  try {
+    notificationResults.push(
+      await sendPaymentEmailNotification({
+        recipientEmail,
+        recipientName,
+        payment: notificationPayload,
+        receiptUrl,
+      })
+    );
+  } catch (notifyErr) {
+    console.error("Payment email notification error:", notifyErr.message || notifyErr);
+    notificationResults.push({ sent: false, channel: "email", reason: notifyErr.message || "send failed" });
+  }
+
+  try {
+    notificationResults.push(
+      await sendPaymentSmsNotification({
+        phone: recipientPhone,
+        recipientName,
+        payment: notificationPayload,
+        receiptUrl,
+      })
+    );
+  } catch (notifyErr) {
+    console.error("Payment SMS notification error:", notifyErr.message || notifyErr);
+    notificationResults.push({ sent: false, channel: "sms", reason: notifyErr.message || "send failed" });
+  }
+
+  return { receiptUrl, notificationResults };
+};
+
 async function logImageHistory(connection, {
   imageId,
   eventType,
@@ -586,7 +792,7 @@ router.get("/admins", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [admins] = await connection.execute(
-      "SELECT id, name, email, role, created_at, profile_picture FROM users WHERE role = 'admin'"
+      "SELECT id, name, email, role, hourly_rate, created_at, profile_picture FROM users WHERE role = 'admin'"
     );
 
     await connection.release();
@@ -3102,7 +3308,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     const sourceMethod = sourceRows[0];
 
     const [rows] = await connection.execute(
-      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, u.name, u.role
+      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, u.name, u.role, u.email, u.phone
        FROM payments p
        JOIN users u ON u.id = p.user_id
        WHERE p.id = ? LIMIT 1`,
@@ -3198,6 +3404,19 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     );
 
     await connection.release();
+
+    const { receiptUrl, notificationResults } = await dispatchPaymentNotifications({
+      paymentId: payment.id,
+      userId: payment.user_id,
+      recipientName: payment.name,
+      recipientEmail: payment.email,
+      recipientPhone: payment.phone,
+      amount: payment.amount,
+      role: payment.role,
+      modelType: payment.model_type,
+      paymentDate: new Date(),
+    });
+
     res.json({
       message: "Payment marked as paid",
       payment: {
@@ -3210,11 +3429,493 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
         payment_method: resolvedMethod,
         source_account: sourceLabel,
         destination_account: destinationMethod,
+        receipt_url: receiptUrl,
       },
+      notifications: notificationResults,
     });
   } catch (err) {
     console.error("Pay now error:", err);
     res.status(500).json({ error: "Failed to process payment" });
+  }
+});
+
+router.post("/payments/:id/send-notification", verifyToken, async (req, res) => {
+  try {
+    if (!isSuperAdmin(req)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const paymentId = Number(req.params.id);
+    if (!paymentId) {
+      return res.status(400).json({ error: "Valid payment id is required" });
+    }
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, p.payment_date, u.name, u.role, u.email, u.phone
+       FROM payments p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.id = ? LIMIT 1`,
+      [paymentId]
+    );
+    await connection.release();
+
+    if (!rows.length) {
+      return res.status(404).json({ error: "Payment not found" });
+    }
+
+    const payment = rows[0];
+    if (payment.status !== PAYMENT_STATUS.PAID) {
+      return res.status(400).json({ error: "Notifications can only be sent for paid payments" });
+    }
+
+    const { receiptUrl, notificationResults } = await dispatchPaymentNotifications({
+      paymentId: payment.id,
+      userId: payment.user_id,
+      recipientName: payment.name,
+      recipientEmail: payment.email,
+      recipientPhone: payment.phone,
+      amount: payment.amount,
+      role: payment.role,
+      modelType: payment.model_type,
+      paymentDate: payment.payment_date,
+    });
+
+    return res.json({
+      message: "Payment notification sent",
+      payment: {
+        id: payment.id,
+        user_name: payment.name,
+        amount: Number(payment.amount || 0),
+        status: payment.status,
+        receipt_url: receiptUrl,
+      },
+      notifications: notificationResults,
+    });
+  } catch (err) {
+    console.error("Resend payment notification error:", err);
+    return res.status(500).json({ error: "Failed to send payment notification" });
+  }
+});
+
+router.get("/payments/:id/receipt-view", async (req, res) => {
+  try {
+    const paymentId = Number(req.params.id);
+    const token = String(req.query.token || "");
+
+    if (!paymentId || !token) {
+      return res.status(400).send("Missing payment id or receipt token");
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).send("Invalid or expired receipt link");
+    }
+
+    if (decoded?.purpose !== "payment_receipt_view" || Number(decoded.paymentId) !== paymentId) {
+      return res.status(403).send("Receipt link does not match payment");
+    }
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT
+        p.id,
+        p.user_id,
+        p.amount,
+        p.model_type,
+        p.objects_count,
+        p.hours,
+        p.paid_minutes,
+        p.minute_rate,
+        p.rate_used,
+        p.status,
+        p.payment_method,
+        p.payment_date,
+        p.approved_date,
+        p.created_at,
+        u.name as user_name,
+        u.email as user_email,
+        u.role as user_role,
+        approver.name as approved_by_name
+       FROM payments p
+       LEFT JOIN users u ON u.id = p.user_id
+       LEFT JOIN users approver ON approver.id = p.approved_by
+       WHERE p.id = ?
+       LIMIT 1`,
+      [paymentId]
+    );
+
+    if (!rows.length) {
+      await connection.release();
+      return res.status(404).send("Payment not found");
+    }
+
+    const payment = rows[0];
+    if (Number(payment.user_id) !== Number(decoded.userId)) {
+      await connection.release();
+      return res.status(403).send("Receipt link does not match recipient");
+    }
+
+    if (payment.status !== PAYMENT_STATUS.PAID) {
+      await connection.release();
+      return res.status(400).send("Receipt is available only for paid payments");
+    }
+
+    const receiptNumber = `PTR-${String(payment.id).padStart(6, "0")}`;
+    const formatCurrency = (value) => `Rs ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const formatMinutesAsHM = (minutesValue) => {
+      const totalMinutes = Math.max(0, Number(minutesValue || 0));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = Math.round(totalMinutes % 60);
+      return `${hours}h ${minutes}m`;
+    };
+    const formatHoursAsHM = (hoursValue) => formatMinutesAsHM(Number(hoursValue || 0) * 60);
+    const formatStatusText = (status) => {
+      if (!status) return "-";
+      if (status === "ready_to_pay") return "Ready To Pay";
+      if (status === "pending_approval") return "Pending Approval";
+      if (status === "pending_calculation") return "Pending Calculation";
+      if (status === "paid") return "Paid";
+      if (status === "approved") return "Validated";
+      if (status === "rejected") return "Rejected";
+      return String(status).replace(/_/g, " ");
+    };
+    const deriveModelLabel = (imageName, fallbackModelType) => {
+      const fallback = fallbackModelType || null;
+      if (!imageName) return fallback;
+      const parts = String(imageName).split("_").filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0]}_${parts[1]}`;
+      }
+      return fallback;
+    };
+
+    const commonRows = [
+      ["Receipt No", receiptNumber],
+      ["User", payment.user_name],
+      ["Email", payment.user_email],
+      ["Role", payment.user_role],
+      ["Status", formatStatusText(payment.status)],
+      ["Amount", formatCurrency(payment.amount)],
+      ["Model Type", payment.model_type || "-"],
+      ["Payment Method", payment.payment_method || "-"],
+      ["Created Date", formatDateTime(payment.created_at)],
+      ["Approved Date", formatDateTime(payment.approved_date)],
+      ["Paid Date", formatDateTime(payment.payment_date)],
+      ["Approved By", payment.approved_by_name || "-"],
+    ];
+
+    let detailSection = "<p>No detailed receipt lines available.</p>";
+
+    if (payment.user_role === "admin") {
+      const [priorPaymentsRows] = await connection.execute(
+        `SELECT COALESCE(SUM(COALESCE(paid_minutes, 0)), 0) as prior_paid_minutes
+         FROM payments
+         WHERE user_id = ?
+           AND id <> ?
+           AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')
+           AND (
+             created_at < ? OR
+             (created_at = ? AND id < ?)
+           )`,
+        [payment.user_id, payment.id, payment.created_at, payment.created_at, payment.id]
+      );
+
+      const priorPaidMinutes = Number(priorPaymentsRows?.[0]?.prior_paid_minutes || 0);
+      const [workHourRows] = await connection.execute(
+        `SELECT
+          id,
+          date,
+          hours_worked,
+          task_description,
+          status,
+          session_start,
+          session_end,
+          created_at,
+          updated_at
+         FROM work_hours
+         WHERE admin_id = ? AND status = 'approved'
+         ORDER BY date ASC, id ASC`,
+        [payment.user_id]
+      );
+
+      let consumedMinutes = priorPaidMinutes;
+      let remainingMinutes = Number(payment.paid_minutes || Math.round(Number(payment.hours || 0) * 60) || 0);
+      const allocatedRows = [];
+
+      for (const row of workHourRows) {
+        if (remainingMinutes <= 0) break;
+        const workedMinutes = Math.max(0, Math.round(Number(row.hours_worked || 0) * 60));
+        if (workedMinutes <= 0) continue;
+
+        if (consumedMinutes >= workedMinutes) {
+          consumedMinutes -= workedMinutes;
+          continue;
+        }
+
+        const availableMinutes = workedMinutes - consumedMinutes;
+        const allocatedMinutes = Math.min(availableMinutes, remainingMinutes);
+
+        if (allocatedMinutes > 0) {
+          allocatedRows.push({
+            workDate: row.date,
+            description: row.task_description || "-",
+            workedHours: Number(row.hours_worked || 0),
+            allocatedMinutes,
+            sessionStart: row.session_start,
+            sessionEnd: row.session_end,
+          });
+        }
+
+        remainingMinutes -= allocatedMinutes;
+        consumedMinutes = 0;
+      }
+
+      detailSection = `
+        <h2>Admin Work Hours</h2>
+        <div class="summary-grid">
+          <div class="summary-box"><span>Paid Minutes</span><strong>${escapeHtml(payment.paid_minutes || 0)}</strong></div>
+          <div class="summary-box"><span>Paid Hours</span><strong>${escapeHtml(formatMinutesAsHM(payment.paid_minutes || 0))}</strong></div>
+          <div class="summary-box"><span>Hourly Rate</span><strong>${escapeHtml(formatCurrency(payment.rate_used || 0))}</strong></div>
+          <div class="summary-box"><span>Minute Rate</span><strong>${escapeHtml(Number(payment.minute_rate || 0).toFixed(4))}</strong></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Worked Hours</th>
+              <th>Allocated</th>
+              <th>Allocated Minutes</th>
+              <th>Session</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allocatedRows.length
+              ? allocatedRows
+                  .map(
+                    (item) => `
+                      <tr>
+                        <td>${escapeHtml(formatDateTime(item.workDate))}</td>
+                        <td>${escapeHtml(item.description || "-")}</td>
+                        <td>${escapeHtml(formatHoursAsHM(item.workedHours))}</td>
+                        <td>${escapeHtml(formatMinutesAsHM(item.allocatedMinutes))}</td>
+                        <td>${escapeHtml(item.allocatedMinutes)}</td>
+                        <td>${escapeHtml(
+                          item.sessionStart || item.sessionEnd
+                            ? `${formatDateTime(item.sessionStart)} - ${formatDateTime(item.sessionEnd)}`
+                            : "-"
+                        )}</td>
+                      </tr>`
+                  )
+                  .join("")
+              : '<tr><td colspan="6">No work hour rows found for this payment.</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    } else if (["annotator", "tester"].includes(payment.user_role)) {
+      const roleColumn = payment.user_role === "annotator" ? "annotator_id" : "tester_id";
+      const allowedStatuses = payment.user_role === "annotator" ? ["approved"] : ["approved", "rejected"];
+      const statusPlaceholders = allowedStatuses.map(() => "?").join(", ");
+      const [imageRows] = await connection.execute(
+        `SELECT
+          i.id,
+          i.image_name,
+          i.model_type,
+          i.objects_count,
+          i.status,
+          i.created_at,
+          i.updated_at
+         FROM images i
+         WHERE i.${roleColumn} = ?
+           AND i.model_type = ?
+           AND i.status IN (${statusPlaceholders})
+           AND i.updated_at <= ?
+         ORDER BY i.updated_at ASC, i.id ASC`,
+        [payment.user_id, payment.model_type, ...allowedStatuses, payment.created_at]
+      );
+
+      const perObjectRate = Number(payment.rate_used || 0);
+
+      detailSection = `
+        <h2>${escapeHtml(payment.user_role === "annotator" ? "Annotator Objects" : "Tester Objects")}</h2>
+        <div class="summary-grid">
+          <div class="summary-box"><span>Total Objects</span><strong>${escapeHtml(imageRows.reduce((sum, row) => sum + Number(row.objects_count || 0), 0))}</strong></div>
+          <div class="summary-box"><span>Object Rows</span><strong>${escapeHtml(imageRows.length || 0)}</strong></div>
+          <div class="summary-box"><span>Rate / Object</span><strong>${escapeHtml(formatCurrency(perObjectRate || 0))}</strong></div>
+          <div class="summary-box"><span>Recorded Rows</span><strong>${escapeHtml(payment.images_completed || imageRows.length || 0)}</strong></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Image Set</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Objects</th>
+              <th>Calculated Amount</th>
+              <th>Completed Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${imageRows.length
+              ? imageRows
+                  .map(
+                    (row) => `
+                      <tr>
+                        <td>${escapeHtml(row.image_name)}</td>
+                        <td>${escapeHtml(deriveModelLabel(row.image_name, row.model_type) || row.model_type || "-")}</td>
+                        <td>${escapeHtml(formatStatusText(row.status))}</td>
+                        <td>${escapeHtml(Number(row.objects_count || 0))}</td>
+                        <td>${escapeHtml(formatCurrency(Number(row.objects_count || 0) * perObjectRate))}</td>
+                        <td>${escapeHtml(formatDateTime(row.updated_at || row.created_at))}</td>
+                      </tr>`
+                  )
+                  .join("")
+              : '<tr><td colspan="6">No image-set rows found for this payment.</td></tr>'}
+          </tbody>
+        </table>
+      `;
+    }
+
+    await connection.release();
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>PlastiTrack Receipt ${escapeHtml(receiptNumber)}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          body { font-family: Arial, sans-serif; background: #eef2f7; color: #0f172a; margin: 0; padding: 24px; }
+          .wrap { max-width: 1160px; margin: 0 auto; }
+          .receipt-root {
+            width: 100%;
+            background: linear-gradient(180deg, #f8fbff 0%, #ffffff 22%);
+            border-radius: 20px;
+            box-shadow: 0 24px 54px rgba(15, 23, 42, 0.12);
+            padding: 28px;
+            box-sizing: border-box;
+          }
+          .receipt-brand {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 22px;
+            border-radius: 18px;
+            color: #ffffff;
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #38bdf8 100%);
+            margin-bottom: 22px;
+          }
+          .receipt-brand-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+          }
+          .receipt-brand-logo {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.14);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+          }
+          .receipt-brand-text small { display: block; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.82; margin-bottom: 6px; }
+          .receipt-brand-text h1 { margin: 0; font-size: 30px; line-height: 1.1; }
+          .receipt-brand-text p { margin: 8px 0 0; font-size: 14px; opacity: 0.92; }
+          .receipt-brand-badge { text-align: right; }
+          .receipt-brand-badge span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.82; margin-bottom: 6px; }
+          .receipt-brand-badge strong { display: block; font-size: 18px; }
+          .receipt-section-title { margin: 0 0 14px; font-size: 20px; color: #0f172a; }
+          .meta-grid, .summary-grid { display: grid; gap: 12px; margin-bottom: 20px; }
+          .meta-grid { grid-template-columns: repeat(2, minmax(240px, 1fr)); }
+          .summary-grid { grid-template-columns: repeat(4, minmax(150px, 1fr)); }
+          .meta-item, .summary-box {
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 12px 14px;
+            background: #ffffff;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+          }
+          .meta-item span, .summary-box span { display: block; font-size: 12px; color: #64748b; margin-bottom: 6px; text-transform: uppercase; }
+          .meta-item strong, .summary-box strong { font-size: 15px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; background: #ffffff; }
+          th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; vertical-align: top; }
+          th { background: #e2e8f0; }
+          .footer-note {
+            margin-top: 24px;
+            font-size: 12px;
+            color: #64748b;
+            border-top: 1px solid #cbd5e1;
+            padding-top: 14px;
+          }
+          .actions { margin-top: 22px; }
+          button { border: none; border-radius: 10px; background: #2563eb; color: white; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+          @media (max-width: 900px) {
+            .meta-grid { grid-template-columns: 1fr; }
+            .summary-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+          }
+          @media (max-width: 640px) {
+            body { padding: 12px; }
+            .receipt-root { padding: 16px; }
+            .receipt-brand { padding: 14px; }
+            .receipt-brand-left { gap: 10px; }
+            .receipt-brand-text h1 { font-size: 24px; }
+            .summary-grid { grid-template-columns: 1fr; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="receipt-root">
+            <div class="receipt-brand">
+              <div class="receipt-brand-left">
+                <div class="receipt-brand-logo">PT</div>
+                <div class="receipt-brand-text">
+                  <small>PlastiTrack System</small>
+                  <h1>Payment Receipt</h1>
+                  <p>Plastic waste annotation workflow and payment management</p>
+                </div>
+              </div>
+              <div class="receipt-brand-badge">
+                <span>Receipt</span>
+                <strong>${escapeHtml(receiptNumber)}</strong>
+              </div>
+            </div>
+
+            <h2 class="receipt-section-title">Payment Summary</h2>
+            <div class="meta-grid">
+              ${commonRows
+                .map(
+                  ([label, value]) => `
+                    <div class="meta-item">
+                      <span>${escapeHtml(label)}</span>
+                      <strong>${escapeHtml(value || "-")}</strong>
+                    </div>`
+                )
+                .join("")}
+            </div>
+            ${detailSection}
+            <p class="footer-note">Generated by PlastiTrack payment management on ${escapeHtml(formatDateTime(new Date()))}.</p>
+
+            <div class="actions">
+              <button onclick="window.print()">Print Receipt</button>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error("Receipt view error:", err);
+    res.status(500).send("Failed to load receipt");
   }
 });
 
@@ -3499,25 +4200,11 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Hours worked must be between 0 and 24" });
     }
 
-    // Check if entry already exists for this date (manual entries only)
-    const [existing] = await connection.execute(
-      "SELECT id, is_auto_tracked FROM work_hours WHERE admin_id = ? AND date = ? AND is_auto_tracked = FALSE",
-      [adminId, date]
+    // Always create a new manual entry so existing records are never modified unexpectedly.
+    await connection.execute(
+      "INSERT INTO work_hours (admin_id, date, hours_worked, task_description, is_auto_tracked) VALUES (?, ?, ?, ?, FALSE)",
+      [adminId, date, Number(parsedHoursWorked.toFixed(2)), task_description || null]
     );
-
-    if (existing.length > 0) {
-      // Update existing manual entry
-      await connection.execute(
-        "UPDATE work_hours SET hours_worked = ?, task_description = ?, updated_at = NOW() WHERE id = ?",
-        [Number(parsedHoursWorked.toFixed(2)), task_description || null, existing[0].id]
-      );
-    } else {
-      // Insert new manual entry
-      await connection.execute(
-        "INSERT INTO work_hours (admin_id, date, hours_worked, task_description, is_auto_tracked) VALUES (?, ?, ?, ?, FALSE)",
-        [adminId, date, Number(parsedHoursWorked.toFixed(2)), task_description || null]
-      );
-    }
 
     await connection.release();
 
@@ -3903,11 +4590,11 @@ router.post("/admin/sync-active-session", verifyToken, async (req, res) => {
     const loginTime = new Date(session.login_time);
     const durationHours = (currentTime - loginTime) / (1000 * 60 * 60); // Convert to hours
 
-    // Only sync if session is at least 15 minutes
-    if (durationHours < 0.25) {
+    // Only sync if session is at least 5 minutes
+    if (durationHours < (5 / 60)) {
       await connection.release();
       return res.json({ 
-        message: "Session too short (minimum 15 minutes required)", 
+        message: "Session too short (minimum 5 minutes required)", 
         current_duration_minutes: Math.round(durationHours * 60),
         synced: false 
       });
@@ -5222,6 +5909,146 @@ router.get("/annotator/kpis", verifyToken, async (req, res) => {
   }
 });
 
+// GET Annotator Workflow Stats (dashboard compatibility)
+router.get("/annotator/workflow-stats", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [assignedRows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM tasks
+       WHERE user_id = ? AND task_type = 'annotation'`,
+      [userId]
+    );
+
+    const [inProgressRows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM tasks
+       WHERE user_id = ? AND task_type = 'annotation' AND status = 'in_progress'`,
+      [userId]
+    );
+
+    const [underReviewRows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM images
+       WHERE annotator_id = ? AND status = 'pending_review'`,
+      [userId]
+    );
+
+    const [approvedRows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM images
+       WHERE annotator_id = ? AND status = 'approved'`,
+      [userId]
+    );
+
+    const [rejectedRows] = await connection.execute(
+      `SELECT COUNT(*) as count
+       FROM images
+       WHERE annotator_id = ? AND status = 'rejected'`,
+      [userId]
+    );
+
+    await connection.release();
+
+    res.json({
+      assigned: Number(assignedRows[0]?.count || 0),
+      inProgress: Number(inProgressRows[0]?.count || 0),
+      underReview: Number(underReviewRows[0]?.count || 0),
+      approved: Number(approvedRows[0]?.count || 0),
+      rejected: Number(rejectedRows[0]?.count || 0),
+    });
+  } catch (err) {
+    console.error("Annotator workflow stats error:", err);
+    res.status(500).json({ error: "Failed to fetch workflow stats" });
+  }
+});
+
+// GET Annotator Recent Reviews (dashboard compatibility)
+router.get("/annotator/recent-reviews", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [reviews] = await connection.execute(
+      `SELECT
+        t.id,
+        t.task_id,
+        i.image_name as image_set_name,
+        COALESCE(
+          tester_task_user.name,
+          CASE
+            WHEN t.id = (
+              SELECT t4.id
+              FROM tasks t4
+              WHERE t4.image_id = i.id AND t4.task_type = 'annotation'
+              ORDER BY t4.assigned_date DESC, t4.id DESC
+              LIMIT 1
+            ) THEN assigned_tester_user.name
+            ELSE NULL
+          END,
+          '-'
+        ) as tester_name,
+        CASE
+          WHEN COALESCE(tester_task.status, '') IN ('approved', 'rejected') THEN tester_task.status
+          WHEN COALESCE(tester_task.status, '') IN ('pending_review', 'pending') THEN 'pending'
+          WHEN i.tester_id IS NOT NULL THEN 'pending'
+          WHEN t.status = 'completed' THEN 'completed'
+          ELSE 'pending'
+        END as review_status,
+        tester_task.completed_date as review_date,
+        tester_task.notes as feedback_comments
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN tasks tester_task ON tester_task.id = (
+        SELECT t2.id
+        FROM tasks t2
+        WHERE t2.image_id = i.id
+          AND t2.task_type = 'testing'
+          AND t2.updated_at >= COALESCE(t.completed_date, t.assigned_date)
+          AND t2.updated_at < COALESCE(
+            (
+              SELECT MIN(t3.assigned_date)
+              FROM tasks t3
+              WHERE t3.image_id = i.id
+                AND t3.task_type = 'annotation'
+                AND t3.assigned_date > t.assigned_date
+            ),
+            '9999-12-31'
+          )
+        ORDER BY t2.updated_at DESC, t2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN users tester_task_user ON tester_task_user.id = tester_task.user_id
+      LEFT JOIN users assigned_tester_user ON assigned_tester_user.id = i.tester_id
+      WHERE t.user_id = ?
+        AND t.task_type = 'annotation'
+        AND (
+          i.status IN ('pending_review', 'approved', 'rejected')
+          OR tester_task.id IS NOT NULL
+        )
+      ORDER BY COALESCE(tester_task.completed_date, tester_task.updated_at, t.updated_at, t.assigned_date) DESC
+      LIMIT 10`,
+      [userId]
+    );
+
+    await connection.release();
+    res.json(reviews);
+  } catch (err) {
+    console.error("Annotator recent reviews error:", err);
+    res.status(500).json({ error: "Failed to fetch recent reviews" });
+  }
+});
+
 // GET Annotator Tasks
 router.get("/annotator/tasks", verifyToken, async (req, res) => {
   try {
@@ -5240,6 +6067,7 @@ router.get("/annotator/tasks", verifyToken, async (req, res) => {
         i.image_name,
         t.status,
         u.name as assigned_by,
+        t.notes,
         t.notes as annotator_notes,
         i.melbourne_user_feedback as melbourne_feedback,
         (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' LIMIT 1) as tester_feedback,
@@ -5345,9 +6173,11 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-    const connection = await pool.getConnection();
 
-    const [tasks] = await connection.execute(`
+    // Parse and validate filters
+    const { status, dateFrom, dateTo } = req.query;
+    const validStatuses = ["completed", "in_progress", "pending", "pending_review", "approved", "rejected"];
+    let query = `
       SELECT 
         t.id,
         t.task_id,
@@ -5357,18 +6187,339 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
         i.annotator_feedback,
         t.assigned_date,
         t.completed_date,
-        (SELECT t2.notes FROM tasks t2 WHERE t2.image_id = i.id AND t2.task_type = 'testing' ORDER BY t2.updated_at DESC LIMIT 1) as tester_feedback
+        COALESCE(
+          tester_task_user.name,
+          CASE
+            WHEN t.id = (
+              SELECT t4.id
+              FROM tasks t4
+              WHERE t4.image_id = i.id AND t4.task_type = 'annotation'
+              ORDER BY t4.assigned_date DESC, t4.id DESC
+              LIMIT 1
+            ) THEN assigned_tester_user.name
+            ELSE NULL
+          END,
+          '-'
+        ) as tester_name,
+        CASE
+          WHEN COALESCE(tester_task.status, '') IN ('approved', 'rejected') THEN tester_task.status
+          WHEN COALESCE(tester_task.status, '') IN ('pending_review', 'pending') THEN 'pending'
+          WHEN i.tester_id IS NOT NULL THEN 'pending'
+          WHEN t.status = 'completed' THEN 'completed'
+          ELSE 'pending'
+        END as review_status,
+        tester_task.completed_date as review_date,
+        tester_task.notes as feedback_comments,
+        tester_task.notes as tester_feedback
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN tasks tester_task ON tester_task.id = (
+        SELECT t2.id
+        FROM tasks t2
+        WHERE t2.image_id = i.id
+          AND t2.task_type = 'testing'
+          AND t2.updated_at >= COALESCE(t.completed_date, t.assigned_date)
+          AND t2.updated_at < COALESCE(
+            (
+              SELECT MIN(t3.assigned_date)
+              FROM tasks t3
+              WHERE t3.image_id = i.id
+                AND t3.task_type = 'annotation'
+                AND t3.assigned_date > t.assigned_date
+            ),
+            '9999-12-31'
+          )
+        ORDER BY t2.updated_at DESC, t2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN users tester_task_user ON tester_task_user.id = tester_task.user_id
+      LEFT JOIN users assigned_tester_user ON assigned_tester_user.id = i.tester_id
       WHERE t.user_id = ? AND t.task_type = 'annotation'
-      ORDER BY t.assigned_date DESC
-    `, [userId]);
+    `;
+    const params = [userId];
 
+    // Apply status filter
+    if (status && validStatuses.includes(status)) {
+      if (status === "approved" || status === "rejected") {
+        query += " AND tester_task.status = ?";
+        params.push(status);
+      } else if (status === "pending_review") {
+        query += " AND (tester_task.status IN ('pending_review', 'pending') OR (tester_task.id IS NULL AND i.tester_id IS NOT NULL AND t.status = 'completed'))";
+      } else {
+        query += " AND t.status = ?";
+        params.push(status);
+      }
+    }
+
+    // Apply date range filters
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      if (!isNaN(fromDate.getTime())) {
+        query += " AND DATE(t.assigned_date) >= ?";
+        params.push(dateFrom);
+      }
+    }
+
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      if (!isNaN(toDate.getTime())) {
+        query += " AND DATE(t.assigned_date) <= ?";
+        params.push(dateTo);
+      }
+    }
+
+    query += " ORDER BY t.assigned_date DESC";
+
+    const connection = await pool.getConnection();
+    const [tasks] = await connection.execute(query, params);
     await connection.release();
+
     res.json(tasks);
   } catch (err) {
     console.error("Task history error:", err);
     res.status(500).json({ error: "Failed to fetch task history" });
+  }
+});
+
+// PUT Annotator Rework Task
+router.put("/annotator/tasks/:id/rework", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [taskRows] = await connection.execute(
+      `SELECT t.image_id, t.status, i.status as image_status, i.image_name, u.name as annotator_name
+       FROM tasks t
+       LEFT JOIN images i ON i.id = t.image_id
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE t.id = ? AND t.user_id = ? AND t.task_type = 'annotation'
+       LIMIT 1`,
+      [id, userId]
+    );
+
+    if (!taskRows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    const imageId = taskRows[0].image_id;
+    const imageStatus = taskRows[0].image_status;
+    const imageName = taskRows[0].image_name || `Image #${imageId}`;
+    const annotatorName = taskRows[0].annotator_name || "Annotator";
+
+    if (imageStatus !== "rejected") {
+      await connection.release();
+      return res.status(400).json({ error: "Rework can be requested only for rejected images" });
+    }
+
+    await logImageHistory(connection, {
+      imageId,
+      eventType: "rework_requested",
+      statusFrom: imageStatus,
+      statusTo: imageStatus,
+      actorId: userId,
+      details: JSON.stringify({
+        taskId: id,
+        requestedBy: annotatorName,
+      }),
+    });
+
+    const [admins] = await connection.execute(
+      `SELECT id, name FROM users WHERE role = 'admin'`
+    );
+
+    for (const admin of admins) {
+      await createNotification(
+        connection,
+        admin.id,
+        "rework_requested",
+        `${annotatorName} requested rework approval for \"${imageName}\" | ACTION: Open Admin Manage Images -> Rejected tab -> Approve Rework or Reassign`,
+        imageId
+      );
+    }
+
+    await connection.release();
+    res.json({ message: "Rework request sent to admin for approval" });
+  } catch (err) {
+    console.error("Annotator rework error:", err);
+    res.status(500).json({ error: "Failed to request rework" });
+  }
+});
+
+// PUT Admin Approve Rework (same annotator cycle)
+router.put("/admin/images/:id/approve-rework", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+    const { annotatorId } = req.body || {};
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Admin user not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [adminRows] = await connection.execute(
+      `SELECT name FROM users WHERE id = ? LIMIT 1`,
+      [adminId]
+    );
+    const adminName = adminRows[0]?.name || "Admin";
+
+    const [imageRows] = await connection.execute(
+      `SELECT id, image_name, status, annotator_id FROM images WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!imageRows.length) {
+      await connection.release();
+      return res.status(404).json({ error: "Image not found" });
+    }
+
+    const image = imageRows[0];
+    const targetAnnotatorId = Number(annotatorId || image.annotator_id || 0);
+
+    if (!targetAnnotatorId) {
+      await connection.release();
+      return res.status(400).json({ error: "No annotator available to approve rework" });
+    }
+
+    if (image.status !== "rejected") {
+      await connection.release();
+      return res.status(400).json({ error: "Only rejected images can be approved for rework" });
+    }
+
+    const [annotatorRows] = await connection.execute(
+      `SELECT id, name FROM users WHERE id = ? AND role = 'annotator' LIMIT 1`,
+      [targetAnnotatorId]
+    );
+
+    if (!annotatorRows.length) {
+      await connection.release();
+      return res.status(400).json({ error: "Invalid annotator for rework" });
+    }
+
+    const annotatorName = annotatorRows[0].name;
+    const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+    await connection.execute(
+      `UPDATE images
+       SET annotator_id = ?, status = 'in_progress', updated_at = NOW()
+       WHERE id = ?`,
+      [targetAnnotatorId, id]
+    );
+
+    await connection.execute(
+      `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
+       VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
+      [taskId, id, targetAnnotatorId, adminId]
+    );
+
+    await logImageHistory(connection, {
+      imageId: id,
+      eventType: "rework_approved",
+      statusFrom: "rejected",
+      statusTo: "in_progress",
+      actorId: adminId,
+      actorName: adminName,
+      details: JSON.stringify({
+        approvedFor: annotatorName,
+        approvedForId: targetAnnotatorId,
+      }),
+    });
+
+    await createNotification(
+      connection,
+      targetAnnotatorId,
+      "rework_approved",
+      `${adminName} approved rework for \"${image.image_name || `Image #${id}`}\" | ACTION: Open Dashboard and continue annotation`,
+      id
+    );
+
+    await connection.release();
+    res.json({ message: "Rework approved and reassigned to annotator" });
+  } catch (err) {
+    console.error("Approve rework error:", err);
+    res.status(500).json({ error: "Failed to approve rework" });
+  }
+});
+
+// GET Annotator Review Results (page compatibility)
+router.get("/annotator/review-results", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const connection = await pool.getConnection();
+    const [reviews] = await connection.execute(
+      `SELECT
+        t.id,
+        t.task_id,
+        i.image_name as image_set_name,
+        COALESCE(
+          tester_task_user.name,
+          CASE
+            WHEN t.id = (
+              SELECT t4.id
+              FROM tasks t4
+              WHERE t4.image_id = i.id AND t4.task_type = 'annotation'
+              ORDER BY t4.assigned_date DESC, t4.id DESC
+              LIMIT 1
+            ) THEN assigned_tester_user.name
+            ELSE NULL
+          END,
+          '-'
+        ) as tester_name,
+        CASE
+          WHEN COALESCE(tester_task.status, '') IN ('approved', 'rejected') THEN tester_task.status
+          WHEN COALESCE(tester_task.status, '') IN ('pending_review', 'pending') THEN 'pending'
+          WHEN i.tester_id IS NOT NULL THEN 'pending'
+          WHEN t.status = 'completed' THEN 'completed'
+          ELSE 'pending'
+        END as review_status,
+        tester_task.completed_date as review_date,
+        tester_task.notes as feedback_comments
+      FROM tasks t
+      LEFT JOIN images i ON t.image_id = i.id
+      LEFT JOIN tasks tester_task ON tester_task.id = (
+        SELECT t2.id
+        FROM tasks t2
+        WHERE t2.image_id = i.id
+          AND t2.task_type = 'testing'
+          AND t2.updated_at >= COALESCE(t.completed_date, t.assigned_date)
+          AND t2.updated_at < COALESCE(
+            (
+              SELECT MIN(t3.assigned_date)
+              FROM tasks t3
+              WHERE t3.image_id = i.id
+                AND t3.task_type = 'annotation'
+                AND t3.assigned_date > t.assigned_date
+            ),
+            '9999-12-31'
+          )
+        ORDER BY t2.updated_at DESC, t2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN users tester_task_user ON tester_task_user.id = tester_task.user_id
+      LEFT JOIN users assigned_tester_user ON assigned_tester_user.id = i.tester_id
+      WHERE t.user_id = ?
+        AND t.task_type = 'annotation'
+      ORDER BY COALESCE(tester_task.completed_date, tester_task.updated_at, t.updated_at, t.assigned_date) DESC`,
+      [userId]
+    );
+
+    await connection.release();
+    res.json(reviews);
+  } catch (err) {
+    console.error("Annotator review results error:", err);
+    res.status(500).json({ error: "Failed to fetch review results" });
   }
 });
 
@@ -5381,13 +6532,18 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
     }
     const connection = await pool.getConnection();
 
-    const [paymentDue] = await connection.execute(
-      `SELECT COALESCE(SUM(amount), 0) as total
+    const [paymentSummaryRows] = await connection.execute(
+      `SELECT
+        COALESCE(SUM(CASE WHEN status IN ('pending_calculation', 'pending_approval') THEN amount ELSE 0 END), 0) as pending_approval,
+        COALESCE(SUM(CASE WHEN status IN ('approved', 'ready_to_pay') THEN amount ELSE 0 END), 0) as approved_amount,
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) as paid_amount,
+        COALESCE(SUM(amount), 0) as total_amount
        FROM payments
-       WHERE user_id = ?
-         AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay')`,
+       WHERE user_id = ?`,
       [userId]
     );
+
+    const paymentSummary = paymentSummaryRows[0] || {};
 
     // Only count completed tasks that are eligible for payment (not from rejected work)
     const [tasksCompleted] = await connection.execute(
@@ -5396,15 +6552,43 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
       [userId]
     );
 
-    const [totalAmountDue] = await connection.execute(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ?`,
+    const [approvedImageRows] = await connection.execute(
+      `SELECT
+        COUNT(*) as image_sets,
+        COALESCE(SUM(objects_count), 0) as approved_objects
+       FROM images
+       WHERE annotator_id = ? AND status = 'approved'`,
       [userId]
     );
 
-    const [completedAmount] = await connection.execute(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = ? AND status = 'paid'`,
-      [userId]
+    const [breakdownRows] = await connection.execute(
+      `SELECT
+        p.id,
+        p.model_type,
+        p.amount,
+        p.status as payment_status,
+        p.rate_used as rate_per_object,
+        p.payment_date,
+        p.created_at,
+        COALESCE(
+          (
+            SELECT SUM(i.objects_count)
+            FROM images i
+            WHERE i.annotator_id = ?
+              AND i.model_type = p.model_type
+              AND i.status = 'approved'
+              AND i.updated_at <= COALESCE(p.payment_date, p.created_at)
+          ),
+          0
+        ) as approved_objects_count
+       FROM payments p
+       WHERE p.user_id = ?
+       ORDER BY p.created_at DESC
+       LIMIT 25`,
+      [userId, userId]
     );
+
+    const currentRate = await getRoleRate(connection, userId, "annotator");
 
     const [paymentHistory] = await connection.execute(
       `SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`,
@@ -5414,11 +6598,20 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
     await connection.release();
 
     res.json({
-      paymentDue: paymentDue[0].total,
+      pendingApproval: Number(paymentSummary.pending_approval || 0),
+      approvedAmount: Number(paymentSummary.approved_amount || 0),
+      paidAmount: Number(paymentSummary.paid_amount || 0),
+      totalApprovedImageSets: Number(approvedImageRows[0]?.image_sets || 0),
+      totalApprovedObjects: Number(approvedImageRows[0]?.approved_objects || 0),
+      currentRate: Number(currentRate || 0),
+      paymentBreakdown: breakdownRows,
+
+      // Backward-compatible fields
+      paymentDue: Number(paymentSummary.pending_approval || 0) + Number(paymentSummary.approved_amount || 0),
       tasksCompleted: tasksCompleted[0].count,
-      totalAmountDue: totalAmountDue[0].total,
-      completedAmount: completedAmount[0].total,
-      previousAmount: completedAmount[0].total > 0 ? completedAmount[0].total - 1000 : 0,
+      totalAmountDue: Number(paymentSummary.total_amount || 0),
+      completedAmount: Number(paymentSummary.paid_amount || 0),
+      previousAmount: Number(paymentSummary.paid_amount || 0) > 0 ? Number(paymentSummary.paid_amount || 0) - 1000 : 0,
       paymentHistory: paymentHistory,
     });
   } catch (err) {
@@ -5791,10 +6984,10 @@ router.get("/tester/task-history", verifyToken, async (req, res) => {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const connection = await pool.getConnection();
-
-    const [tasks] = await connection.execute(
-      `SELECT 
+    // Parse and validate filters
+    const { status, dateFrom, dateTo } = req.query;
+    const validStatuses = ["completed", "in_progress", "pending", "rejected"];
+    let query = `SELECT 
         t.id,
         t.task_id,
         i.image_name,
@@ -5810,11 +7003,37 @@ router.get("/tester/task-history", verifyToken, async (req, res) => {
       FROM tasks t
       LEFT JOIN images i ON t.image_id = i.id
       LEFT JOIN users u ON t.assigned_by = u.id
-      WHERE t.user_id = ? AND t.task_type = 'testing'
-      ORDER BY t.assigned_date DESC`,
-      [userId]
-    );
+      WHERE t.user_id = ? AND t.task_type = 'testing'`;
+    
+    const params = [userId];
 
+    // Apply status filter
+    if (status && validStatuses.includes(status)) {
+      query += " AND t.status = ?";
+      params.push(status);
+    }
+
+    // Apply date range filters
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      if (!isNaN(fromDate.getTime())) {
+        query += " AND DATE(t.assigned_date) >= ?";
+        params.push(dateFrom);
+      }
+    }
+
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      if (!isNaN(toDate.getTime())) {
+        query += " AND DATE(t.assigned_date) <= ?";
+        params.push(dateTo);
+      }
+    }
+
+    query += " ORDER BY t.assigned_date DESC";
+
+    const connection = await pool.getConnection();
+    const [tasks] = await connection.execute(query, params);
     console.log(`Tester ${userId} task history: ${tasks.length} tasks found`);
     await connection.release();
     res.json(tasks);

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 import { ALL_BRANCH_OPTIONS, BANK_OPTIONS } from "../../constants/bankOptions";
 
@@ -120,17 +119,15 @@ export default function AdminPayments() {
   if (loading) return <div className="dashboard-loading">Loading payments...</div>;
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>admin payment</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>admin payment</h1>
+      </div>
 
         {error && <div className="error-message">{error}</div>}
 
-        {paymentData && (
-          <>
+      {paymentData && (
+        <>
             <div className="payment-summary">
               <div className="payment-card earned">
                 <div className="payment-value">Rs. {paymentData.totalEarned || 0}</div>
@@ -284,9 +281,8 @@ export default function AdminPayments() {
                 </table>
               </div>
             </div>
-          </>
-        )}
-      </div>
-    </div>
+        </>
+      )}
+    </>
   );
 }

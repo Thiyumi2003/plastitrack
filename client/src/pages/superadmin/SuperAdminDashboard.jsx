@@ -3,7 +3,6 @@ import axios from "axios";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatChartDate } from "../../utils/dateUtils";
 import "./superadmin.css";
-import Sidebar from "./Sidebar";
 
 export default function SuperAdminDashboard() {
   const [kpis, setKpis] = useState(null);
@@ -65,15 +64,13 @@ export default function SuperAdminDashboard() {
   })) || [];
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Super Admin Dashboard</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Super Admin Dashboard</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         {/* KPI Cards */}
         <div className="kpi-section">
@@ -201,7 +198,7 @@ export default function SuperAdminDashboard() {
             </table>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
+      </>
+    );
+  }
+

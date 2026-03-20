@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import MelbourneSidebar from "./MelbourneSidebar";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatChartDate } from "../../utils/dateUtils";
 import "../annotator/annotator.css";
@@ -62,15 +61,13 @@ export default function MelbourneAdminDashboard() {
   })) || [];
 
   return (
-    <div className="dashboard-container">
-      <MelbourneSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Admin Dashboard Overview</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Admin Dashboard Overview</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         <div className="kpi-section">
           <div className="kpi-card">
@@ -139,29 +136,28 @@ export default function MelbourneAdminDashboard() {
           </div>
         )}
 
-        {/* Progress Over Time */}
-        {progressData.length > 0 && (
-          <div className="chart-section">
-            <h2>Progress Over Time</h2>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={progressData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="pending" stroke="#f59e0b" strokeWidth={2} />
-                  <Line type="monotone" dataKey="inProgress" stroke="#667eea" strokeWidth={2} />
-                  <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={2} />
-                  <Line type="monotone" dataKey="approved" stroke="#8b5cf6" strokeWidth={2} />
-                  <Line type="monotone" dataKey="rejected" stroke="#ef4444" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+      {/* Progress Over Time */}
+      {progressData.length > 0 && (
+        <div className="chart-section">
+          <h2>Progress Over Time</h2>
+          <div className="chart-container">
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={progressData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="pending" stroke="#f59e0b" strokeWidth={2} />
+                <Line type="monotone" dataKey="inProgress" stroke="#667eea" strokeWidth={2} />
+                <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={2} />
+                <Line type="monotone" dataKey="approved" stroke="#8b5cf6" strokeWidth={2} />
+                <Line type="monotone" dataKey="rejected" stroke="#ef4444" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

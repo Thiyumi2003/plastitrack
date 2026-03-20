@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Calendar, Clock, Plus, Trash2, CheckCircle, XCircle, Zap, ZapOff } from "lucide-react";
-import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 
 const parseHoursInput = (value) => {
@@ -46,9 +45,25 @@ export default function AdminWorkHours() {
   });
 
   useEffect(() => {
-    fetchWorkHours();
-    fetchSessions();
+    const loadPageData = async () => {
+      await syncActiveSession();
+      await Promise.all([fetchWorkHours(), fetchSessions()]);
+    };
+
+    loadPageData();
   }, []);
+
+  const syncActiveSession = async () => {
+    try {
+      await axios.post(
+        "http://localhost:5000/api/dashboard/admin/sync-active-session",
+        {},
+        { headers: getAuthHeader() }
+      );
+    } catch (err) {
+      console.error("Failed to sync active session:", err);
+    }
+  };
 
   const fetchWorkHours = async () => {
     try {
@@ -164,37 +179,35 @@ export default function AdminWorkHours() {
   const manualHours = workHours.filter(w => !w.is_auto_tracked).reduce((sum, w) => sum + parseFloat(w.hours_worked || 0), 0);
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>My Work Hours</h1>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button 
-              className={`btn-toggle-track ${autoTrackEnabled ? "active" : ""}`}
-              onClick={toggleAutoTracking}
-              style={{
-                padding: "10px 20px",
-                borderRadius: "8px",
-                border: "none",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                backgroundColor: autoTrackEnabled ? "#10b981" : "#6b7280",
-                color: "white",
-                fontWeight: "600",
-                transition: "all 0.3s"
-              }}
-            >
-              {autoTrackEnabled ? <Zap size={18} /> : <ZapOff size={18} />}
-              {autoTrackEnabled ? "Auto-Tracking ON" : "Auto-Tracking OFF"}
-            </button>
-            <button className="btn-primary" onClick={() => setShowAddModal(true)}>
-              <Plus size={18} /> Log Manual Hours
-            </button>
-          </div>
+    <>
+      <div className="dashboard-header">
+        <h1>My Work Hours</h1>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button 
+            className={`btn-toggle-track ${autoTrackEnabled ? "active" : ""}`}
+            onClick={toggleAutoTracking}
+            style={{
+              padding: "10px 20px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              backgroundColor: autoTrackEnabled ? "#10b981" : "#6b7280",
+              color: "white",
+              fontWeight: "600",
+              transition: "all 0.3s"
+            }}
+          >
+            {autoTrackEnabled ? <Zap size={18} /> : <ZapOff size={18} />}
+            {autoTrackEnabled ? "Auto-Tracking ON" : "Auto-Tracking OFF"}
+          </button>
+          <button className="btn-primary" onClick={() => setShowAddModal(true)}>
+            <Plus size={18} /> Log Manual Hours
+          </button>
         </div>
+      </div>
 
         {error && <div className="dashboard-error">{error}</div>}
 
@@ -423,14 +436,13 @@ export default function AdminWorkHours() {
 
         <div style={{ marginTop: "20px", padding: "15px", backgroundColor: "#f8f9fa", borderRadius: "8px", borderLeft: "4px solid #667eea" }}>
           <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>ℹ️ About Work Hours Tracking</h3>
-          <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
-            <li><strong>Auto-Tracking:</strong> When enabled, your hours are automatically logged based on login/logout times (minimum 15 minutes)</li>
+           <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
+            <li><strong>Auto-Tracking:</strong> When enabled, your hours are automatically logged based on login/logout times (minimum 5 minutes)</li>
             <li><strong>Manual Entry:</strong> You can also manually log hours for offline work or adjust entries</li>
             <li><strong>Approval:</strong> All hours (auto and manual) require Super Admin approval for payment eligibility</li>
             <li><strong>Editing:</strong> Auto-tracked entries cannot be deleted. Manual entries can be deleted if pending</li>
           </ul>
         </div>
-      </div>
 
       {/* Add Work Hours Modal */}
       {showAddModal && (
@@ -483,6 +495,6 @@ export default function AdminWorkHours() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

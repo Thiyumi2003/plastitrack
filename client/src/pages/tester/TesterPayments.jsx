@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import TesterSidebar from "./TesterSidebar";
 import "../annotator/annotator.css";
 import { ALL_BRANCH_OPTIONS, BANK_OPTIONS } from "../../constants/bankOptions";
 
@@ -120,14 +119,12 @@ export default function TesterPayments() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <TesterSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Payment History</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Payment History</h1>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         <div className="payment-summary">
           <div className="payment-card-item">
@@ -263,38 +260,37 @@ export default function TesterPayments() {
           </div>
         </div>
 
-        {payments?.paymentHistory && payments.paymentHistory.length > 0 && (
-          <div className="payment-history-section">
-            <h2>Transaction History</h2>
-            <div className="table-container">
-              <table className="payment-history-table">
-                <thead>
-                  <tr>
-                    <th>DATE</th>
-                    <th>IMAGE SETS</th>
-                    <th>AMOUNT</th>
-                    <th>STATUS</th>
+      {payments?.paymentHistory && payments.paymentHistory.length > 0 && (
+        <div className="payment-history-section">
+          <h2>Transaction History</h2>
+          <div className="table-container">
+            <table className="payment-history-table">
+              <thead>
+                <tr>
+                  <th>DATE</th>
+                  <th>IMAGE SETS</th>
+                  <th>AMOUNT</th>
+                  <th>STATUS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.paymentHistory.map((payment, idx) => (
+                  <tr key={idx}>
+                    <td>{payment.date || "N/A"}</td>
+                    <td>{payment.image_sets || 0}</td>
+                    <td>₨ {payment.amount?.toLocaleString()}</td>
+                    <td>
+                      <span className={`status-badge status-${payment.status}`}>
+                        {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1)}
+                      </span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {payments.paymentHistory.map((payment, idx) => (
-                    <tr key={idx}>
-                      <td>{payment.date || "N/A"}</td>
-                      <td>{payment.image_sets || 0}</td>
-                      <td>₨ {payment.amount?.toLocaleString()}</td>
-                      <td>
-                        <span className={`status-badge status-${payment.status}`}>
-                          {payment.status?.charAt(0).toUpperCase() + payment.status?.slice(1)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

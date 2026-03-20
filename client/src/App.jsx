@@ -20,19 +20,25 @@ import AdminPayments from "./pages/admin/AdminPayments";
 import PaymentEligibility from "./pages/admin/PaymentEligibility";
 import AdminWorkHours from "./pages/admin/AdminWorkHours";
 import AdminProfile from "./pages/admin/AdminProfile";
+import AdminDashboardLayout from "./pages/admin/AdminDashboardLayout";
+import SuperAdminLayout from "./pages/superadmin/SuperAdminLayout";
 import AnnotatorDashboard from "./pages/annotator/AnnotatorDashboard";
 import AnnotatorProfile from "./pages/annotator/AnnotatorProfile";
 import AnnotatorPayments from "./pages/annotator/AnnotatorPayments";
 import AnnotatorTaskHistory from "./pages/annotator/AnnotatorTaskHistory";
+import AnnotatorReviewResults from "./pages/annotator/AnnotatorReviewResults";
+import AnnotatorLayout from "./pages/annotator/AnnotatorLayout";
 import TesterDashboard from "./pages/tester/TesterDashboard";
 import TesterProfile from "./pages/tester/TesterProfile";
 import TesterPayments from "./pages/tester/TesterPayments";
 import TesterTaskHistory from "./pages/tester/TesterTaskHistory";
+import TesterLayout from "./pages/tester/TesterLayout";
 import MelbourneDashboard from "./pages/melbourne/MelbourneDashboard";
 import MelbourneProfile from "./pages/melbourne/MelbourneProfile";
 import MelbourneAdminDashboard from "./pages/melbourne/MelbourneAdminDashboard";
 import MelbourneManageImages from "./pages/melbourne/MelbourneManageImages";
 import MelbourneReports from "./pages/melbourne/MelbourneReports";
+import MelbourneLayout from "./pages/melbourne/MelbourneLayout";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -81,247 +87,96 @@ export default function App() {
         <Route path="/forgot" element={<ForgotPassword />} />
         <Route path="/otp" element={<OtpVerify />} />
 
-        {/* Super Admin Dashboard Routes */}
+        {/* Super Admin Dashboard Routes (Nested Layout) */}
         <Route
-          path="/dashboard"
           element={
             <ProtectedRoute requiredRole="super_admin">
-              <SuperAdminDashboard />
+              <SuperAdminLayout />
             </ProtectedRoute>
           }
-        />
-        <Route
-          path="/manage-admins"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <ManageAdmins />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/view-users"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <ViewAllUsers />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/manage-rates"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <ManageRates />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/reports"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <Reports />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/payments"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <ManagePayments />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin-work-hours"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <ManageAdminWorkHours />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute requiredRole="super_admin">
-              <SuperAdminProfile />
-            </ProtectedRoute>
-          }
-        />
+        >
+          <Route path="/dashboard" element={<SuperAdminDashboard />} />
+          <Route path="/manage-admins" element={<ManageAdmins />} />
+          <Route path="/view-users" element={<ViewAllUsers />} />
+          <Route path="/manage-rates" element={<ManageRates />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/payments" element={<ManagePayments />} />
+          <Route path="/admin-work-hours" element={<ManageAdminWorkHours />} />
+          <Route path="/profile" element={<SuperAdminProfile />} />
+        </Route>
 
-        {/* Admin Dashboard Routes */}
+        {/* Admin Dashboard Routes (Nested Layout) */}
         <Route
-          path="/admin/dashboard"
+          path="/admin"
           element={
             <ProtectedRoute requiredRole="admin">
-              <AdminDashboard />
+              <AdminDashboardLayout />
             </ProtectedRoute>
           }
-        />
-        <Route
-          path="/admin/images"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <ManageImages />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminUsers />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/reports"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminReports />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/payments"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminPayments />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/payment-eligibility"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <PaymentEligibility />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/work-hours"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminWorkHours />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/profile"
-          element={
-            <ProtectedRoute requiredRole="admin">
-              <AdminProfile />
-            </ProtectedRoute>
-          }
-        />
+        >
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<AdminDashboard />} />
+          <Route path="manage-images" element={<ManageImages />} />
+          <Route path="users" element={<AdminUsers />} />
+          <Route path="reports" element={<AdminReports />} />
+          <Route path="payments" element={<AdminPayments />} />
+          <Route path="payment-eligibility" element={<PaymentEligibility />} />
+          <Route path="work-hours" element={<AdminWorkHours />} />
+          <Route path="profile" element={<AdminProfile />} />
+        </Route>
 
-        {/* Annotator Dashboard Routes */}
+        {/* Backward-compatible admin route aliases */}
+        <Route path="/admin/images" element={<Navigate to="/admin/manage-images" replace />} />
+
+        {/* Annotator Dashboard Routes (Nested Layout) */}
         <Route
-          path="/annotator/dashboard"
+          path="/annotator"
           element={
             <ProtectedRoute requiredRole="annotator">
-              <AnnotatorDashboard />
+              <AnnotatorLayout />
             </ProtectedRoute>
           }
-        />
-        <Route
-          path="/annotator/profile"
-          element={
-            <ProtectedRoute requiredRole="annotator">
-              <AnnotatorProfile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/annotator/task-history"
-          element={
-            <ProtectedRoute requiredRole="annotator">
-              <AnnotatorTaskHistory />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/annotator/payments"
-          element={
-            <ProtectedRoute requiredRole="annotator">
-              <AnnotatorPayments />
-            </ProtectedRoute>
-          }
-        />
+        >
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<AnnotatorDashboard />} />
+          <Route path="task-history" element={<AnnotatorTaskHistory />} />
+          <Route path="review-results" element={<AnnotatorReviewResults />} />
+          <Route path="payments" element={<AnnotatorPayments />} />
+          <Route path="profile" element={<AnnotatorProfile />} />
+        </Route>
 
-        {/* Tester Dashboard Routes */}
+        {/* Tester Dashboard Routes (Nested Layout) */}
         <Route
-          path="/tester/dashboard"
+          path="/tester"
           element={
             <ProtectedRoute requiredRole="tester">
-              <TesterDashboard />
+              <TesterLayout />
             </ProtectedRoute>
           }
-        />
-        <Route
-          path="/tester/task-history"
-          element={
-            <ProtectedRoute requiredRole="tester">
-              <TesterTaskHistory />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/tester/profile"
-          element={
-            <ProtectedRoute requiredRole="tester">
-              <TesterProfile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/tester/payments"
-          element={
-            <ProtectedRoute requiredRole="tester">
-              <TesterPayments />
-            </ProtectedRoute>
-          }
-        />
+        >
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<TesterDashboard />} />
+          <Route path="task-history" element={<TesterTaskHistory />} />
+          <Route path="profile" element={<TesterProfile />} />
+          <Route path="payments" element={<TesterPayments />} />
+        </Route>
 
-        {/* Melbourne User Dashboard Routes */}
+        {/* Melbourne User Dashboard Routes (Nested Layout) */}
         <Route
-          path="/melbourne/dashboard"
+          path="/melbourne"
           element={
             <ProtectedRoute requiredRole="melbourne_user">
-              <MelbourneDashboard />
+              <MelbourneLayout />
             </ProtectedRoute>
           }
-        />
-        <Route
-          path="/melbourne/admin-dashboard"
-          element={
-            <ProtectedRoute requiredRole="melbourne_user">
-              <MelbourneAdminDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/melbourne/images"
-          element={
-            <ProtectedRoute requiredRole="melbourne_user">
-              <MelbourneManageImages />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/melbourne/reports"
-          element={
-            <ProtectedRoute requiredRole="melbourne_user">
-              <MelbourneReports />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/melbourne/profile"
-          element={
-            <ProtectedRoute requiredRole="melbourne_user">
-              <MelbourneProfile />
-            </ProtectedRoute>
-          }
-        />
+        >
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<MelbourneDashboard />} />
+          <Route path="admin-dashboard" element={<MelbourneAdminDashboard />} />
+          <Route path="images" element={<MelbourneManageImages />} />
+          <Route path="reports" element={<MelbourneReports />} />
+          <Route path="profile" element={<MelbourneProfile />} />
+        </Route>
 
         <Route path="*" element={<Navigate to="/" />} />
 

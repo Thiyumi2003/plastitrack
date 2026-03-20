@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from "react";
 import axios from "axios";
-import Sidebar from "./Sidebar";
 import ErrorBoundary from "../../components/reports/ErrorBoundary";
 import { ExportService } from "../../services/ExportService";
 import { AnnotationSummaryReport } from "../../components/reports/AnnotationSummaryReport";
@@ -279,26 +278,24 @@ export default function Reports() {
   const ActiveComponent = reports.find((r) => r.id === activeReport)?.component;
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Reports and Analytics</h1>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              onClick={handleDownloadAllPDF}
-              disabled={isDownloadingAll}
-              className="btn-primary"
-              style={{ padding: "6px 12px", fontSize: "13px", opacity: isDownloadingAll ? 0.7 : 1 }}
-              title="Download all reports in one PDF"
-            >
-              {isDownloadingAll ? "Preparing PDF..." : "Download All PDF"}
-            </button>
-            <div className="header-date">{new Date().toLocaleDateString()}</div>
-          </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Reports and Analytics</h1>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={handleDownloadAllPDF}
+            disabled={isDownloadingAll}
+            className="btn-primary"
+            style={{ padding: "6px 12px", fontSize: "13px", opacity: isDownloadingAll ? 0.7 : 1 }}
+            title="Download all reports in one PDF"
+          >
+            {isDownloadingAll ? "Preparing PDF..." : "Download All PDF"}
+          </button>
+          <div className="header-date">{new Date().toLocaleDateString()}</div>
         </div>
+      </div>
 
-        {generalError && (
+      {generalError && (
           <div
             style={{
               backgroundColor: "#fff2f0",
@@ -327,49 +324,48 @@ export default function Reports() {
           </div>
         )}
 
-        <div>
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              marginBottom: "20px",
-              overflowX: "auto",
-              paddingBottom: "8px",
-              borderBottom: "2px solid #e8e8e8",
-            }}
-          >
-            {reports.map((report) => (
-              <button
-                key={report.id}
-                onClick={() => setActiveReport(report.id)}
-                style={{
-                  padding: "10px 16px",
-                  border: "none",
-                  borderBottom: activeReport === report.id ? "3px solid #0066cc" : "none",
-                  backgroundColor: activeReport === report.id ? "#e6f2ff" : "transparent",
-                  color: activeReport === report.id ? "#0066cc" : "#666",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: activeReport === report.id ? "600" : "400",
-                  whiteSpace: "nowrap",
-                  borderRadius: "4px 4px 0 0",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                {report.icon} {report.label}
-              </button>
-            ))}
-          </div>
-
-          {ActiveComponent && (
-            <ErrorBoundary key={activeReport}>
-              <div style={{ animation: "fadeIn 0.3s ease" }}>
-                <ActiveComponent />
-              </div>
-            </ErrorBoundary>
-          )}
+      <div>
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            marginBottom: "20px",
+            overflowX: "auto",
+            paddingBottom: "8px",
+            borderBottom: "2px solid #e8e8e8",
+          }}
+        >
+          {reports.map((report) => (
+            <button
+              key={report.id}
+              onClick={() => setActiveReport(report.id)}
+              style={{
+                padding: "10px 16px",
+                border: "none",
+                borderBottom: activeReport === report.id ? "3px solid #0066cc" : "none",
+                backgroundColor: activeReport === report.id ? "#e6f2ff" : "transparent",
+                color: activeReport === report.id ? "#0066cc" : "#666",
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: activeReport === report.id ? "600" : "400",
+                whiteSpace: "nowrap",
+                borderRadius: "4px 4px 0 0",
+                transition: "all 0.2s ease",
+              }}
+            >
+              {report.icon} {report.label}
+            </button>
+          ))}
         </div>
+
+        {ActiveComponent && (
+          <ErrorBoundary key={activeReport}>
+            <div style={{ animation: "fadeIn 0.3s ease" }}>
+              <ActiveComponent />
+            </div>
+          </ErrorBoundary>
+        )}
       </div>
-    </div>
+    </>
   );
 }

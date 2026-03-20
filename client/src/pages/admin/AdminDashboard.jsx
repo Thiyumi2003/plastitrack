@@ -3,7 +3,6 @@ import axios from "axios";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatChartDate } from "../../utils/dateUtils";
 import "./admin.css";
-import AdminSidebar from "./AdminSidebar";
 
 export default function AdminDashboard() {
   const [kpis, setKpis] = useState(null);
@@ -62,13 +61,11 @@ export default function AdminDashboard() {
   })) || [];
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Admin Dashboard</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Admin Dashboard</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
         {error && <div className="dashboard-error">{error}</div>}
 
@@ -99,8 +96,8 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="charts-section">
-          <div className="chart-container">
+      <div className="charts-section">
+        <div className="chart-container">
             <h3>Progress Over Time</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={progressData}>
@@ -116,9 +113,9 @@ export default function AdminDashboard() {
                 <Line type="monotone" dataKey="rejected" stroke="#FF5252" />
               </LineChart>
             </ResponsiveContainer>
-          </div>
+        </div>
 
-          <div className="chart-container">
+        <div className="chart-container">
             <h3>User Contributions</h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={userChartData}>
@@ -131,9 +128,9 @@ export default function AdminDashboard() {
                 <Bar dataKey="total" fill="#4D96FF" name="Total" />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+        </div>
 
-          <div className="chart-container">
+        <div className="chart-container">
             <h3>Image Status Distribution</h3>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
@@ -154,9 +151,8 @@ export default function AdminDashboard() {
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
-          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

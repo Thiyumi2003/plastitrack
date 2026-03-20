@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import TesterSidebar from "./TesterSidebar";
+import { RefreshCw } from "lucide-react";
 import "../annotator/annotator.css";
 
 export default function TesterTaskHistory() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -15,16 +17,27 @@ export default function TesterTaskHistory() {
 
   useEffect(() => {
     fetchTaskHistory();
-  }, []);
+  }, [statusFilter, dateFrom, dateTo]);
 
   const fetchTaskHistory = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(
-        "http://localhost:5000/api/dashboard/tester/task-history",
-        { headers: getAuthHeader() }
-      );
+      const params = new URLSearchParams();
+      
+      if (statusFilter !== "all") {
+        params.append("status", statusFilter);
+      }
+      if (dateFrom) {
+        params.append("dateFrom", dateFrom);
+      }
+      if (dateTo) {
+        params.append("dateTo", dateTo);
+      }
+
+      const url = `http://localhost:5000/api/dashboard/tester/task-history${params.toString() ? "?" + params.toString() : ""}`;
+      const response = await axios.get(url, { headers: getAuthHeader() });
       setTasks(response.data);
+      setError("");
     } catch (err) {
       setError(err.response?.data?.error || "Failed to load task history");
     } finally {
@@ -39,6 +52,7 @@ export default function TesterTaskHistory() {
       completed: "Completed",
       approved: "Approved",
       rejected: "Rejected",
+      in_progress: "In Progress",
     };
     return (
       <span className={`status-badge status-${status?.replace("_", "-")}`}>
@@ -47,42 +61,63 @@ export default function TesterTaskHistory() {
     );
   };
 
-  const filteredTasks = tasks.filter((task) => {
-    if (filter === "all") return true;
-    return task.status === filter;
-  });
+  const handleResetFilters = () => {
+    setStatusFilter("all");
+    setDateFrom("");
+    setDateTo("");
+  };
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <TesterSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Task History</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Task History</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         <div className="filter-section">
-          <label>Filter by Status:</label>
+          <label>Status:</label>
           <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
             className="filter-select"
           >
             <option value="all">All Tasks</option>
             <option value="pending">Pending</option>
-            <option value="pending_review">Pending Review</option>
+            <option value="in_progress">In Progress</option>
             <option value="completed">Completed</option>
-            <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+
+          <label style={{ marginLeft: "20px" }}>From Date:</label>
+          <input
+            type="date"
+            className="filter-select"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+
+          <label style={{ marginLeft: "20px" }}>To Date:</label>
+          <input
+            type="date"
+            className="filter-select"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
+
+          <button className="filter-btn" onClick={handleResetFilters} style={{ marginLeft: "20px" }}>
+            Reset Filters
+          </button>
+          <button className="filter-btn active" onClick={fetchTaskHistory} style={{ marginLeft: "10px" }}>
+            <RefreshCw size={16} style={{ display: "inline", marginRight: "5px" }} /> Refresh
+          </button>
         </div>
 
         <div className="tasks-section">
-          <h2>All Tasks ({filteredTasks.length})</h2>
+          <h2>All Tasks ({tasks.length})</h2>
           <div className="table-container">
             <table className="tasks-table">
               <thead>
@@ -97,14 +132,14 @@ export default function TesterTaskHistory() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTasks.length === 0 ? (
+                {tasks.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="no-data">
                       No tasks found
                     </td>
                   </tr>
                 ) : (
-                  filteredTasks.map((task) => (
+                  tasks.map((task) => (
                     <tr key={task.id}>
                       <td>{task.task_id}</td>
                       <td>
@@ -141,35 +176,34 @@ export default function TesterTaskHistory() {
           </div>
         </div>
 
-        <div className="summary-section">
-          <div className="summary-card">
-            <div className="summary-label">Total Tasks</div>
-            <div className="summary-value">{tasks.length}</div>
+      <div className="summary-section">
+        <div className="summary-card">
+          <div className="summary-label">Total Tasks</div>
+          <div className="summary-value">{tasks.length}</div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Approved</div>
+          <div className="summary-value">
+            {tasks.filter((t) => t.status === "approved").length}
           </div>
-          <div className="summary-card">
-            <div className="summary-label">Approved</div>
-            <div className="summary-value">
-              {tasks.filter((t) => t.status === "approved").length}
-            </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Rejected</div>
+          <div className="summary-value">
+            {tasks.filter((t) => t.status === "rejected").length}
           </div>
-          <div className="summary-card">
-            <div className="summary-label">Rejected</div>
-            <div className="summary-value">
-              {tasks.filter((t) => t.status === "rejected").length}
-            </div>
-          </div>
-          <div className="summary-card">
-            <div className="summary-label">Pending</div>
-            <div className="summary-value">
-              {
-                tasks.filter(
-                  (t) => t.status === "pending" || t.status === "pending_review"
-                ).length
-              }
-            </div>
+        </div>
+        <div className="summary-card">
+          <div className="summary-label">Pending</div>
+          <div className="summary-value">
+            {
+              tasks.filter(
+                (t) => t.status === "pending" || t.status === "pending_review"
+              ).length
+            }
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

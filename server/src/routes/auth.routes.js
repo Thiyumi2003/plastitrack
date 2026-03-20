@@ -213,8 +213,8 @@ router.post("/logout", async (req, res) => {
             [durationHours.toFixed(2), session.id]
           );
           
-          // If session is at least 1 hour, create work hours entry
-          if (durationHours >= 0.25) { // At least 15 minutes
+          // If session is at least 5 minutes, create work hours entry
+          if (durationHours >= (5 / 60)) { // At least 5 minutes
             const workDate = loginTime.toISOString().split('T')[0];
             
             // Check if there's already an entry for today

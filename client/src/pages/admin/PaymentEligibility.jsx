@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 
 export default function PaymentEligibility() {
@@ -34,15 +33,13 @@ export default function PaymentEligibility() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>💰 Payment Eligibility Report</h1>
-          <p style={{ fontSize: "14px", color: "#666", marginTop: "8px" }}>
-            Track which annotators are eligible for payment based on task completion and rejection history
-          </p>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>💰 Payment Eligibility Report</h1>
+        <p style={{ fontSize: "14px", color: "#666", marginTop: "8px" }}>
+          Track which annotators are eligible for payment based on task completion and rejection history
+        </p>
+      </div>
 
         {error && <div className="dashboard-error">{error}</div>}
 
@@ -65,8 +62,8 @@ export default function PaymentEligibility() {
           </p>
         </div>
 
-        {report.imageGroups && report.imageGroups.length > 0 ? (
-          report.imageGroups.map((group) => (
+      {report.imageGroups && report.imageGroups.length > 0 ? (
+        report.imageGroups.map((group) => (
             <div key={group.image_id} className="image-group-card" style={{
               background: "white",
               border: "1px solid #e0e0e0",
@@ -169,11 +166,10 @@ export default function PaymentEligibility() {
                 </tbody>
               </table>
             </div>
-          ))
-        ) : (
-          <div className="no-data">No task data available</div>
-        )}
-      </div>
-    </div>
+        ))
+      ) : (
+        <div className="no-data">No task data available</div>
+      )}
+    </>
   );
 }

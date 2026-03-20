@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Edit2, Trash2, UserX, UserCheck } from "lucide-react";
-import Sidebar from "./Sidebar";
 import "./superadmin.css";
 
 const getProfileSrc = (profilePicture) => {
@@ -155,14 +154,12 @@ export default function ViewAllUsers() {
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>All Users</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>All Users</h1>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         <div className="filter-section">
           <div className="filter-group">
@@ -190,74 +187,73 @@ export default function ViewAllUsers() {
           </div>
         </div>
 
-        <div className="table-container">
-          <table className="users-table">
-            <thead>
-              <tr>
-                <th style={{ width: "10%" }}>Profile</th>
-                <th style={{ width: "20%" }}>Name</th>
-                <th style={{ width: "25%" }}>Email</th>
-                <th style={{ width: "15%" }}>Role</th>
-                <th style={{ width: "10%" }}>Status</th>
-                <th style={{ width: "20%" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.map((user) => (
-                <tr key={user.id}>
-                  <td>
-                    <div className="user-id-cell">
-                      <div className="user-id-avatar">
-                        {getProfileSrc(user.profile_picture) ? (
-                          <img
-                            src={getProfileSrc(user.profile_picture)}
-                            alt={user.name || "User"}
-                            className="user-id-avatar-img"
-                          />
-                        ) : (
-                          <span>{getAvatarText(user.name)}</span>
-                        )}
-                      </div>
+      <div className="table-container">
+        <table className="users-table">
+          <thead>
+            <tr>
+              <th style={{ width: "10%" }}>Profile</th>
+              <th style={{ width: "20%" }}>Name</th>
+              <th style={{ width: "25%" }}>Email</th>
+              <th style={{ width: "15%" }}>Role</th>
+              <th style={{ width: "10%" }}>Status</th>
+              <th style={{ width: "20%" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredUsers.map((user) => (
+              <tr key={user.id}>
+                <td>
+                  <div className="user-id-cell">
+                    <div className="user-id-avatar">
+                      {getProfileSrc(user.profile_picture) ? (
+                        <img
+                          src={getProfileSrc(user.profile_picture)}
+                          alt={user.name || "User"}
+                          className="user-id-avatar-img"
+                        />
+                      ) : (
+                        <span>{getAvatarText(user.name)}</span>
+                      )}
                     </div>
-                  </td>
-                  <td>{user.name}</td>
-                  <td>{user.email}</td>
-                  <td>
-                    <span className="role-badge">{user.role}</span>
-                  </td>
-                  <td>
-                    <span className={`status-badge ${user.is_active ? "status-active" : "status-inactive"}`}>
-                      {user.is_active ? "Active" : "Disabled"}
-                    </span>
-                  </td>
-                  <td>
-                    <button 
-                      className="btn-edit" 
-                      title="Edit User"
-                      onClick={() => handleEditClick(user)}
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                    <button 
-                      className={`btn-toggle ${user.is_active ? "btn-disable" : "btn-enable"}`}
-                      title={user.is_active ? "Disable Account" : "Enable Account"}
-                      onClick={() => handleToggleStatus(user)}
-                    >
-                      {user.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
-                    </button>
-                    <button 
-                      className="btn-delete" 
-                      title="Delete User"
-                      onClick={() => handleDeleteUser(user)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </td>
+                <td>{user.name}</td>
+                <td>{user.email}</td>
+                <td>
+                  <span className="role-badge">{user.role}</span>
+                </td>
+                <td>
+                  <span className={`status-badge ${user.is_active ? "status-active" : "status-inactive"}`}>
+                    {user.is_active ? "Active" : "Disabled"}
+                  </span>
+                </td>
+                <td>
+                  <button 
+                    className="btn-edit" 
+                    title="Edit User"
+                    onClick={() => handleEditClick(user)}
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button 
+                    className={`btn-toggle ${user.is_active ? "btn-disable" : "btn-enable"}`}
+                    title={user.is_active ? "Disable Account" : "Enable Account"}
+                    onClick={() => handleToggleStatus(user)}
+                  >
+                    {user.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
+                  </button>
+                  <button 
+                    className="btn-delete" 
+                    title="Delete User"
+                    onClick={() => handleDeleteUser(user)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* Edit User Modal */}
@@ -352,6 +348,6 @@ export default function ViewAllUsers() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

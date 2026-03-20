@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-import Sidebar from "./Sidebar";
 import logo from "../../images/logo (2).png";
 import "./superadmin.css";
 
@@ -56,8 +55,21 @@ export default function ManagePayments() {
   const [autoGenerateResult, setAutoGenerateResult] = useState(null);
   const [payingPaymentId, setPayingPaymentId] = useState(null);
   const [downloadingReceiptId, setDownloadingReceiptId] = useState(null);
+  const [sendingNotificationId, setSendingNotificationId] = useState(null);
+  const [sentReceiptNotifications, setSentReceiptNotifications] = useState({});
+  const [paymentRoleTab, setPaymentRoleTab] = useState("all");
+  const [adminWorkSummary, setAdminWorkSummary] = useState({
+    totalWorkedHours: 0,
+    paidHours: 0,
+    remainingHours: 0,
+  });
   const [methodForm, setMethodForm] = useState({
+    paymentType: "card",
     cardHolderName: currentUser?.name || "",
+    accountName: currentUser?.name || "",
+    accountNumber: "",
+    bankName: "",
+    branchName: "",
     cardType: "Visa",
     cardNumber: "",
     cvv: "",
@@ -93,6 +105,28 @@ export default function ManagePayments() {
     } catch (err) {
       console.error("Fetch pending work hours error:", err);
       setPendingWorkHours([]);
+    }
+  };
+
+  const fetchAdminWorkSummary = async () => {
+    try {
+      const res = await axios.get("http://localhost:5000/api/dashboard/superadmin/work-hours", {
+        headers: getAuthHeader(),
+      });
+
+      const summaryRows = Array.isArray(res.data?.adminSummary) ? res.data.adminSummary : [];
+      const totalWorkedHours = summaryRows.reduce((sum, row) => sum + Number(row.total_hours || 0), 0);
+      const paidHours = (adminPaymentDetails || [])
+        .filter((payment) => payment.status === "paid")
+        .reduce((sum, payment) => sum + Number(payment.hours || 0), 0);
+
+      setAdminWorkSummary({
+        totalWorkedHours,
+        paidHours,
+        remainingHours: Math.max(0, totalWorkedHours - paidHours),
+      });
+    } catch (err) {
+      console.error("Fetch admin work summary error:", err);
     }
   };
 
@@ -175,35 +209,55 @@ export default function ManagePayments() {
     e.preventDefault();
     setMethodStatus("");
 
-    if (!methodForm.cardHolderName || !methodForm.cardNumber || !methodForm.expiryMonth || !methodForm.expiryYear) {
-      setMethodStatus("Card holder name, card number, expiry month and year are required");
-      return;
-    }
+    if (methodForm.paymentType === "bank") {
+      if (!methodForm.accountName || !methodForm.accountNumber || !methodForm.bankName || !methodForm.branchName) {
+        setMethodStatus("Account name, account number, bank name and branch are required");
+        return;
+      }
+    } else {
+      if (!methodForm.cardHolderName || !methodForm.cardNumber || !methodForm.expiryMonth || !methodForm.expiryYear) {
+        setMethodStatus("Card holder name, card number, expiry month and year are required");
+        return;
+      }
 
-    if (!/^\d{3,4}$/.test(String(methodForm.cvv || ""))) {
-      setMethodStatus("CVV must be 3 or 4 digits");
-      return;
+      if (!/^\d{3,4}$/.test(String(methodForm.cvv || ""))) {
+        setMethodStatus("CVV must be 3 or 4 digits");
+        return;
+      }
     }
 
     try {
       setSavingMethod(true);
       await axios.post(
         "http://localhost:5000/api/dashboard/payment-methods",
-        {
-          user_id: Number(currentUser.id),
-          card_holder_name: methodForm.cardHolderName,
-          card_number: methodForm.cardNumber,
-          card_type: methodForm.cardType,
-          expiry_month: Number(methodForm.expiryMonth),
-          expiry_year: Number(methodForm.expiryYear),
-          is_default: !!methodForm.isDefault,
-        },
+        methodForm.paymentType === "bank"
+          ? {
+              user_id: Number(currentUser.id),
+              account_name: methodForm.accountName,
+              account_number: methodForm.accountNumber,
+              bank_name: methodForm.bankName,
+              branch_name: methodForm.branchName,
+              card_type: "Bank Account",
+              is_default: !!methodForm.isDefault,
+            }
+          : {
+              user_id: Number(currentUser.id),
+              card_holder_name: methodForm.cardHolderName,
+              card_number: methodForm.cardNumber,
+              card_type: methodForm.cardType,
+              expiry_month: Number(methodForm.expiryMonth),
+              expiry_year: Number(methodForm.expiryYear),
+              is_default: !!methodForm.isDefault,
+            },
         { headers: getAuthHeader() }
       );
 
       setMethodStatus("Card saved successfully");
       setMethodForm((prev) => ({
         ...prev,
+        accountNumber: "",
+        bankName: "",
+        branchName: "",
         cardNumber: "",
         cvv: "",
         expiryMonth: "",
@@ -305,6 +359,10 @@ export default function ManagePayments() {
 
     fetchAdminEligibility();
   }, [activeTab, createForm.role, createForm.userId]);
+
+  useEffect(() => {
+    fetchAdminWorkSummary();
+  }, [adminPaymentDetails]);
 
   const handleCreateChange = (field, value) => {
     setCreateError("");
@@ -546,9 +604,9 @@ export default function ManagePayments() {
     }
   };
 
-  const closePayDialog = () => {
+  const closePayDialog = (force = false) => {
     setPayDialog((prev) => {
-      if (prev.submitting) return prev;
+      if (prev.submitting && !force) return prev;
       return {
         isOpen: false,
         payment: null,
@@ -558,6 +616,22 @@ export default function ManagePayments() {
         submitting: false,
       };
     });
+  };
+
+  const formatNotificationSummary = (notifications = []) => {
+    if (!Array.isArray(notifications) || notifications.length === 0) {
+      return "";
+    }
+
+    return notifications
+      .map((notification) => {
+        const channel = String(notification?.channel || "notification");
+        if (notification?.sent) {
+          return `${channel.toUpperCase()} sent`;
+        }
+        return `${channel.toUpperCase()} skipped${notification?.reason ? ` (${notification.reason})` : ""}`;
+      })
+      .join(" | ");
   };
 
   const confirmPayNow = async () => {
@@ -577,7 +651,7 @@ export default function ManagePayments() {
     try {
       setPayingPaymentId(payDialog.payment.id);
       setPayDialog((prev) => ({ ...prev, submitting: true }));
-      await axios.post(
+      const res = await axios.post(
         `http://localhost:5000/api/dashboard/payments/${payDialog.payment.id}/pay`,
         {
           source_payment_method_id: sourceMethodId,
@@ -587,11 +661,15 @@ export default function ManagePayments() {
         { headers: getAuthHeader() }
       );
 
+      const notificationSummary = formatNotificationSummary(res.data?.notifications || []);
+
       setApprovalStatus({
         type: "success",
-        message: "Payment processed successfully",
+        message: notificationSummary
+          ? `Payment processed successfully. ${notificationSummary}`
+          : "Payment processed successfully",
       });
-      closePayDialog();
+      closePayDialog(true);
       setActiveTab("history");
       fetchPaymentData();
     } catch (err) {
@@ -599,8 +677,38 @@ export default function ManagePayments() {
         type: "error",
         message: err.response?.data?.error || "Failed to process payment",
       });
+      setPayDialog((prev) => ({ ...prev, submitting: false }));
     } finally {
       setPayingPaymentId(null);
+    }
+  };
+
+  const handleSendNotification = async (paymentId) => {
+    if (!paymentId) return;
+
+    try {
+      setSendingNotificationId(paymentId);
+      const res = await axios.post(
+        `http://localhost:5000/api/dashboard/payments/${paymentId}/send-notification`,
+        {},
+        { headers: getAuthHeader() }
+      );
+
+      const notificationSummary = formatNotificationSummary(res.data?.notifications || []);
+      setApprovalStatus({
+        type: "success",
+        message: notificationSummary
+          ? `Notification processed. ${notificationSummary}`
+          : "Notification processed",
+      });
+      setSentReceiptNotifications((prev) => ({ ...prev, [paymentId]: true }));
+    } catch (err) {
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to send notification",
+      });
+    } finally {
+      setSendingNotificationId(null);
     }
   };
 
@@ -651,6 +759,22 @@ export default function ManagePayments() {
       return "completed";
     }
     return status;
+  };
+
+  const getStatusTone = (status) => {
+    if (["pending", "pending_approval", "pending_calculation"].includes(status)) {
+      return { bg: "rgba(250, 204, 21, 0.2)", border: "rgba(250, 204, 21, 0.45)", color: "#facc15" };
+    }
+    if (["approved", "ready_to_pay"].includes(status)) {
+      return { bg: "rgba(34, 197, 94, 0.2)", border: "rgba(34, 197, 94, 0.45)", color: "#22c55e" };
+    }
+    if (status === "rejected") {
+      return { bg: "rgba(239, 68, 68, 0.2)", border: "rgba(239, 68, 68, 0.45)", color: "#ef4444" };
+    }
+    if (status === "paid") {
+      return { bg: "rgba(59, 130, 246, 0.2)", border: "rgba(59, 130, 246, 0.45)", color: "#3b82f6" };
+    }
+    return { bg: "rgba(148, 163, 184, 0.2)", border: "rgba(148, 163, 184, 0.4)", color: "#cbd5e1" };
   };
 
   const canDownloadReceipt = (payment) => {
@@ -783,12 +907,12 @@ export default function ManagePayments() {
       `;
     } else if (["annotator", "tester"].includes(receipt.userRole)) {
       detailSection = `
-        <h2>${escapeHtml(receipt.userRole === "annotator" ? "Annotator Image Sets" : "Tester Image Sets")}</h2>
+        <h2>${escapeHtml(receipt.userRole === "annotator" ? "Annotator Objects" : "Tester Objects")}</h2>
         <div class="summary-grid">
-          <div class="summary-box"><span>Image Sets</span><strong>${escapeHtml(receipt.summary?.imageSetCount || 0)}</strong></div>
           <div class="summary-box"><span>Total Objects</span><strong>${escapeHtml(receipt.summary?.totalObjects || 0)}</strong></div>
+          <div class="summary-box"><span>Object Rows</span><strong>${escapeHtml(receipt.lineItems.length || 0)}</strong></div>
           <div class="summary-box"><span>Rate / Object</span><strong>${escapeHtml(formatCurrency(receipt.summary?.perObjectRate || 0))}</strong></div>
-          <div class="summary-box"><span>Recorded Images</span><strong>${escapeHtml(receipt.imagesCompleted || receipt.lineItems.length || 0)}</strong></div>
+          <div class="summary-box"><span>Recorded Rows</span><strong>${escapeHtml(receipt.lineItems.length || 0)}</strong></div>
         </div>
         <table>
           <thead>
@@ -1132,25 +1256,37 @@ export default function ManagePayments() {
   const paidRecentTransactions = (paymentOverview?.recentTransactions || []).filter(
     (payment) => payment?.status === "paid"
   );
+  const allHistoryPayments = paymentHistory?.history || [];
+  const roleFilteredPayments = allHistoryPayments.filter((payment) => {
+    if (paymentRoleTab === "all") return true;
+    return String(payment.user_role || "").toLowerCase() === paymentRoleTab;
+  });
+  const adminWorkProgress = adminWorkSummary.totalWorkedHours > 0
+    ? Math.min(100, (adminWorkSummary.paidHours / adminWorkSummary.totalWorkedHours) * 100)
+    : 0;
   const pendingObjectPayments = pendingPayments.filter(
     (payment) => payment?.user_role !== "admin"
+  );
+  const readyObjectPayments = readyPayments.filter(
+    (payment) => payment?.user_role !== "admin"
+  );
+  const readyAdminPayments = readyPayments.filter(
+    (payment) => payment?.user_role === "admin"
   );
   const totalPendingApprovals = pendingObjectPayments.length + pendingWorkHours.length;
 
   return (
-    <div className="dashboard-container">
-      <Sidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Manage Payments</h1>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Manage Payments</h1>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
-        {approvalStatus.message && (
-          <div className={approvalStatus.type === "success" ? "dashboard-success" : "dashboard-error"}>
-            {approvalStatus.message}
-          </div>
-        )}
+      {error && <div className="dashboard-error">{error}</div>}
+      {approvalStatus.message && (
+        <div className={approvalStatus.type === "success" ? "dashboard-success" : "dashboard-error"}>
+          {approvalStatus.message}
+        </div>
+      )}
 
         {/* Payment Overview Cards */}
         <div className="payment-cards-section">
@@ -1358,7 +1494,7 @@ export default function ManagePayments() {
                   <th>User Name</th>
                   <th>Amount</th>
                   <th>Model Type</th>
-                  <th>Images</th>
+                  <th>Objects</th>
                   <th>Method</th>
                   <th>Created</th>
                   <th>Actions</th>
@@ -1379,7 +1515,7 @@ export default function ManagePayments() {
                         <td><strong>{getPaymentDisplayName(payment)}</strong></td>
                         <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
                         <td>{getModelTypeDisplay(payment)}</td>
-                        <td>{payment.images_completed || 0}</td>
+                        <td>{payment.objects_count || 0}</td>
                         <td>{payment.payment_method || "-"}</td>
                         <td>{new Date(payment.created_at).toLocaleDateString()}</td>
                         <td>
@@ -1595,57 +1731,110 @@ export default function ManagePayments() {
         )}
 
         {activeTab === "ready" && (
-          <div className="table-container">
-            <h3>Ready To Pay</h3>
-            <table className="payments-table">
-              <thead>
-                <tr>
-                  <th>User Name</th>
-                  <th>Amount</th>
-                  <th>Model Type</th>
-                  <th>Images</th>
-                  <th>Status</th>
-                  <th>Method</th>
-                  <th>Approved Date</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {readyPayments.length === 0 ? (
+          <div>
+            <div className="table-container" style={{ marginBottom: 18 }}>
+              <h3>Ready To Pay - Annotator / Tester</h3>
+              <table className="payments-table">
+                <thead>
                   <tr>
-                    <td colSpan="8" className="no-data">
-                      No payments ready to pay
-                    </td>
+                    <th>User Name</th>
+                    <th>Amount</th>
+                    <th>Model Type</th>
+                    <th>Objects</th>
+                    <th>Status</th>
+                    <th>Method</th>
+                    <th>Approved Date</th>
+                    <th>Action</th>
                   </tr>
-                ) : (
-                  readyPayments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td>{getPaymentDisplayName(payment)}</td>
-                      <td>₨ {(payment.amount || 0).toLocaleString()}</td>
-                      <td>{getModelTypeDisplay(payment)}</td>
-                      <td>{payment.images_completed || 0}</td>
-                      <td>
-                        <span className={`status-badge status-${payment.status}`}>
-                          {payment.status === "approved" ? "Ready to Pay" : getStatusLabel(payment.status)}
-                        </span>
-                      </td>
-                      <td>{payment.payment_method || "-"}</td>
-                      <td>{payment.approved_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
-                      <td>
-                        <button
-                          className="btn-primary"
-                          type="button"
-                          onClick={() => openPayDialog(payment)}
-                          disabled={payingPaymentId === payment.id}
-                        >
-                          {payingPaymentId === payment.id ? "Paying..." : "Pay"}
-                        </button>
+                </thead>
+                <tbody>
+                  {readyObjectPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="no-data">
+                        No annotator/tester payments ready to pay
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    readyObjectPayments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td>{getPaymentDisplayName(payment)}</td>
+                        <td>₨ {(payment.amount || 0).toLocaleString()}</td>
+                        <td>{getModelTypeDisplay(payment)}</td>
+                        <td>{payment.objects_count || 0}</td>
+                        <td>
+                          <span className={`status-badge status-${payment.status}`}>
+                            {payment.status === "approved" ? "Ready to Pay" : getStatusLabel(payment.status)}
+                          </span>
+                        </td>
+                        <td>{payment.payment_method || "-"}</td>
+                        <td>{payment.approved_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
+                        <td>
+                          <button
+                            className="btn-primary"
+                            type="button"
+                            onClick={() => openPayDialog(payment)}
+                            disabled={payingPaymentId === payment.id}
+                          >
+                            {payingPaymentId === payment.id ? "Paying..." : "Pay"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-container">
+              <h3>Ready To Pay - Admin Work Hours</h3>
+              <table className="payments-table">
+                <thead>
+                  <tr>
+                    <th>Admin Name</th>
+                    <th>Amount</th>
+                    <th>Hours</th>
+                    <th>Status</th>
+                    <th>Method</th>
+                    <th>Approved Date</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {readyAdminPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="no-data">
+                        No admin payments ready to pay
+                      </td>
+                    </tr>
+                  ) : (
+                    readyAdminPayments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td>{getPaymentDisplayName(payment)}</td>
+                        <td>₨ {(payment.amount || 0).toLocaleString()}</td>
+                        <td>{formatHoursAsHM(payment.hours || 0)}</td>
+                        <td>
+                          <span className={`status-badge status-${payment.status}`}>
+                            {payment.status === "approved" ? "Ready to Pay" : getStatusLabel(payment.status)}
+                          </span>
+                        </td>
+                        <td>{payment.payment_method || "-"}</td>
+                        <td>{payment.approved_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
+                        <td>
+                          <button
+                            className="btn-primary"
+                            type="button"
+                            onClick={() => openPayDialog(payment)}
+                            disabled={payingPaymentId === payment.id}
+                          >
+                            {payingPaymentId === payment.id ? "Paying..." : "Pay"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -1804,6 +1993,62 @@ export default function ManagePayments() {
               <div className="pm-center">
                 <form onSubmit={savePaymentMethod} className="payment-create-form">
                   <div className="form-row">
+                    <label>Payment Type</label>
+                    <select
+                      value={methodForm.paymentType}
+                      onChange={(e) => setMethodForm((prev) => ({ ...prev, paymentType: e.target.value }))}
+                    >
+                      <option value="card">Card</option>
+                      <option value="bank">Bank Account</option>
+                    </select>
+                  </div>
+
+                  {methodForm.paymentType === "bank" ? (
+                    <>
+                      <div className="form-row">
+                        <label>Account Name</label>
+                        <input
+                          value={methodForm.accountName}
+                          onChange={(e) => setMethodForm((prev) => ({ ...prev, accountName: e.target.value }))}
+                          placeholder="Account holder name"
+                        />
+                      </div>
+
+                      <div className="form-row">
+                        <label>Account Number</label>
+                        <input
+                          value={methodForm.accountNumber}
+                          onChange={(e) =>
+                            setMethodForm((prev) => ({
+                              ...prev,
+                              accountNumber: e.target.value.replace(/\D/g, "").slice(0, 20),
+                            }))
+                          }
+                          placeholder="Enter account number"
+                        />
+                      </div>
+
+                      <div className="form-row">
+                        <label>Bank Name</label>
+                        <input
+                          value={methodForm.bankName}
+                          onChange={(e) => setMethodForm((prev) => ({ ...prev, bankName: e.target.value }))}
+                          placeholder="Bank"
+                        />
+                      </div>
+
+                      <div className="form-row">
+                        <label>Branch</label>
+                        <input
+                          value={methodForm.branchName}
+                          onChange={(e) => setMethodForm((prev) => ({ ...prev, branchName: e.target.value }))}
+                          placeholder="Branch"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                  <div className="form-row">
                     <label>Card Holder Name</label>
                     <input
                       value={methodForm.cardHolderName}
@@ -1872,6 +2117,9 @@ export default function ManagePayments() {
                       />
                     </div>
                   
+                    </>
+                  )}
+
 
                   <div className="form-row">
                     <label>
@@ -1938,6 +2186,161 @@ export default function ManagePayments() {
               </div>
             </div>
 
+            <div className="table-container" style={{ marginBottom: 18 }}>
+              <h3 style={{ marginTop: 0 }}>Admin Work Summary</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 12 }}>
+                <div className="summary-card">
+                  <div className="summary-label">Total Worked Hours</div>
+                  <div className="summary-value">{adminWorkSummary.totalWorkedHours.toFixed(2)}h</div>
+                </div>
+                <div className="summary-card">
+                  <div className="summary-label">Already Paid Hours</div>
+                  <div className="summary-value">{adminWorkSummary.paidHours.toFixed(2)}h</div>
+                </div>
+                <div className="summary-card">
+                  <div className="summary-label">Remaining Hours</div>
+                  <div className="summary-value">{adminWorkSummary.remainingHours.toFixed(2)}h</div>
+                </div>
+              </div>
+              <div style={{ height: 10, borderRadius: 999, background: "rgba(148,163,184,0.25)", overflow: "hidden" }}>
+                <div style={{ width: `${adminWorkProgress}%`, height: "100%", background: "linear-gradient(90deg, #3b82f6, #10b981)" }} />
+              </div>
+              <div className="form-hint" style={{ marginTop: 8 }}>
+                Paid progress against total logged admin work hours.
+              </div>
+            </div>
+
+            <div className="table-container" style={{ marginBottom: 18 }}>
+              <h3 style={{ marginTop: 0 }}>Payment Cards</h3>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                {[
+                  { id: "all", label: "All Payments" },
+                  { id: "annotator", label: "Annotators" },
+                  { id: "tester", label: "Testers" },
+                  { id: "admin", label: "Admins" },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={paymentRoleTab === tab.id ? "btn-primary" : "btn-secondary"}
+                    onClick={() => setPaymentRoleTab(tab.id)}
+                    style={{ padding: "8px 14px", fontSize: 13 }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {roleFilteredPayments.length === 0 ? (
+                <div className="no-data">No payments for selected role</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                  {roleFilteredPayments.slice(0, 40).map((payment, index) => {
+                    const tone = getStatusTone(payment.status);
+                    const rateUsed = Number(payment.rate_used || 0);
+                    const workedHours = Number(payment.hours || 0);
+                    const workedMinutes = Math.round(workedHours * 60);
+                    const hourPart = Math.floor(workedMinutes / 60);
+                    const minutePart = workedMinutes % 60;
+                    const minuteRate = rateUsed > 0 ? rateUsed / 60 : 0;
+                    const role = String(payment.user_role || "").toLowerCase();
+                    const isPending = ["pending", "pending_approval", "pending_calculation"].includes(payment.status);
+                    const isApproved = ["approved", "ready_to_pay"].includes(payment.status);
+
+                    return (
+                      <div key={payment.id} style={{ border: "1px solid rgba(148,163,184,0.25)", borderRadius: 14, padding: 14, background: "rgba(15,23,42,0.45)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <div style={{ color: "#fff", fontWeight: 700 }}>{index + 1}. {getPaymentDisplayName(payment)}</div>
+                            <div style={{ color: "#94a3b8", fontSize: 13 }}>{(payment.user_role || "unknown").toUpperCase()}</div>
+                          </div>
+                          <span style={{ background: tone.bg, border: `1px solid ${tone.border}`, color: tone.color, borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>
+                            {getStatusLabel(payment.status)}
+                          </span>
+                        </div>
+
+                        <div style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 8 }}>
+                          <strong style={{ color: "#fff" }}>Model:</strong> {getModelTypeDisplay(payment)}
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                          <div style={{ color: "#cbd5e1", fontSize: 13 }}>
+                            <strong style={{ color: "#fff" }}>Work Summary:</strong><br />
+                            {role === "admin"
+                              ? `${hourPart}h ${minutePart}m`
+                              : `${Number(payment.objects_count || 0)} objects`}
+                          </div>
+                          <div style={{ color: "#cbd5e1", fontSize: 13 }}>
+                            <strong style={{ color: "#fff" }}>Rate:</strong><br />
+                            {role === "admin"
+                              ? `${formatCurrency(rateUsed)} / hour`
+                              : `${formatCurrency(rateUsed)} / object`}
+                          </div>
+                        </div>
+
+                        <div style={{ border: "1px dashed rgba(148,163,184,0.4)", borderRadius: 10, padding: 10, marginBottom: 10, color: "#dbeafe", fontSize: 12 }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>Payment Breakdown</div>
+                          {role === "admin" ? (
+                            <>
+                              <div>Worked Time: {hourPart}h {minutePart}m</div>
+                              <div>Hourly Rate: {formatCurrency(rateUsed)}</div>
+                              <div>Minute Rate: {formatCurrency(minuteRate)}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div>Completed Objects: {Number(payment.objects_count || 0)}</div>
+                              <div>Rate per Object: {formatCurrency(rateUsed)}</div>
+                              <div>Calculated: {Number(payment.objects_count || 0)} x {formatCurrency(rateUsed)}</div>
+                            </>
+                          )}
+                          <div style={{ marginTop: 6, fontWeight: 800, color: "#fff" }}>
+                            Total Payment: {formatCurrency(payment.amount || 0)}
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {isPending && (
+                            <>
+                              <button className="btn-approve" type="button" onClick={() => openApprovalDialog(payment, "approved")}>Approve</button>
+                              <button className="btn-reject" type="button" onClick={() => openApprovalDialog(payment, "rejected")}>Reject</button>
+                            </>
+                          )}
+                          {isApproved && (
+                            <button className="btn-primary" type="button" onClick={() => openPayDialog(payment)}>
+                              Pay Now
+                            </button>
+                          )}
+                          {payment.status === "paid" && (
+                            <>
+                              <button
+                                className="btn-secondary"
+                                type="button"
+                                onClick={() => handleSendNotification(payment.id)}
+                                disabled={sendingNotificationId === payment.id}
+                              >
+                                {sendingNotificationId === payment.id
+                                  ? "Sending..."
+                                  : sentReceiptNotifications[payment.id]
+                                  ? "Resend"
+                                  : "Send"}
+                              </button>
+                              <button className="btn-secondary" type="button" onClick={() => downloadReceipt(payment.id)}>
+                                Download Receipt
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="form-hint" style={{ marginTop: 10 }}>
+                Model completion rule: payments are generated only when all image sets of a model are finalized.
+              </div>
+            </div>
+
             <div className="table-container">
               <h3>Payment History</h3>
               <table className="payments-table">
@@ -1946,7 +2349,7 @@ export default function ManagePayments() {
                     <th>User Name</th>
                     <th>Amount</th>
                     <th>Model Type</th>
-                    <th>Images</th>
+                    <th>Objects</th>
                     <th>Status</th>
                     <th>Method</th>
                     <th>Date</th>
@@ -1954,12 +2357,12 @@ export default function ManagePayments() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paymentHistory?.history?.map((payment) => (
+                  {roleFilteredPayments.map((payment) => (
                     <tr key={payment.id}>
                       <td>{getPaymentDisplayName(payment)}</td>
                       <td>₨ {(payment.amount || 0).toLocaleString()}</td>
                       <td>{getModelTypeDisplay(payment)}</td>
-                      <td>{payment.images_completed || 0}</td>
+                      <td>{payment.objects_count || 0}</td>
                       <td>
                         <span className={`status-badge status-${payment.status}`}>
                           {payment.status}
@@ -2108,7 +2511,6 @@ export default function ManagePayments() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </>
   );
 }

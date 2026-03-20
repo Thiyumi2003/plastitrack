@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import AnnotatorSidebar from "./AnnotatorSidebar";
+import { Upload, Check } from "lucide-react";
 import "./annotator.css";
 
 export default function AnnotatorProfile() {
+  const fileInputRef = useRef(null);
   const [profile, setProfile] = useState({
     firstName: "",
     lastName: "",
@@ -155,52 +156,121 @@ export default function AnnotatorProfile() {
   };
 
   return (
-    <div className="dashboard-container">
-      <AnnotatorSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Profile Settings</h1>
-          <p>Manage your account information and preferences</p>
+    <>
+      <div className="dashboard-header">
+        <h1>Profile Settings</h1>
+        <p>Manage your account information and preferences</p>
+      </div>
+
+      {message && (
+        <div
+          className={message.includes("successfully") ? "dashboard-success" : "dashboard-error"}
+          style={{ marginBottom: "20px" }}
+        >
+          {message}
         </div>
+      )}
 
-        {message && (
-          <div className={`message ${message.includes("successfully") ? "success" : "error"}`}>
-            {message}
-          </div>
-        )}
-
-        <div className="profile-section">
-          <h2>Profile Picture</h2>
-          <div className="profile-picture-box">
+      <div className="profile-section">
+        <h2>Profile Picture</h2>
+        <div
+          style={{
+            display: "flex",
+            gap: "30px",
+            alignItems: "flex-start",
+            backgroundColor: "rgba(255, 255, 255, 0.03)",
+            border: "1px solid rgba(255, 255, 255, 0.1)",
+            borderRadius: "12px",
+            padding: "30px",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {profile.profilePicture ? (
               <img
                 src={`http://localhost:5000${profile.profilePicture}`}
                 alt="Profile"
-                className="avatar-large"
-                style={{ objectFit: "cover" }}
+                style={{
+                  width: "150px",
+                  height: "150px",
+                  borderRadius: "12px",
+                  objectFit: "cover",
+                  marginBottom: "16px",
+                  border: "3px solid rgba(16, 185, 129, 0.3)",
+                }}
               />
             ) : (
-              <div className="avatar-large">
+              <div
+                style={{
+                  width: "150px",
+                  height: "150px",
+                  borderRadius: "12px",
+                  backgroundColor: "rgba(102, 126, 234, 0.2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "48px",
+                  fontWeight: "600",
+                  color: "#667eea",
+                  marginBottom: "16px",
+                }}
+              >
                 {profile.firstName?.charAt(0) || "A"}
               </div>
             )}
-            <div className="upload-info">
-              <p>Upload a new profile picture</p>
-              <p className="small-text">JPG, PNG or GIF. Max size 2MB</p>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/gif"
-                onChange={handleProfilePictureUpload}
-                disabled={uploading}
-                style={{ marginTop: "10px" }}
-              />
-            </div>
+          </div>
+
+          <div style={{ flex: 1 }}>
+            <h3 style={{ color: "#fff", marginBottom: "12px" }}>Upload Profile Picture</h3>
+            <p style={{ color: "rgba(255, 255, 255, 0.6)", marginBottom: "16px", lineHeight: "1.6" }}>
+              Choose a JPG, PNG, or GIF image. Maximum file size is 2MB.
+              <br />
+              Your profile picture will be visible to admins and testers.
+            </p>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif"
+              onChange={handleProfilePictureUpload}
+              disabled={uploading}
+              style={{ display: "none" }}
+            />
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              style={{
+                backgroundColor: "#667eea",
+                color: "#fff",
+                border: "none",
+                padding: "12px 24px",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: "600",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                transition: "all 0.2s ease",
+                opacity: uploading ? 0.7 : 1,
+              }}
+              onMouseOver={(e) => {
+                e.target.style.transform = "scale(1.02)";
+              }}
+              onMouseOut={(e) => {
+                e.target.style.transform = "scale(1)";
+              }}
+            >
+              <Upload size={16} />
+              {uploading ? "Uploading..." : "Choose File"}
+            </button>
           </div>
         </div>
+      </div>
 
-        <div className="profile-section">
-          <h2>Personal Information</h2>
-          <div className="form-row">
+      <div className="profile-section">
+        <h2>Personal Information</h2>
+        <div className="form-row">
             <div className="form-group">
               <label className="input-label">First Name</label>
               <input
@@ -258,54 +328,53 @@ export default function AnnotatorProfile() {
           </div>
         </div>
 
-        <div className="profile-section">
-          <h2>Change Password</h2>
+      <div className="profile-section">
+        <h2>Change Password</h2>
+        <div className="form-group">
+          <label className="input-label">Current Password</label>
+          <input
+            type="password"
+            className="text-input"
+            name="current"
+            value={password.current}
+            onChange={handlePasswordChange}
+            placeholder="Enter your current password"
+          />
+        </div>
+
+        <div className="form-row">
           <div className="form-group">
-            <label className="input-label">Current Password</label>
+            <label className="input-label">New Password</label>
             <input
               type="password"
               className="text-input"
-              name="current"
-              value={password.current}
+              name="new"
+              value={password.new}
               onChange={handlePasswordChange}
-              placeholder="Enter your current password"
+              placeholder="Enter new password"
             />
           </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label className="input-label">New Password</label>
-              <input
-                type="password"
-                className="text-input"
-                name="new"
-                value={password.new}
-                onChange={handlePasswordChange}
-                placeholder="Enter new password"
-              />
-            </div>
-            <div className="form-group">
-              <label className="input-label">Confirm New Password</label>
-              <input
-                type="password"
-                className="text-input"
-                name="confirm"
-                value={password.confirm}
-                onChange={handlePasswordChange}
-                placeholder="Confirm new password"
-              />
-            </div>
+          <div className="form-group">
+            <label className="input-label">Confirm New Password</label>
+            <input
+              type="password"
+              className="text-input"
+              name="confirm"
+              value={password.confirm}
+              onChange={handlePasswordChange}
+              placeholder="Confirm new password"
+            />
           </div>
-
-          <button
-            className="btn-password"
-            onClick={handleChangePassword}
-            disabled={loading}
-          >
-            🔑 Update Password
-          </button>
         </div>
+
+        <button
+          className="btn-password"
+          onClick={handleChangePassword}
+          disabled={loading}
+        >
+          🔑 Update Password
+        </button>
       </div>
-    </div>
+    </>
   );
 }

@@ -1,12 +1,11 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { Menu, X, LayoutDashboard, User, Clock, Wallet, LogOut } from "lucide-react";import Notifications from "../../components/Notifications";import logo from "../../images/logo (2).png";
+import { NavLink, useNavigate } from "react-router-dom";
+import { Menu, X, LayoutDashboard, User, Clock, Wallet, LogOut, CheckCircle } from "lucide-react";import Notifications from "../../components/Notifications";import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
 
 export default function AnnotatorSidebar() {
   const [isOpen, setIsOpen] = useState(true);
   const navigate = useNavigate();
-  const location = useLocation();
   const user = JSON.parse(localStorage.getItem("user") || "{}");
 
   const getProfileSrc = (profilePicture) => {
@@ -24,9 +23,10 @@ export default function AnnotatorSidebar() {
 
   const menuItems = [
     { label: "Dashboard", icon: LayoutDashboard, path: "/annotator/dashboard" },
-    { label: "Profile", icon: User, path: "/annotator/profile" },
     { label: "Task History", icon: Clock, path: "/annotator/task-history" },
+    { label: "Review Results", icon: CheckCircle, path: "/annotator/review-results" },
     { label: "Payments", icon: Wallet, path: "/annotator/payments" },
+    { label: "Profile", icon: User, path: "/annotator/profile" },
   ];
 
   const handleLogout = () => {
@@ -66,16 +66,15 @@ export default function AnnotatorSidebar() {
           <nav className="sidebar-nav">
             {menuItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
               return (
-                <button
+                <NavLink
                   key={item.path}
-                  className={`nav-item ${isActive ? "active" : ""}`}
-                  onClick={() => navigate(item.path)}
+                  to={item.path}
+                  className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
                 >
                   <Icon size={20} />
                   <span>{item.label}</span>
-                </button>
+                </NavLink>
               );
             })}
           </nav>

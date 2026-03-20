@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from "react";
 import axios from "axios";
-import MelbourneSidebar from "./MelbourneSidebar";
 import ErrorBoundary from "../../components/reports/ErrorBoundary";
 import { ExportService } from "../../services/ExportService";
 import { AnnotationSummaryReport } from "../../components/reports/AnnotationSummaryReport";
@@ -248,16 +247,14 @@ export default function MelbourneReports() {
   const ActiveComponent = reports.find((r) => r.id === activeReport)?.component;
 
   return (
-    <div className="dashboard-container">
-      <MelbourneSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Reports and Analytics</h1>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              onClick={handleDownloadAllPDF}
-              disabled={isDownloadingAll}
-              className="btn-primary"
+    <>
+      <div className="dashboard-header">
+        <h1>Reports and Analytics</h1>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={handleDownloadAllPDF}
+            disabled={isDownloadingAll}
+            className="btn-primary"
               style={{ padding: "6px 12px", fontSize: "13px", opacity: isDownloadingAll ? 0.7 : 1 }}
               title="Download all reports in one PDF"
             >
@@ -338,7 +335,6 @@ export default function MelbourneReports() {
             </ErrorBoundary>
           )}
         </div>
-      </div>
-    </div>
+    </>
   );
 }

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import MelbourneSidebar from "./MelbourneSidebar";
 import "../annotator/annotator.css";
 
 export default function MelbourneManageImages() {
@@ -80,15 +79,13 @@ export default function MelbourneManageImages() {
   if (loading) return <div className="dashboard-loading">Loading images...</div>;
 
   return (
-    <div className="dashboard-container">
-      <MelbourneSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Dataset Management</h1>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
-        </div>
+    <>
+      <div className="dashboard-header">
+        <h1>Dataset Management</h1>
+        <div className="header-date">{new Date().toLocaleDateString()}</div>
+      </div>
 
-        {error && <div className="dashboard-error">{error}</div>}
+      {error && <div className="dashboard-error">{error}</div>}
 
         {/* Filter Section */}
         <div className="filter-section">
@@ -131,61 +128,60 @@ export default function MelbourneManageImages() {
         </div>
 
         {/* Images Table */}
-        <div className="tasks-section">
-          <h2>Images</h2>
-          <div className="table-container">
-            <table className="tasks-table">
-              <thead>
+      <div className="tasks-section">
+        <h2>Images</h2>
+        <div className="table-container">
+          <table className="tasks-table">
+            <thead>
+              <tr>
+                <th>DATASET NAME</th>
+                <th>ADMIN NAME</th>
+                <th>ANNOTATOR</th>
+                <th>TESTER</th>
+                <th>STATUS</th>
+                <th>CREATED DATE</th>
+                <th>DETAILS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredImages.length === 0 ? (
                 <tr>
-                  <th>DATASET NAME</th>
-                  <th>ADMIN NAME</th>
-                  <th>ANNOTATOR</th>
-                  <th>TESTER</th>
-                  <th>STATUS</th>
-                  <th>CREATED DATE</th>
-                  <th>DETAILS</th>
+                  <td colSpan="7" className="no-data">
+                    No images found
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredImages.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="no-data">
-                      No images found
+              ) : (
+                filteredImages.map((image) => (
+                  <tr key={image.id}>
+                    <td><strong>{image.image_name || image.name || "-"}</strong></td>
+                    <td><strong>{image.admin_name || "-"}</strong></td>
+                    <td>{image.annotator_name || "-"}</td>
+                    <td>{image.tester_name || "-"}</td>
+                    <td>
+                      <span
+                        className={`status-badge status-${image.status?.replace("_", "-")}`}
+                      >
+                        {image.status === "in_progress"
+                          ? "In Progress"
+                          : image.status === "pending_review"
+                          ? "Pending Review"
+                          : image.status?.charAt(0).toUpperCase() + image.status?.slice(1)}
+                      </span>
+                    </td>
+                    <td>{new Date(image.created_at).toLocaleDateString()}</td>
+                    <td>
+                      <button
+                        className="action-btn"
+                        onClick={() => handleViewDetails(image)}
+                      >
+                        View Details
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  filteredImages.map((image) => (
-                    <tr key={image.id}>
-                      <td><strong>{image.image_name || image.name || "-"}</strong></td>
-                      <td><strong>{image.admin_name || "-"}</strong></td>
-                      <td>{image.annotator_name || "-"}</td>
-                      <td>{image.tester_name || "-"}</td>
-                      <td>
-                        <span
-                          className={`status-badge status-${image.status?.replace("_", "-")}`}
-                        >
-                          {image.status === "in_progress"
-                            ? "In Progress"
-                            : image.status === "pending_review"
-                            ? "Pending Review"
-                            : image.status?.charAt(0).toUpperCase() + image.status?.slice(1)}
-                        </span>
-                      </td>
-                      <td>{new Date(image.created_at).toLocaleDateString()}</td>
-                      <td>
-                        <button
-                          className="action-btn"
-                          onClick={() => handleViewDetails(image)}
-                        >
-                          View Details
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -338,6 +334,6 @@ export default function MelbourneManageImages() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

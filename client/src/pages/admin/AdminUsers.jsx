@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import AdminSidebar from "./AdminSidebar";
 import "./admin.css";
 
 export default function AdminUsers() {
@@ -62,12 +61,10 @@ export default function AdminUsers() {
   if (loading) return <div className="dashboard-loading">Loading users...</div>;
 
   return (
-    <div className="dashboard-container">
-      <AdminSidebar />
-      <div className="dashboard-main">
-        <div className="dashboard-header">
-          <h1>Users (Annotators & Testers)</h1>
-          <div className="filter-buttons">
+    <>
+      <div className="dashboard-header">
+        <h1>Users (Annotators & Testers)</h1>
+        <div className="filter-buttons">
             <button
               className={`filter-btn ${filter === "all" ? "active" : ""}`}
               onClick={() => setFilter("all")}
@@ -86,13 +83,13 @@ export default function AdminUsers() {
             >
               Testers ({users.filter(u => u.role === 'tester').length})
             </button>
-          </div>
         </div>
+      </div>
 
         {error && <div className="error-message">{error}</div>}
 
-        <div className="users-table">
-          <table>
+      <div className="users-table">
+        <table>
             <thead>
               <tr>
                 <th>PROFILE</th>
@@ -131,9 +128,8 @@ export default function AdminUsers() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+        </table>
       </div>
-    </div>
+    </>
   );
 }
