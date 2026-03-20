@@ -78,7 +78,15 @@ export default function TesterTaskHistory() {
 
       {error && <div className="dashboard-error">{error}</div>}
 
-        <div className="filter-section">
+        <div
+          className="filter-section tester-task-history-filters"
+          style={{
+            background: "transparent",
+            border: "none",
+            boxShadow: "none",
+            backdropFilter: "none",
+          }}
+        >
           <label>Status:</label>
           <select
             value={statusFilter}

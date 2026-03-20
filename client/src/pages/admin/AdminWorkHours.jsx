@@ -27,13 +27,11 @@ const parseHoursInput = (value) => {
 
 export default function AdminWorkHours() {
   const [workHours, setWorkHours] = useState([]);
-  const [sessions, setSessions] = useState([]);
   const [summary, setSummary] = useState({});
   const [autoTrackEnabled, setAutoTrackEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [activeTab, setActiveTab] = useState("hours");
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     hours_worked: "",
@@ -47,7 +45,7 @@ export default function AdminWorkHours() {
   useEffect(() => {
     const loadPageData = async () => {
       await syncActiveSession();
-      await Promise.all([fetchWorkHours(), fetchSessions()]);
+      await fetchWorkHours();
     };
 
     loadPageData();
@@ -81,18 +79,7 @@ export default function AdminWorkHours() {
     }
   };
 
-  const fetchSessions = async () => {
-    try {
-      const response = await axios.get(
-        "http://localhost:5000/api/dashboard/admin/sessions",
-        { headers: getAuthHeader() }
-      );
-      setSessions(response.data.sessions);
-      setAutoTrackEnabled(response.data.auto_track_hours);
-    } catch (err) {
-      console.error("Failed to fetch sessions:", err);
-    }
-  };
+
 
   const toggleAutoTracking = async () => {
     try {
@@ -248,28 +235,9 @@ export default function AdminWorkHours() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="tabs-section" style={{ marginBottom: "20px" }}>
-          <div className="tabs">
-            <button
-              className={`tab ${activeTab === "hours" ? "active" : ""}`}
-              onClick={() => setActiveTab("hours")}
-            >
-              Work Hours Log
-            </button>
-            <button
-              className={`tab ${activeTab === "sessions" ? "active" : ""}`}
-              onClick={() => setActiveTab("sessions")}
-            >
-              Login Sessions ({sessions.length})
-            </button>
-          </div>
-        </div>
-
         {/* Work Hours Table */}
-        {activeTab === "hours" && (
-          <div className="table-container">
-            <h2>Work Hours Log</h2>
+        <div className="table-container">
+          <h2>Work Hours Log</h2>
             <table className="tasks-table">
               <thead>
                 <tr>
@@ -352,87 +320,6 @@ export default function AdminWorkHours() {
               </tbody>
             </table>
           </div>
-        )}
-
-        {/* Sessions Table */}
-        {activeTab === "sessions" && (
-          <div className="table-container">
-            <h2>Login/Logout Sessions</h2>
-            <table className="tasks-table">
-              <thead>
-                <tr>
-                  <th>Login Time</th>
-                  <th>Logout Time</th>
-                  <th>Duration</th>
-                  <th>Status</th>
-                  <th>IP Address</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.length === 0 ? (
-                  <tr>
-                    <td colSpan="5" className="no-data">
-                      No sessions recorded yet
-                    </td>
-                  </tr>
-                ) : (
-                  sessions.map((session) => (
-                    <tr key={session.id}>
-                      <td>
-                        <Clock size={14} style={{ marginRight: "8px", verticalAlign: "middle" }} />
-                        {new Date(session.login_time).toLocaleString()}
-                      </td>
-                      <td>
-                        {session.logout_time ? (
-                          new Date(session.logout_time).toLocaleString()
-                        ) : (
-                          <span style={{ color: "#10b981", fontWeight: "600" }}>● Active</span>
-                        )}
-                      </td>
-                      <td>
-                        {session.session_duration ? (
-                          <strong>{parseFloat(session.session_duration).toFixed(2)} hrs</strong>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td>
-                        {session.is_processed ? (
-                          <span style={{ 
-                            padding: "4px 8px", 
-                            borderRadius: "12px", 
-                            backgroundColor: "#d1e7dd", 
-                            color: "#0f5132",
-                            fontSize: "11px",
-                            fontWeight: "600"
-                          }}>
-                            ✓ Logged
-                          </span>
-                        ) : session.logout_time ? (
-                          <span style={{ 
-                            padding: "4px 8px", 
-                            borderRadius: "12px", 
-                            backgroundColor: "#fff3cd", 
-                            color: "#856404",
-                            fontSize: "11px",
-                            fontWeight: "600"
-                          }}>
-                            ⏳ Pending
-                          </span>
-                        ) : (
-                          <span style={{ color: "#999" }}>-</span>
-                        )}
-                      </td>
-                      <td style={{ fontSize: "12px", color: "#666" }}>
-                        {session.ip_address || "-"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
 
         <div style={{ marginTop: "20px", padding: "15px", backgroundColor: "#f8f9fa", borderRadius: "8px", borderLeft: "4px solid #667eea" }}>
           <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>ℹ️ About Work Hours Tracking</h3>
