@@ -98,6 +98,25 @@ const parseHoursWorkedInput = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const hoursToMinutes = (hoursValue) => {
+  const hours = Number(hoursValue || 0);
+  if (!Number.isFinite(hours)) return 0;
+  return Math.max(0, Math.round(hours * 60));
+};
+
+const minutesToHoursDecimal = (minutesValue) => {
+  const minutes = Number(minutesValue || 0);
+  if (!Number.isFinite(minutes)) return 0;
+  return Number((Math.max(0, minutes) / 60).toFixed(2));
+};
+
+const formatMinutesAsHM = (minutesValue) => {
+  const totalMinutes = Math.max(0, Math.round(Number(minutesValue || 0)));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
+};
+
 const syncLegacyRateColumn = async (connection, userId, role, rateValue) => {
   const column = LEGACY_RATE_COLUMN_BY_ROLE[role];
   if (!column) return;
@@ -209,17 +228,19 @@ const calculatePaymentForUser = async (connection, user, modelType) => {
   if (role === "admin") {
     const [rows] = await connection.execute(
       `SELECT
-        COALESCE(SUM(hours_worked), 0) as approved_hours
+        COALESCE(SUM(COALESCE(approved_minutes, ROUND(hours_worked * 60))), 0) as approved_minutes
        FROM work_hours
        WHERE admin_id = ?
          AND status = 'approved'`,
       [userId]
     );
 
-    const approvedHours = Number(rows?.[0]?.approved_hours || 0);
-    if (approvedHours <= 0) {
+    const approvedMinutes = Number(rows?.[0]?.approved_minutes || 0);
+    if (approvedMinutes <= 0) {
       return { error: "No approved work hours found for this admin" };
     }
+
+    const approvedHours = approvedMinutes / 60;
 
     return {
       role,
@@ -260,17 +281,15 @@ const calculateAdminPaymentEligibility = async (connection, adminId) => {
 
     const minuteRate = hourlyRate / 60; // Convert hourly to minute rate
 
-    // Calculate total worked minutes from approved work hours
-    // work_hours.hours_worked is in decimal format (e.g., 1.5 = 1 hour 30 minutes)
+    // Calculate total worked minutes from approved work hours.
     const [workHours] = await connection.execute(
-      `SELECT COALESCE(SUM(hours_worked), 0) as total_approved_hours
+      `SELECT COALESCE(SUM(COALESCE(approved_minutes, ROUND(hours_worked * 60))), 0) as total_approved_minutes
        FROM work_hours
        WHERE admin_id = ? AND status = 'approved'`,
       [adminId]
     );
 
-    const totalApprovedHours = Number(workHours[0].total_approved_hours || 0);
-    const totalWorkedMinutes = Math.round(totalApprovedHours * 60); // Convert hours to minutes
+    const totalWorkedMinutes = Number(workHours[0].total_approved_minutes || 0);
 
     // Calculate already paid minutes from approved payments
     const [paidPayments] = await connection.execute(
@@ -2481,6 +2500,7 @@ router.get("/payments/:id/receipt", verifyToken, async (req, res) => {
             id,
             date,
             hours_worked,
+            approved_minutes,
             task_description,
             status,
             session_start,
@@ -2500,7 +2520,10 @@ router.get("/payments/:id/receipt", verifyToken, async (req, res) => {
         for (const row of workHourRows) {
           if (remainingMinutes <= 0) break;
 
-          const workedMinutes = Math.max(0, Math.round(Number(row.hours_worked || 0) * 60));
+          const workedMinutes = Math.max(
+            0,
+            Number(row.approved_minutes || 0) || Math.round(Number(row.hours_worked || 0) * 60)
+          );
           if (workedMinutes <= 0) continue;
 
           if (consumedMinutes >= workedMinutes) {
@@ -2516,7 +2539,7 @@ router.get("/payments/:id/receipt", verifyToken, async (req, res) => {
               workHourId: row.id,
               workDate: row.date,
               description: row.task_description || "-",
-              workedHours: Number(row.hours_worked || 0),
+              workedHours: Number((workedMinutes / 60).toFixed(2)),
               workedMinutes,
               allocatedMinutes,
               allocatedHours: Number((allocatedMinutes / 60).toFixed(2)),
@@ -3629,6 +3652,7 @@ router.get("/payments/:id/receipt-view", async (req, res) => {
           id,
           date,
           hours_worked,
+          approved_minutes,
           task_description,
           status,
           session_start,
@@ -3647,7 +3671,10 @@ router.get("/payments/:id/receipt-view", async (req, res) => {
 
       for (const row of workHourRows) {
         if (remainingMinutes <= 0) break;
-        const workedMinutes = Math.max(0, Math.round(Number(row.hours_worked || 0) * 60));
+        const workedMinutes = Math.max(
+          0,
+          Number(row.approved_minutes || 0) || Math.round(Number(row.hours_worked || 0) * 60)
+        );
         if (workedMinutes <= 0) continue;
 
         if (consumedMinutes >= workedMinutes) {
@@ -3662,7 +3689,7 @@ router.get("/payments/:id/receipt-view", async (req, res) => {
           allocatedRows.push({
             workDate: row.date,
             description: row.task_description || "-",
-            workedHours: Number(row.hours_worked || 0),
+            workedHours: Number((workedMinutes / 60).toFixed(2)),
             allocatedMinutes,
             sessionStart: row.session_start,
             sessionEnd: row.session_end,
@@ -4173,6 +4200,7 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
     const adminId = req.user?.id;
     const { date, hours_worked, task_description } = req.body;
     const parsedHoursWorked = parseHoursWorkedInput(hours_worked);
+    const minutesWorked = hoursToMinutes(parsedHoursWorked);
 
     if (!adminId) {
       return res.status(401).json({ error: "Admin not authenticated" });
@@ -4195,15 +4223,17 @@ router.post("/admin/work-hours", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Date and worked time are required (e.g. 8, 8.5, or 8:30)" });
     }
 
-    if (parsedHoursWorked < 0 || parsedHoursWorked > 24) {
+    if (minutesWorked <= 0 || parsedHoursWorked > 24) {
       await connection.release();
       return res.status(400).json({ error: "Hours worked must be between 0 and 24" });
     }
 
     // Always create a new manual entry so existing records are never modified unexpectedly.
     await connection.execute(
-      "INSERT INTO work_hours (admin_id, date, hours_worked, task_description, is_auto_tracked) VALUES (?, ?, ?, ?, FALSE)",
-      [adminId, date, Number(parsedHoursWorked.toFixed(2)), task_description || null]
+      `INSERT INTO work_hours
+       (admin_id, date, hours_worked, minutes_worked, pending_minutes, approved_minutes, paid_minutes, task_description, status, is_auto_tracked)
+       VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'pending', FALSE)`,
+      [adminId, date, minutesToHoursDecimal(minutesWorked), minutesWorked, minutesWorked, task_description || null]
     );
 
     await connection.release();
@@ -4232,6 +4262,10 @@ router.get("/admin/work-hours", verifyToken, async (req, res) => {
         wh.id,
         wh.date,
         wh.hours_worked,
+        wh.minutes_worked,
+        wh.pending_minutes,
+        wh.approved_minutes,
+        wh.paid_minutes,
         wh.task_description,
         wh.status,
         wh.is_auto_tracked,
@@ -4265,22 +4299,71 @@ router.get("/admin/work-hours", verifyToken, async (req, res) => {
 
     const [workHours] = await connection.execute(query, params);
 
-    // Get summary
-    const [summary] = await connection.execute(
+    const [workSummary] = await connection.execute(
       `SELECT 
-        COALESCE(SUM(hours_worked), 0) as total_hours,
-        COALESCE(SUM(CASE WHEN status = 'approved' THEN hours_worked ELSE 0 END), 0) as approved_hours,
-        COALESCE(SUM(CASE WHEN status = 'pending' THEN hours_worked ELSE 0 END), 0) as pending_hours
+        COALESCE(SUM(COALESCE(pending_minutes, 0)), 0) as pending_minutes,
+        COALESCE(SUM(COALESCE(approved_minutes, 0)), 0) as approved_minutes,
+        COALESCE(SUM(COALESCE(minutes_worked, ROUND(hours_worked * 60))), 0) as total_minutes
       FROM work_hours 
       WHERE admin_id = ?`,
       [adminId]
     );
 
+    const [paidSummary] = await connection.execute(
+      `SELECT COALESCE(SUM(COALESCE(paid_minutes, 0)), 0) as paid_minutes
+       FROM payments
+       WHERE user_id = ? AND status IN ('pending_calculation', 'pending_approval', 'approved', 'ready_to_pay', 'paid')`,
+      [adminId]
+    );
+
+    const [sessionRows] = await connection.execute(
+      `SELECT
+        id,
+        start_time,
+        end_time,
+        last_activity_at,
+        active_minutes,
+        status
+       FROM admin_sessions
+       WHERE admin_id = ? AND status IN ('active', 'paused')
+       ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, start_time DESC
+       LIMIT 1`,
+      [adminId]
+    );
+
+    const pendingMinutes = Number(workSummary[0]?.pending_minutes || 0);
+    const approvedMinutes = Number(workSummary[0]?.approved_minutes || 0);
+    const paidMinutes = Number(paidSummary[0]?.paid_minutes || 0);
+    const totalMinutes = Number(workSummary[0]?.total_minutes || 0);
+
+    const normalizedRows = workHours.map((row) => {
+      const rowMinutes = Number(row.minutes_worked || 0) || Math.round(Number(row.hours_worked || 0) * 60);
+      return {
+        ...row,
+        minutes_worked: rowMinutes,
+        pending_minutes: Number(row.pending_minutes || 0),
+        approved_minutes: Number(row.approved_minutes || 0),
+        paid_minutes: Number(row.paid_minutes || 0),
+        hours_worked: minutesToHoursDecimal(rowMinutes),
+        formatted_duration: formatMinutesAsHM(rowMinutes),
+      };
+    });
+
     await connection.release();
 
     res.json({
-      workHours,
-      summary: summary[0],
+      workHours: normalizedRows,
+      summary: {
+        total_minutes: totalMinutes,
+        pending_minutes: pendingMinutes,
+        approved_minutes: approvedMinutes,
+        paid_minutes: paidMinutes,
+        total_hours: minutesToHoursDecimal(totalMinutes),
+        pending_hours: minutesToHoursDecimal(pendingMinutes),
+        approved_hours: minutesToHoursDecimal(approvedMinutes),
+        paid_hours: minutesToHoursDecimal(paidMinutes),
+      },
+      currentSession: sessionRows[0] || null,
     });
   } catch (err) {
     console.error("Get work hours error:", err);
@@ -4308,11 +4391,16 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
         wh.date,
         wh.hours_worked,
+        wh.minutes_worked,
+        wh.pending_minutes,
+        wh.approved_minutes,
+        wh.paid_minutes,
         wh.task_description,
         wh.status,
+        wh.is_auto_tracked,
         wh.created_at,
         approver.name as approved_by_name,
-        (wh.hours_worked * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)) as calculated_payment
+        ((COALESCE(NULLIF(wh.approved_minutes, 0), wh.pending_minutes, wh.minutes_worked, ROUND(wh.hours_worked * 60)) / 60) * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)) as calculated_payment
       FROM work_hours wh
       JOIN users u ON wh.admin_id = u.id
       LEFT JOIN users approver ON wh.approved_by = approver.id
@@ -4346,6 +4434,18 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
 
     const [workHours] = await connection.execute(query, params);
 
+    const normalizedWorkHours = workHours.map((row) => {
+      const rowMinutes = Number(row.minutes_worked || 0) || Math.round(Number(row.hours_worked || 0) * 60);
+      return {
+        ...row,
+        minutes_worked: rowMinutes,
+        pending_minutes: Number(row.pending_minutes || 0),
+        approved_minutes: Number(row.approved_minutes || 0),
+        paid_minutes: Number(row.paid_minutes || 0),
+        hours_worked: minutesToHoursDecimal(rowMinutes),
+      };
+    });
+
     // Get summary by admin
     const [adminSummary] = await connection.execute(
       `SELECT 
@@ -4353,23 +4453,31 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         u.name,
         u.email,
         COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
-        COALESCE(SUM(wh.hours_worked), 0) as total_hours,
-        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked ELSE 0 END), 0) as approved_hours,
-        COALESCE(SUM(CASE WHEN wh.status = 'approved' THEN wh.hours_worked * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) ELSE 0 END), 0) as total_payment_due
+        COALESCE(SUM(COALESCE(wh.minutes_worked, ROUND(wh.hours_worked * 60))), 0) as total_minutes,
+        COALESCE(SUM(COALESCE(wh.approved_minutes, CASE WHEN wh.status = 'approved' THEN ROUND(wh.hours_worked * 60) ELSE 0 END)), 0) as approved_minutes,
+        COALESCE(SUM((COALESCE(wh.approved_minutes, CASE WHEN wh.status = 'approved' THEN ROUND(wh.hours_worked * 60) ELSE 0 END) / 60) * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)), 0) as total_payment_due
       FROM users u
       LEFT JOIN work_hours wh ON u.id = wh.admin_id
       LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
       LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
       WHERE u.role = 'admin'
       GROUP BY u.id, u.name, u.email, COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)
-      ORDER BY total_hours DESC`
+      ORDER BY total_minutes DESC`
     );
+
+    const normalizedAdminSummary = adminSummary.map((row) => ({
+      ...row,
+      total_minutes: Number(row.total_minutes || 0),
+      approved_minutes: Number(row.approved_minutes || 0),
+      total_hours: minutesToHoursDecimal(row.total_minutes || 0),
+      approved_hours: minutesToHoursDecimal(row.approved_minutes || 0),
+    }));
 
     await connection.release();
 
     res.json({
-      workHours,
-      adminSummary,
+      workHours: normalizedWorkHours,
+      adminSummary: normalizedAdminSummary,
     });
   } catch (err) {
     console.error("Get all work hours error:", err);
@@ -4395,10 +4503,42 @@ router.put("/superadmin/work-hours/:id/status", verifyToken, async (req, res) =>
 
     const connection = await pool.getConnection();
 
-    await connection.execute(
-      "UPDATE work_hours SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?",
-      [status, superAdminId, id]
-    );
+    if (status === "approved") {
+      await connection.execute(
+        `UPDATE work_hours
+         SET status = 'approved',
+             approved_by = ?,
+             approved_minutes = approved_minutes + COALESCE(pending_minutes, 0),
+             pending_minutes = 0,
+             hours_worked = ROUND((approved_minutes + COALESCE(pending_minutes, 0) + COALESCE(paid_minutes, 0)) / 60, 2),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [superAdminId, id]
+      );
+    } else if (status === "rejected") {
+      await connection.execute(
+        `UPDATE work_hours
+         SET status = 'rejected',
+             approved_by = ?,
+             pending_minutes = 0,
+             hours_worked = ROUND((COALESCE(approved_minutes, 0) + COALESCE(paid_minutes, 0)) / 60, 2),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [superAdminId, id]
+      );
+    } else {
+      await connection.execute(
+        `UPDATE work_hours
+         SET status = 'pending',
+             approved_by = ?,
+             pending_minutes = COALESCE(pending_minutes, 0) + COALESCE(approved_minutes, 0),
+             approved_minutes = 0,
+             hours_worked = ROUND((COALESCE(minutes_worked, 0)) / 60, 2),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [superAdminId, id]
+      );
+    }
 
     await connection.release();
 
@@ -4500,10 +4640,11 @@ router.get("/admin/sessions", verifyToken, async (req, res) => {
     let query = `
       SELECT 
         id,
-        login_time,
-        logout_time,
-        session_duration,
-        is_processed,
+        start_time as login_time,
+        end_time as logout_time,
+        ROUND(active_minutes / 60, 2) as session_duration,
+        status,
+        active_minutes,
         ip_address,
         created_at
       FROM admin_sessions
@@ -4512,16 +4653,16 @@ router.get("/admin/sessions", verifyToken, async (req, res) => {
     const params = [adminId];
 
     if (start_date) {
-      query += " AND DATE(login_time) >= ?";
+      query += " AND DATE(start_time) >= ?";
       params.push(start_date);
     }
 
     if (end_date) {
-      query += " AND DATE(login_time) <= ?";
+      query += " AND DATE(start_time) <= ?";
       params.push(end_date);
     }
 
-    query += " ORDER BY login_time DESC LIMIT ?";
+    query += " ORDER BY start_time DESC LIMIT ?";
     params.push(parseInt(limit));
 
     const [sessions] = await connection.execute(query, params);
@@ -4548,10 +4689,201 @@ router.get("/admin/sessions", verifyToken, async (req, res) => {
 router.post("/admin/sync-active-session", verifyToken, async (req, res) => {
   try {
     const adminId = req.user?.id;
-    
+    if (!adminId || req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can sync sessions" });
+    }
+
+    const connection = await pool.getConnection();
+    const [user] = await connection.execute(
+      "SELECT auto_track_hours FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    if (user.length === 0 || user[0].auto_track_hours === false) {
+      await connection.release();
+      return res.json({ message: "Auto-tracking disabled", synced: false });
+    }
+
+    const session = await ensureActiveAdminSession(connection, adminId, req);
+    await connection.release();
+
+    return res.json({
+      message: "Session synced",
+      synced: true,
+      session: {
+        id: session.id,
+        status: session.status,
+        active_minutes: Number(session.active_minutes || 0),
+        start_time: session.start_time,
+      },
+    });
+  } catch (err) {
+    console.error("Sync active session error:", err);
+    return res.status(500).json({ error: "Failed to sync active session" });
+  }
+});
+
+const MINUTES_FROM_MS = 60 * 1000;
+const IDLE_TIMEOUT_MS = 5 * MINUTES_FROM_MS;
+
+const ensureActiveAdminSession = async (connection, adminId, req) => {
+  const [existing] = await connection.execute(
+    `SELECT * FROM admin_sessions WHERE admin_id = ? AND status = 'active' ORDER BY start_time DESC LIMIT 1`,
+    [adminId]
+  );
+
+  if (existing.length > 0) {
+    return existing[0];
+  }
+
+  const [pausedRows] = await connection.execute(
+    `SELECT * FROM admin_sessions WHERE admin_id = ? AND status = 'paused' ORDER BY start_time DESC LIMIT 1`,
+    [adminId]
+  );
+
+  if (pausedRows.length > 0) {
+    await connection.execute(
+      `UPDATE admin_sessions
+       SET status = 'active',
+           last_activity_at = NOW(),
+           last_recorded_at = NOW(),
+           end_time = NULL,
+           logout_time = NULL
+       WHERE id = ?`,
+      [pausedRows[0].id]
+    );
+
+    const [resumedRows] = await connection.execute(
+      `SELECT * FROM admin_sessions WHERE id = ? LIMIT 1`,
+      [pausedRows[0].id]
+    );
+    return resumedRows[0];
+  }
+
+  await connection.execute(
+    `INSERT INTO admin_sessions
+      (admin_id, start_time, login_time, last_activity_at, last_recorded_at, active_minutes, status, ip_address)
+     VALUES (?, NOW(), NOW(), NOW(), NOW(), 0, 'active', ?)`,
+    [adminId, req.ip || req.connection?.remoteAddress || null]
+  );
+
+  const [createdRows] = await connection.execute(
+    `SELECT * FROM admin_sessions WHERE id = LAST_INSERT_ID() LIMIT 1`
+  );
+
+  return createdRows[0];
+};
+
+const accruePendingMinutes = async (connection, adminId, session, minutesToAdd) => {
+  const addMinutes = Math.max(0, Number(minutesToAdd || 0));
+  if (!addMinutes) return;
+
+  const startAt = session.start_time || session.login_time || new Date();
+  const workDate = new Date(startAt).toISOString().split("T")[0];
+
+  const [rows] = await connection.execute(
+    `SELECT id, minutes_worked, pending_minutes, approved_minutes, paid_minutes
+     FROM work_hours
+     WHERE admin_id = ? AND date = ? AND is_auto_tracked = TRUE AND status = 'pending'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [adminId, workDate]
+  );
+
+  if (rows.length > 0) {
+    const row = rows[0];
+    const newMinutesWorked = Number(row.minutes_worked || 0) + addMinutes;
+    const newPending = Number(row.pending_minutes || 0) + addMinutes;
+    const approvedMinutes = Number(row.approved_minutes || 0);
+    const paidMinutes = Number(row.paid_minutes || 0);
+
+    await connection.execute(
+      `UPDATE work_hours
+       SET minutes_worked = ?,
+           pending_minutes = ?,
+           hours_worked = ROUND((? + ? + ?) / 60, 2),
+           session_start = COALESCE(session_start, ?),
+           session_end = NOW(),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [
+        newMinutesWorked,
+        newPending,
+        newPending,
+        approvedMinutes,
+        paidMinutes,
+        startAt,
+        row.id,
+      ]
+    );
+    return;
+  }
+
+  await connection.execute(
+    `INSERT INTO work_hours
+      (admin_id, date, hours_worked, minutes_worked, pending_minutes, approved_minutes, paid_minutes, task_description, status, is_auto_tracked, session_start, session_end)
+     VALUES (?, ?, ?, ?, ?, 0, 0, 'Auto-tracked active session', 'pending', TRUE, ?, NOW())`,
+    [adminId, workDate, minutesToHoursDecimal(addMinutes), addMinutes, addMinutes, startAt]
+  );
+};
+
+// POST Start/resume active work session
+router.post("/admin/work-sessions/start", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    if (!adminId || req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can start work sessions" });
+    }
+
+    const connection = await pool.getConnection();
+    const [userRows] = await connection.execute(
+      "SELECT auto_track_hours FROM users WHERE id = ?",
+      [adminId]
+    );
+
+    if (userRows.length === 0 || userRows[0].auto_track_hours === false) {
+      await connection.release();
+      return res.status(400).json({ error: "Auto-tracking is disabled" });
+    }
+
+    const session = await ensureActiveAdminSession(connection, adminId, req);
+    await connection.release();
+
+    res.json({
+      message: "Work session active",
+      session: {
+        id: session.id,
+        start_time: session.start_time,
+        last_activity_at: session.last_activity_at,
+        active_minutes: Number(session.active_minutes || 0),
+        status: session.status,
+      },
+    });
+  } catch (err) {
+    console.error("Start work session error:", err);
+    res.status(500).json({ error: "Failed to start work session" });
+  }
+});
+
+// POST Heartbeat to accrue only active minutes
+router.post("/admin/work-sessions/heartbeat", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+
     if (!adminId) {
       return res.status(401).json({ error: "Admin not authenticated" });
     }
+
+    if (req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can track work sessions" });
+    }
+
+    const {
+      user_active = false,
+      tab_visible = true,
+      page_open = true,
+      pause = false,
+    } = req.body || {};
 
     const connection = await pool.getConnection();
 
@@ -4569,83 +4901,135 @@ router.post("/admin/sync-active-session", verifyToken, async (req, res) => {
       });
     }
 
-    // Find the most recent unclosed session
-    const [sessions] = await connection.execute(
-      `SELECT id, login_time FROM admin_sessions 
-       WHERE admin_id = ? AND logout_time IS NULL 
-       ORDER BY login_time DESC LIMIT 1`,
-      [adminId]
-    );
+    let session = await ensureActiveAdminSession(connection, adminId, req);
 
-    if (sessions.length === 0) {
-      await connection.release();
-      return res.json({ 
-        message: "No active session found", 
-        synced: false 
-      });
-    }
+    const now = new Date();
+    const lastActivity = session.last_activity_at ? new Date(session.last_activity_at) : now;
+    const lastRecorded = session.last_recorded_at ? new Date(session.last_recorded_at) : now;
 
-    const session = sessions[0];
-    const currentTime = new Date();
-    const loginTime = new Date(session.login_time);
-    const durationHours = (currentTime - loginTime) / (1000 * 60 * 60); // Convert to hours
-
-    // Only sync if session is at least 5 minutes
-    if (durationHours < (5 / 60)) {
-      await connection.release();
-      return res.json({ 
-        message: "Session too short (minimum 5 minutes required)", 
-        current_duration_minutes: Math.round(durationHours * 60),
-        synced: false 
-      });
-    }
-
-    const workDate = loginTime.toISOString().split('T')[0];
-
-    // Check if there's already an auto-tracked entry for today
-    const [existingEntry] = await connection.execute(
-      `SELECT id, hours_worked FROM work_hours 
-       WHERE admin_id = ? AND date = ? AND is_auto_tracked = TRUE`,
-      [adminId, workDate]
-    );
-
-    if (existingEntry.length > 0) {
-      // Update existing entry with current session duration
+    if (user_active) {
       await connection.execute(
-        `UPDATE work_hours 
-         SET hours_worked = ?, updated_at = NOW() 
-         WHERE id = ?`,
-        [durationHours.toFixed(2), existingEntry[0].id]
+        `UPDATE admin_sessions SET last_activity_at = NOW() WHERE id = ?`,
+        [session.id]
       );
-    } else {
-      // Create new work hours entry for active session
+    }
+
+    const hasRecentActivity = (now.getTime() - lastActivity.getTime()) <= IDLE_TIMEOUT_MS;
+    const shouldPause = pause || !tab_visible || !page_open || !hasRecentActivity;
+
+    if (shouldPause) {
       await connection.execute(
-        `INSERT INTO work_hours 
-         (admin_id, date, hours_worked, task_description, is_auto_tracked, session_start, session_end) 
-         VALUES (?, ?, ?, ?, TRUE, ?, NOW())`,
-        [
-          adminId, 
-          workDate, 
-          durationHours.toFixed(2),
-          'Auto-tracked session (active)',
-          session.login_time
-        ]
+        `UPDATE admin_sessions
+         SET status = 'paused',
+             end_time = NOW(),
+             logout_time = NOW(),
+             session_duration = ROUND(active_minutes / 60, 2)
+         WHERE id = ?`,
+        [session.id]
+      );
+      await connection.release();
+      return res.json({ 
+        message: "Session paused",
+        tracked_minutes_added: 0,
+        synced: false,
+        paused: true,
+      });
+    }
+
+    const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - lastRecorded.getTime()) / MINUTES_FROM_MS));
+    const minutesToAdd = Math.min(elapsedMinutes, 5);
+
+    if (minutesToAdd > 0) {
+      await connection.execute(
+        `UPDATE admin_sessions
+         SET active_minutes = active_minutes + ?,
+             last_recorded_at = NOW(),
+             end_time = NOW(),
+             logout_time = NOW(),
+             session_duration = ROUND((active_minutes + ?) / 60, 2),
+             status = 'active'
+         WHERE id = ?`,
+        [minutesToAdd, minutesToAdd, session.id]
+      );
+
+      await accruePendingMinutes(connection, adminId, session, minutesToAdd);
+    } else {
+      await connection.execute(
+        `UPDATE admin_sessions
+         SET last_recorded_at = NOW(),
+             status = 'active'
+         WHERE id = ?`,
+        [session.id]
       );
     }
 
     await connection.release();
 
-    console.log(`Synced active session: ${durationHours.toFixed(2)} hours for admin ${user[0].name}`);
-
     res.json({ 
-      message: "Active session synced to work hours", 
-      hours: parseFloat(durationHours.toFixed(2)),
-      synced: true 
+      message: "Active session synced",
+      tracked_minutes_added: minutesToAdd,
+      tracked_time: formatMinutesAsHM(minutesToAdd),
+      synced: true,
+      paused: false,
     });
 
   } catch (err) {
     console.error("Sync active session error:", err);
     res.status(500).json({ error: "Failed to sync active session" });
+  }
+});
+
+// POST Pause current active work session
+router.post("/admin/work-sessions/pause", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    if (!adminId || req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can pause work sessions" });
+    }
+
+    const connection = await pool.getConnection();
+    await connection.execute(
+      `UPDATE admin_sessions
+       SET status = 'paused',
+           end_time = NOW(),
+           logout_time = NOW(),
+           session_duration = ROUND(active_minutes / 60, 2)
+       WHERE admin_id = ? AND status = 'active'`,
+      [adminId]
+    );
+    await connection.release();
+
+    res.json({ message: "Work session paused" });
+  } catch (err) {
+    console.error("Pause work session error:", err);
+    res.status(500).json({ error: "Failed to pause work session" });
+  }
+});
+
+// POST Stop current active/paused work sessions
+router.post("/admin/work-sessions/stop", verifyToken, async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    if (!adminId || req.user?.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can stop work sessions" });
+    }
+
+    const connection = await pool.getConnection();
+    await connection.execute(
+      `UPDATE admin_sessions
+       SET status = 'completed',
+           end_time = NOW(),
+           logout_time = NOW(),
+           session_duration = ROUND(active_minutes / 60, 2)
+       WHERE admin_id = ? AND status IN ('active', 'paused')`,
+      [adminId]
+    );
+    await connection.release();
+
+    res.json({ message: "Work session completed" });
+  } catch (err) {
+    console.error("Stop work session error:", err);
+    res.status(500).json({ error: "Failed to stop work session" });
   }
 });
 

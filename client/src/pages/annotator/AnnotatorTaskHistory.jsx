@@ -83,7 +83,7 @@ export default function AnnotatorTaskHistory() {
 
       {error && <div className="dashboard-error">{error}</div>}
 
-      <div className="filter-section">
+      <div className="filter-section annotator-transparent-filter">
         <label>Status:</label>
         <select
           className="filter-select"

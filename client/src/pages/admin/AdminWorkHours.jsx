@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Calendar, Clock, Plus, Trash2, CheckCircle, XCircle, Zap, ZapOff } from "lucide-react";
 import "./admin.css";
 
-const parseHoursInput = (value) => {
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
+const parseHoursInputToMinutes = (value) => {
   if (value === undefined || value === null || value === "") return null;
 
   const raw = String(value).trim();
@@ -18,48 +20,166 @@ const parseHoursInput = (value) => {
     if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
     if (hours < 0 || minutes < 0 || minutes >= 60) return null;
 
-    return hours + minutes / 60;
+    return hours * 60 + minutes;
   }
 
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? Math.round(parsed * 60) : null;
+};
+
+const formatMinutes = (value) => {
+  const totalMinutes = Math.max(0, Math.round(Number(value || 0)));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
 };
 
 export default function AdminWorkHours() {
   const [workHours, setWorkHours] = useState([]);
   const [summary, setSummary] = useState({});
+  const [currentSession, setCurrentSession] = useState(null);
   const [autoTrackEnabled, setAutoTrackEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     hours_worked: "",
     task_description: "",
   });
 
+  const lastActivityRef = useRef(Date.now());
+  const lastActivityPingRef = useRef(0);
+  const heartbeatIntervalRef = useRef(null);
+  const idleIntervalRef = useRef(null);
+  const trackingStateRef = useRef("paused");
+
   const getAuthHeader = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`,
   });
 
   useEffect(() => {
+    let unmounted = false;
+
     const loadPageData = async () => {
-      await syncActiveSession();
       await fetchWorkHours();
+      if (!unmounted) {
+        await startWorkSession();
+      }
     };
 
     loadPageData();
+
+    return () => {
+      unmounted = true;
+    };
   }, []);
 
-  const syncActiveSession = async () => {
+  const startWorkSession = async () => {
     try {
       await axios.post(
-        "http://localhost:5000/api/dashboard/admin/sync-active-session",
+        "http://localhost:5000/api/dashboard/admin/work-sessions/start",
         {},
         { headers: getAuthHeader() }
       );
+      trackingStateRef.current = "active";
+      await fetchWorkHours();
     } catch (err) {
-      console.error("Failed to sync active session:", err);
+      console.error("Failed to start session:", err);
+    }
+  };
+
+  const pauseWorkSession = async () => {
+    if (trackingStateRef.current !== "active") return;
+    try {
+      await axios.post(
+        "http://localhost:5000/api/dashboard/admin/work-sessions/pause",
+        {},
+        { headers: getAuthHeader() }
+      );
+      trackingStateRef.current = "paused";
+      await fetchWorkHours();
+    } catch (err) {
+      console.error("Failed to pause session:", err);
+    }
+  };
+
+  const stopWorkSession = async () => {
+    try {
+      await axios.post(
+        "http://localhost:5000/api/dashboard/admin/work-sessions/stop",
+        {},
+        { headers: getAuthHeader() }
+      );
+      trackingStateRef.current = "paused";
+      await fetchWorkHours();
+    } catch (err) {
+      console.error("Failed to stop session:", err);
+    }
+  };
+
+  const handleStartTracking = async () => {
+    if (!autoTrackEnabled) {
+      alert("Enable Auto-Tracking first");
+      return;
+    }
+    setSessionActionLoading(true);
+    await startWorkSession();
+    setSessionActionLoading(false);
+  };
+
+  const handlePauseTracking = async () => {
+    setSessionActionLoading(true);
+    await pauseWorkSession();
+    setSessionActionLoading(false);
+  };
+
+  const handleResumeTracking = async () => {
+    if (!autoTrackEnabled) {
+      alert("Enable Auto-Tracking first");
+      return;
+    }
+    setSessionActionLoading(true);
+    await startWorkSession();
+    await sendHeartbeat({ userActive: true });
+    setSessionActionLoading(false);
+  };
+
+  const handleStopSession = async () => {
+    setSessionActionLoading(true);
+    await stopWorkSession();
+    setSessionActionLoading(false);
+  };
+
+  const sendHeartbeat = async ({ userActive = false, forcePause = false } = {}) => {
+    if (!autoTrackEnabled) return;
+    const tabVisible = document.visibilityState === "visible";
+    const pageOpen = true;
+
+    try {
+      const response = await axios.post(
+        "http://localhost:5000/api/dashboard/admin/work-sessions/heartbeat",
+        {
+          user_active: userActive,
+          tab_visible: tabVisible,
+          page_open: pageOpen,
+          pause: forcePause,
+        },
+        { headers: getAuthHeader() }
+      );
+
+      if (response?.data?.paused) {
+        trackingStateRef.current = "paused";
+      } else {
+        trackingStateRef.current = "active";
+      }
+
+      if ((response?.data?.tracked_minutes_added || 0) > 0 || forcePause) {
+        await fetchWorkHours();
+      }
+    } catch (err) {
+      console.error("Heartbeat failed:", err);
     }
   };
 
@@ -72,12 +192,73 @@ export default function AdminWorkHours() {
       );
       setWorkHours(response.data.workHours);
       setSummary(response.data.summary);
+      setCurrentSession(response.data.currentSession || null);
+      if (response.data.currentSession?.status === "active") {
+        trackingStateRef.current = "active";
+      } else {
+        trackingStateRef.current = "paused";
+      }
     } catch (err) {
       setError(err.response?.data?.error || "Failed to load work hours");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const onActivity = () => {
+      lastActivityRef.current = Date.now();
+      if (!autoTrackEnabled || document.visibilityState !== "visible") return;
+
+      const now = Date.now();
+      if (now - lastActivityPingRef.current > 30000) {
+        lastActivityPingRef.current = now;
+        sendHeartbeat({ userActive: true });
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        pauseWorkSession();
+        return;
+      }
+
+      lastActivityRef.current = Date.now();
+      startWorkSession();
+      sendHeartbeat({ userActive: true });
+    };
+
+    window.addEventListener("mousemove", onActivity);
+    window.addEventListener("click", onActivity);
+    window.addEventListener("keydown", onActivity);
+    window.addEventListener("scroll", onActivity, { passive: true });
+    window.addEventListener("pointerdown", onActivity);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (!autoTrackEnabled) return;
+      sendHeartbeat({ userActive: false });
+    }, 60000);
+
+    idleIntervalRef.current = setInterval(() => {
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (idleMs >= IDLE_TIMEOUT_MS || document.visibilityState !== "visible") {
+        sendHeartbeat({ forcePause: true });
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener("mousemove", onActivity);
+      window.removeEventListener("click", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("scroll", onActivity);
+      window.removeEventListener("pointerdown", onActivity);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      if (idleIntervalRef.current) clearInterval(idleIntervalRef.current);
+      pauseWorkSession();
+    };
+  }, [autoTrackEnabled]);
 
 
 
@@ -90,6 +271,13 @@ export default function AdminWorkHours() {
         { headers: getAuthHeader() }
       );
       setAutoTrackEnabled(newStatus);
+      if (!newStatus) {
+        await pauseWorkSession();
+      } else {
+        lastActivityRef.current = Date.now();
+        await startWorkSession();
+        await sendHeartbeat({ userActive: true });
+      }
       alert(`Auto-tracking ${newStatus ? "enabled" : "disabled"}`);
     } catch (err) {
       alert(err.response?.data?.error || "Failed to toggle auto-tracking");
@@ -97,14 +285,14 @@ export default function AdminWorkHours() {
   };
 
   const handleSubmit = async () => {
-    const parsedHours = parseHoursInput(formData.hours_worked);
+    const parsedMinutes = parseHoursInputToMinutes(formData.hours_worked);
 
-    if (!formData.date || parsedHours === null) {
+    if (!formData.date || parsedMinutes === null) {
       alert("Date and worked time are required (e.g., 8, 8.5, or 8:30)");
       return;
     }
 
-    if (parsedHours < 0 || parsedHours > 24) {
+    if (parsedMinutes <= 0 || parsedMinutes > (24 * 60)) {
       alert("Hours must be between 0 and 24");
       return;
     }
@@ -114,7 +302,7 @@ export default function AdminWorkHours() {
         "http://localhost:5000/api/dashboard/admin/work-hours",
         {
           ...formData,
-          hours_worked: Number(parsedHours.toFixed(2)),
+          hours_worked: Number((parsedMinutes / 60).toFixed(2)),
         },
         { headers: getAuthHeader() }
       );
@@ -162,9 +350,6 @@ export default function AdminWorkHours() {
 
   if (loading) return <div className="dashboard-loading">Loading...</div>;
 
-  const autoTrackedHours = workHours.filter(w => w.is_auto_tracked).reduce((sum, w) => sum + parseFloat(w.hours_worked || 0), 0);
-  const manualHours = workHours.filter(w => !w.is_auto_tracked).reduce((sum, w) => sum + parseFloat(w.hours_worked || 0), 0);
-
   return (
     <>
       <div className="dashboard-header">
@@ -196,42 +381,56 @@ export default function AdminWorkHours() {
         </div>
       </div>
 
+      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <button className="btn-primary" onClick={handleStartTracking} disabled={sessionActionLoading || !autoTrackEnabled}>
+          Start Tracking
+        </button>
+        <button className="btn-cancel" onClick={handlePauseTracking} disabled={sessionActionLoading || !currentSession || currentSession.status !== "active"}>
+          Pause Tracking
+        </button>
+        <button className="btn-save" onClick={handleResumeTracking} disabled={sessionActionLoading || !autoTrackEnabled || (currentSession && currentSession.status === "active")}>
+          Resume Tracking
+        </button>
+        <button className="btn-delete" onClick={handleStopSession} disabled={sessionActionLoading || !currentSession}>
+          Stop Session
+        </button>
+      </div>
+
         {error && <div className="dashboard-error">{error}</div>}
 
         {/* Info Banner */}
         {autoTrackEnabled && (
           <div style={{ marginBottom: "20px", padding: "15px", backgroundColor: "#dbeafe", borderRadius: "8px", borderLeft: "4px solid #3b82f6" }}>
             <strong>🚀 Auto-Tracking Enabled!</strong>
-            <p style={{ margin: "5px 0 0 0", fontSize: "14px" }}>Your working hours are automatically tracked when you login and logout. No manual entry needed!</p>
+            <p style={{ margin: "5px 0 0 0", fontSize: "14px" }}>Only active minutes are tracked. Tracking pauses after 5 minutes of idle time or when the tab is hidden.</p>
           </div>
         )}
 
         {/* Summary Cards */}
         <div className="kpi-section">
           <div className="kpi-card">
-            <div className="kpi-icon">⏱️</div>
-            <div className="kpi-value">{summary.total_hours || 0}</div>
-            <div className="kpi-label">Total Hours</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-icon">⚡</div>
-            <div className="kpi-value">{autoTrackedHours.toFixed(1)}</div>
-            <div className="kpi-label">Auto-Tracked</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-icon">✏️</div>
-            <div className="kpi-value">{manualHours.toFixed(1)}</div>
-            <div className="kpi-label">Manual Entry</div>
+            <div className="kpi-icon">⏳</div>
+            <div className="kpi-value">{formatMinutes(summary.pending_minutes || 0)}</div>
+            <div className="kpi-label">Pending Hours</div>
           </div>
           <div className="kpi-card">
             <div className="kpi-icon">✅</div>
-            <div className="kpi-value">{summary.approved_hours || 0}</div>
+            <div className="kpi-value">{formatMinutes(summary.approved_minutes || 0)}</div>
             <div className="kpi-label">Approved Hours</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">⏳</div>
-            <div className="kpi-value">{summary.pending_hours || 0}</div>
-            <div className="kpi-label">Pending Hours</div>
+            <div className="kpi-icon">💰</div>
+            <div className="kpi-value">{formatMinutes(summary.paid_minutes || 0)}</div>
+            <div className="kpi-label">Paid Hours</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-icon">⚡</div>
+            <div className="kpi-value">
+              {currentSession?.status === "active"
+                ? formatMinutes(currentSession.active_minutes || 0)
+                : "Paused"}
+            </div>
+            <div className="kpi-label">Current Active Session</div>
           </div>
         </div>
 
@@ -242,7 +441,7 @@ export default function AdminWorkHours() {
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Hours</th>
+                  <th>Tracked Time</th>
                   <th>Type</th>
                   <th>Task Description</th>
                   <th>Status</th>
@@ -254,7 +453,7 @@ export default function AdminWorkHours() {
                 {workHours.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="no-data">
-                      No work hours logged yet. {autoTrackEnabled ? "Your hours will be tracked automatically when you login/logout." : "Click 'Log Manual Hours' to get started."}
+                      No work hours logged yet. {autoTrackEnabled ? "Only active usage is tracked." : "Click 'Log Manual Hours' to get started."}
                     </td>
                   </tr>
                 ) : (
@@ -265,7 +464,7 @@ export default function AdminWorkHours() {
                         {new Date(entry.date).toLocaleDateString()}
                       </td>
                       <td>
-                        <strong>{entry.hours_worked}</strong> hrs
+                        <strong>{formatMinutes(entry.minutes_worked || 0)}</strong>
                       </td>
                       <td>
                         {entry.is_auto_tracked ? (
@@ -324,9 +523,10 @@ export default function AdminWorkHours() {
         <div style={{ marginTop: "20px", padding: "15px", backgroundColor: "#f8f9fa", borderRadius: "8px", borderLeft: "4px solid #667eea" }}>
           <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>ℹ️ About Work Hours Tracking</h3>
            <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
-            <li><strong>Auto-Tracking:</strong> When enabled, your hours are automatically logged based on login/logout times (minimum 5 minutes)</li>
+            <li><strong>Auto-Tracking:</strong> Tracks only active work (mousemove, click, keydown, scroll, interaction)</li>
+            <li><strong>Idle Protection:</strong> Tracking pauses after 5 minutes of inactivity and resumes on activity</li>
             <li><strong>Manual Entry:</strong> You can also manually log hours for offline work or adjust entries</li>
-            <li><strong>Approval:</strong> All hours (auto and manual) require Super Admin approval for payment eligibility</li>
+            <li><strong>Approval:</strong> Approved/Paid values are locked and never changed by live tracking</li>
             <li><strong>Editing:</strong> Auto-tracked entries cannot be deleted. Manual entries can be deleted if pending</li>
           </ul>
         </div>

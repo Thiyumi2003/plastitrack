@@ -851,6 +851,13 @@ select.text-input:disabled {
   padding: 16px 20px;
 }
 
+.annotator-transparent-filter {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
 .tester-task-history-filters {
   background: transparent;
   border: 0;

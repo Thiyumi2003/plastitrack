@@ -95,7 +95,7 @@ export default function AnnotatorReviewResults() {
       </div>
 
       {/* Filter Section */}
-      <div className="filter-section">
+      <div className="filter-section annotator-transparent-filter">
         <button
           className={`filter-btn ${filter === "all" ? "active" : ""}`}
           onClick={() => setFilter("all")}

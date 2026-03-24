@@ -553,6 +553,11 @@ async function initDatabase() {
     await connection.query(createWorkHoursTableQuery);
     console.log("✓ Work hours table created or already exists");
 
+    await ensureColumn("work_hours", "minutes_worked", "INT NOT NULL DEFAULT 0 COMMENT 'Total tracked minutes for this row'");
+    await ensureColumn("work_hours", "pending_minutes", "INT NOT NULL DEFAULT 0 COMMENT 'Minutes currently pending approval'");
+    await ensureColumn("work_hours", "approved_minutes", "INT NOT NULL DEFAULT 0 COMMENT 'Minutes approved by super admin'");
+    await ensureColumn("work_hours", "paid_minutes", "INT NOT NULL DEFAULT 0 COMMENT 'Minutes already allocated to paid admin payouts'");
+
     // Create admin_sessions table to track login/logout for automatic hour calculation
     const createAdminSessionsTableQuery = `
       CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -573,6 +578,55 @@ async function initDatabase() {
     `;
     await connection.query(createAdminSessionsTableQuery);
     console.log("✓ Admin sessions table created or already exists");
+
+    await ensureColumn("admin_sessions", "start_time", "DATETIME NULL COMMENT 'Active work session start time'");
+    await ensureColumn("admin_sessions", "end_time", "DATETIME NULL COMMENT 'Active work session end time'");
+    await ensureColumn("admin_sessions", "last_activity_at", "DATETIME NULL COMMENT 'Last detected admin activity'");
+    await ensureColumn("admin_sessions", "last_recorded_at", "DATETIME NULL COMMENT 'Last minute accrual checkpoint'");
+    await ensureColumn("admin_sessions", "active_minutes", "INT NOT NULL DEFAULT 0 COMMENT 'Accrued active minutes in the session'");
+    await ensureColumn("admin_sessions", "status", "ENUM('active','paused','completed') NOT NULL DEFAULT 'active' COMMENT 'Current lifecycle state of the work session'");
+
+    // Backfill minute columns from legacy hours_worked values.
+    await connection.query(
+      `UPDATE work_hours
+       SET minutes_worked = CASE
+             WHEN minutes_worked = 0 AND COALESCE(hours_worked, 0) > 0
+               THEN ROUND(hours_worked * 60)
+             ELSE minutes_worked
+           END`
+    );
+
+    await connection.query(
+      `UPDATE work_hours
+       SET approved_minutes = CASE
+             WHEN approved_minutes = 0 AND status = 'approved'
+               THEN COALESCE(NULLIF(minutes_worked, 0), ROUND(COALESCE(hours_worked, 0) * 60))
+             ELSE approved_minutes
+           END,
+           pending_minutes = CASE
+             WHEN pending_minutes = 0 AND status = 'pending'
+               THEN COALESCE(NULLIF(minutes_worked, 0), ROUND(COALESCE(hours_worked, 0) * 60))
+             ELSE pending_minutes
+           END`
+    );
+
+    await connection.query(
+      `UPDATE admin_sessions
+       SET start_time = COALESCE(start_time, login_time),
+           end_time = COALESCE(end_time, logout_time),
+           last_activity_at = COALESCE(last_activity_at, login_time),
+           last_recorded_at = COALESCE(last_recorded_at, login_time),
+           status = CASE
+             WHEN status IS NOT NULL THEN status
+             WHEN logout_time IS NULL THEN 'active'
+             ELSE 'completed'
+           END,
+           active_minutes = CASE
+             WHEN active_minutes > 0 THEN active_minutes
+             WHEN session_duration IS NOT NULL THEN ROUND(session_duration * 60)
+             ELSE 0
+           END`
+    );
 
     // Add hourly_rate and auto_track_hours columns to users table
     await ensureColumn("users", "hourly_rate", "DECIMAL(10,2) DEFAULT 1000.00 COMMENT 'Hourly rate for admin payments'");
@@ -726,6 +780,22 @@ async function initDatabase() {
       }
     } catch (err) {
       console.warn("Could not backfill completed_date:", err.message);
+    }
+
+    // Safe cleanup: Drop unused legacy columns from admin_sessions table
+    const columnsToRemove = ['user_agent', 'is_processed', 'updated_at'];
+    for (const column of columnsToRemove) {
+      try {
+        const checkColumnQuery = `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'admin_sessions' AND TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = '${column}'`;
+        const [checkResult] = await connection.query(checkColumnQuery);
+        
+        if (checkResult.length > 0) {
+          await connection.query(`ALTER TABLE admin_sessions DROP COLUMN ${column}`);
+          console.log(`✓ Removed unused column '${column}' from admin_sessions`);
+        }
+      } catch (err) {
+        console.warn(`Could not drop column '${column}' from admin_sessions:`, err.message);
+      }
     }
 
     await connection.end();
