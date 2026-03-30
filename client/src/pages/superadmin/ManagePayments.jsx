@@ -16,7 +16,6 @@ export default function ManagePayments() {
   const [pendingPayments, setPendingPayments] = useState([]);
   const [readyPayments, setReadyPayments] = useState([]);
   const [pendingWorkHours, setPendingWorkHours] = useState([]);
-  const [expandedPayment, setExpandedPayment] = useState(null);
   const [approvalDialog, setApprovalDialog] = useState({
     isOpen: false,
     payment: null,
@@ -233,7 +232,7 @@ export default function ManagePayments() {
         methodForm.paymentType === "bank"
           ? {
               user_id: Number(currentUser.id),
-              account_name: methodForm.accountName,
+              card_holder_name: methodForm.accountName,
               account_number: methodForm.accountNumber,
               bank_name: methodForm.bankName,
               branch_name: methodForm.branchName,
@@ -1206,7 +1205,6 @@ export default function ManagePayments() {
     return Boolean(
       method.bank_name ||
         method.branch_name ||
-        method.account_name ||
         String(method.card_type || "").toLowerCase().includes("bank")
     );
   };
@@ -1217,7 +1215,7 @@ export default function ManagePayments() {
   };
 
   const getMethodOwnerLabel = (method) => {
-    return method?.account_name || method?.card_holder_name || "Unknown";
+    return method?.card_holder_name || "Unknown";
   };
 
   const getMethodSecondaryLabel = (method) => {
@@ -1498,66 +1496,32 @@ export default function ManagePayments() {
                   <th>Method</th>
                   <th>Created</th>
                   <th>Actions</th>
-                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
                 {pendingObjectPayments.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="no-data">
+                    <td colSpan="7" className="no-data">
                       No pending annotator/tester payments
                     </td>
                   </tr>
                 ) : (
                   pendingObjectPayments.map((payment) => (
-                    <>
-                      <tr key={payment.id}>
-                        <td><strong>{getPaymentDisplayName(payment)}</strong></td>
-                        <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
-                        <td>{getModelTypeDisplay(payment)}</td>
-                        <td>{payment.objects_count || 0}</td>
-                        <td>{payment.payment_method || "-"}</td>
-                        <td>{new Date(payment.created_at).toLocaleDateString()}</td>
-                        <td>
-                          <div style={{ display: "flex", gap: "5px" }}>
-                            <button
-                              className="btn-approve"
-                              onClick={() => openApprovalDialog(payment, "approved")}
-                              style={{
-                                padding: "6px 12px",
-                                backgroundColor: "#10b981",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontSize: "12px",
-                              }}
-                            >
-                              ✓ Approve
-                            </button>
-                            <button
-                              className="btn-reject"
-                              onClick={() => openApprovalDialog(payment, "rejected")}
-                              style={{
-                                padding: "6px 12px",
-                                backgroundColor: "#ef4444",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontSize: "12px",
-                              }}
-                            >
-                              ✗ Reject
-                            </button>
-                          </div>
-                        </td>
-                        <td>
+                    <tr key={payment.id}>
+                      <td><strong>{getPaymentDisplayName(payment)}</strong></td>
+                      <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
+                      <td>{getModelTypeDisplay(payment)}</td>
+                      <td>{payment.objects_count || 0}</td>
+                      <td>{payment.payment_method || "-"}</td>
+                      <td>{new Date(payment.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <div style={{ display: "flex", gap: "5px" }}>
                           <button
-                            onClick={() => setExpandedPayment(expandedPayment === payment.id ? null : payment.id)}
+                            className="btn-approve"
+                            onClick={() => openApprovalDialog(payment, "approved")}
                             style={{
                               padding: "6px 12px",
-                              backgroundColor: "#3b82f6",
+                              backgroundColor: "#10b981",
                               color: "white",
                               border: "none",
                               borderRadius: "4px",
@@ -1565,92 +1529,26 @@ export default function ManagePayments() {
                               fontSize: "12px",
                             }}
                           >
-                            {expandedPayment === payment.id ? "▲ Hide" : "▼ Show"}
+                            ✓ Approve
                           </button>
-                        </td>
-                      </tr>
-                      {expandedPayment === payment.id && (
-                        <tr>
-                          <td colSpan="8" style={{ backgroundColor: "#f9fafb", padding: "20px" }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-                              {/* Annotators Section */}
-                              <div>
-                                <h4 style={{ marginTop: 0, marginBottom: "12px", color: "#374151" }}>
-                                  📝 Annotators ({payment.annotators?.length || 0})
-                                </h4>
-                                {payment.annotators && payment.annotators.length > 0 ? (
-                                  <table style={{ width: "100%", fontSize: "13px", backgroundColor: "white", borderRadius: "4px" }}>
-                                    <thead>
-                                      <tr style={{ backgroundColor: "#e5e7eb" }}>
-                                        <th style={{ padding: "8px", textAlign: "left" }}>Annotator Name</th>
-                                        <th style={{ padding: "8px", textAlign: "center" }}>Annotated</th>
-                                        <th style={{ padding: "8px", textAlign: "center" }}>Approved</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {payment.annotators.map((annotator, idx) => (
-                                        <tr key={idx}>
-                                          <td style={{ padding: "8px" }}>{annotator.annotator_name}</td>
-                                          <td style={{ padding: "8px", textAlign: "center" }}>{annotator.images_annotated}</td>
-                                          <td style={{ padding: "8px", textAlign: "center" }}>{annotator.images_approved}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                ) : (
-                                  <p style={{ color: "#6b7280", fontSize: "13px" }}>No annotator data available</p>
-                                )}
-                              </div>
-
-                              {/* Testers Section */}
-                              <div>
-                                <h4 style={{ marginTop: 0, marginBottom: "12px", color: "#374151" }}>
-                                  ✅ Testers ({payment.testers?.length || 0})
-                                </h4>
-                                {payment.testers && payment.testers.length > 0 ? (
-                                  <table style={{ width: "100%", fontSize: "13px", backgroundColor: "white", borderRadius: "4px" }}>
-                                    <thead>
-                                      <tr style={{ backgroundColor: "#e5e7eb" }}>
-                                        <th style={{ padding: "8px", textAlign: "left" }}>Tester Name</th>
-                                        <th style={{ padding: "8px", textAlign: "center" }}>Reviewed</th>
-                                        <th style={{ padding: "8px", textAlign: "center" }}>Approved</th>
-                                        <th style={{ padding: "8px", textAlign: "center" }}>Rejected</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {payment.testers.map((tester, idx) => (
-                                        <tr key={idx}>
-                                          <td style={{ padding: "8px" }}>{tester.tester_name}</td>
-                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_reviewed}</td>
-                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_approved}</td>
-                                          <td style={{ padding: "8px", textAlign: "center" }}>{tester.images_rejected}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                ) : (
-                                  <p style={{ color: "#6b7280", fontSize: "13px" }}>No tester data available</p>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Admin's Own Work (if applicable) */}
-                            {payment.adminWork && payment.adminWork.images_annotated > 0 && (
-                              <div style={{ marginTop: "20px", padding: "12px", backgroundColor: "#dbeafe", borderRadius: "4px" }}>
-                                <h4 style={{ marginTop: 0, marginBottom: "8px", color: "#1e40af" }}>
-                                  👤 Admin's Own Work
-                                </h4>
-                                <div style={{ display: "flex", gap: "20px", fontSize: "13px" }}>
-                                  <span>Images Annotated: <strong>{payment.adminWork.images_annotated}</strong></span>
-                                  <span>Images Approved: <strong>{payment.adminWork.images_approved}</strong></span>
-                                  <span>Images Completed: <strong>{payment.adminWork.images_completed}</strong></span>
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </>
+                          <button
+                            className="btn-reject"
+                            onClick={() => openApprovalDialog(payment, "rejected")}
+                            style={{
+                              padding: "6px 12px",
+                              backgroundColor: "#ef4444",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                            }}
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
                   ))
                 )}
               </tbody>

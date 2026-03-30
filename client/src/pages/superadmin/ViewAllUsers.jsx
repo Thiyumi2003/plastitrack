@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Edit2, Trash2, UserX, UserCheck } from "lucide-react";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./superadmin.css";
 
 const getProfileSrc = (profilePicture) => {
@@ -119,7 +120,7 @@ export default function ViewAllUsers() {
       ? `Enable account for ${user.name}?`
       : `Disable account for ${user.name}? They will not be able to log in.`;
 
-    if (!confirm(confirmMsg)) return;
+    if (!(await showAppConfirm(confirmMsg, { confirmText: newStatus ? "Enable" : "Disable", tone: newStatus ? "warning" : "danger" }))) return;
 
     try {
       await axios.put(
@@ -135,7 +136,7 @@ export default function ViewAllUsers() {
   };
 
   const handleDeleteUser = async (user) => {
-    if (!confirm(`Are you sure you want to permanently delete ${user.name}? This action cannot be undone.`)) {
+    if (!(await showAppConfirm(`Are you sure you want to permanently delete ${user.name}? This action cannot be undone.`, { confirmText: "Delete User", tone: "danger" }))) {
       return;
     }
 

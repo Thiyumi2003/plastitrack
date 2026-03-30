@@ -34,9 +34,9 @@ const ROLE_PAYMENT_TYPE = {
 };
 
 const LEGACY_RATE_COLUMN_BY_ROLE = {
-  annotator: "annotator_rate",
-  tester: "tester_rate",
-  admin: "hourly_rate",
+  annotator: null,
+  tester: null,
+  admin: null,
 };
 
 const PAYMENT_STATUS = {
@@ -51,12 +51,37 @@ const PAYMENT_STATUS = {
 const PAYMENT_STATUSES = Object.values(PAYMENT_STATUS);
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret123";
 const SERVER_PUBLIC_URL = process.env.SERVER_PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+const validateStrongPassword = (password) => {
+  const value = String(password || "");
+  if (value.length < 6) {
+    return "Password must be at least 6 characters";
+  }
+  if (!/[A-Z]/.test(value)) {
+    return "Password must contain at least one uppercase letter";
+  }
+  if (!/[a-z]/.test(value)) {
+    return "Password must contain at least one lowercase letter";
+  }
+  if (!/[0-9]/.test(value)) {
+    return "Password must contain at least one number";
+  }
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) {
+    return "Password must contain at least one special character";
+  }
+  return null;
+};
+const allowSelfSignedMailTls =
+  process.env.MAIL_ALLOW_SELF_SIGNED === "true" ||
+  (process.env.NODE_ENV !== "production" && process.env.MAIL_ALLOW_SELF_SIGNED !== "false");
 
 const paymentMailTransporter = process.env.MAIL_USER && process.env.MAIL_PASS
   ? nodemailer.createTransport({
       host: process.env.MAIL_HOST || "smtp.gmail.com",
       port: Number(process.env.MAIL_PORT || 587),
       secure: false,
+      tls: {
+        rejectUnauthorized: !allowSelfSignedMailTls,
+      },
       auth: {
         user: process.env.MAIL_USER,
         pass: String(process.env.MAIL_PASS || "").replace(/\s/g, ""),
@@ -117,22 +142,37 @@ const formatMinutesAsHM = (minutesValue) => {
   return `${hours}h ${minutes}m`;
 };
 
-const syncLegacyRateColumn = async (connection, userId, role, rateValue) => {
-  const column = LEGACY_RATE_COLUMN_BY_ROLE[role];
-  if (!column) return;
-  await connection.execute(`UPDATE users SET ${column} = ? WHERE id = ?`, [rateValue, userId]);
+const createTaskWithReadableId = async (connection, { imageId, userId, assignedBy, taskType, status }) => {
+  const [insertResult] = await connection.execute(
+    `INSERT INTO tasks (image_id, user_id, assigned_by, task_type, status, assigned_date)
+     VALUES (?, ?, ?, ?, ?, NOW())`,
+    [imageId, userId, assignedBy, taskType, status]
+  );
+
+  const rowId = Number(insertResult?.insertId || 0);
+  const taskCode = `Task_${String(rowId).padStart(2, "0")}`;
+  await connection.execute(
+    `UPDATE tasks
+     SET task_code = ?
+     WHERE id = ?`,
+    [taskCode, rowId]
+  );
+  return taskCode;
+};
+
+const syncLegacyRateColumn = async () => {
+  // Legacy users.*_rate columns were removed. Rate persistence is handled by user_rates.
 };
 
 const getRoleRate = async (connection, userId, role) => {
   const paymentType = ROLE_PAYMENT_TYPE[role];
-  const legacyColumn = LEGACY_RATE_COLUMN_BY_ROLE[role];
-  if (!paymentType || !legacyColumn) {
+  if (!paymentType) {
     return 0;
   }
 
   const [rows] = await connection.execute(
     `SELECT
-      COALESCE(ur.custom_rate, u.${legacyColumn}, rr.default_rate, 0) as effective_rate
+      COALESCE(ur.custom_rate, rr.default_rate, 0) as effective_rate
      FROM users u
      LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = ?
      LEFT JOIN role_rates rr ON rr.role_name = ? AND rr.payment_type = ?
@@ -265,7 +305,7 @@ const calculateAdminPaymentEligibility = async (connection, adminId) => {
     // Get admin hourly rate. If user-specific rate is missing, fallback to role default.
     const [adminUsers] = await connection.execute(
       `SELECT
-        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate
+        COALESCE(ur.custom_rate, rr.default_rate, 0) as hourly_rate
        FROM users u
        LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
        LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
@@ -379,7 +419,7 @@ const buildMaskedAccountNumber = (accountNumber) => {
 const formatPaymentMethodLabel = (method = {}) => {
   const bank = method.bank_name || null;
   const branch = method.branch_name || null;
-  const accountName = method.account_name || method.card_holder_name || null;
+  const accountName = method.card_holder_name || null;
   const masked = method.masked_card_number || "****";
 
   if (bank || branch) {
@@ -811,7 +851,18 @@ router.get("/admins", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [admins] = await connection.execute(
-      "SELECT id, name, email, role, hourly_rate, created_at, profile_picture FROM users WHERE role = 'admin'"
+      `SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        COALESCE(ur.custom_rate, rr.default_rate, 0) as hourly_rate,
+        u.created_at,
+        u.profile_picture
+       FROM users u
+       LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
+       LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
+       WHERE u.role = 'admin'`
     );
 
     await connection.release();
@@ -829,7 +880,35 @@ router.get("/users", verifyToken, async (req, res) => {
     const { role } = req.query;
     const connection = await pool.getConnection();
 
-    let query = "SELECT id, name, email, role, is_active, hourly_rate, annotator_rate, tester_rate, profile_picture, created_at FROM users WHERE role != 'super_admin'";
+    let query = `SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        u.is_active,
+        COALESCE(ur.custom_rate, rr.default_rate, 0) as rate,
+        CASE WHEN u.role = 'admin' THEN COALESCE(ur.custom_rate, rr.default_rate, 0) ELSE 0 END as hourly_rate,
+        CASE WHEN u.role = 'annotator' THEN COALESCE(ur.custom_rate, rr.default_rate, 0) ELSE 0 END as annotator_rate,
+        CASE WHEN u.role = 'tester' THEN COALESCE(ur.custom_rate, rr.default_rate, 0) ELSE 0 END as tester_rate,
+        u.profile_picture,
+        u.created_at
+      FROM users u
+      LEFT JOIN user_rates ur ON ur.user_id = u.id
+        AND ur.payment_type = CASE
+          WHEN u.role = 'admin' THEN 'per_hour'
+          WHEN u.role IN ('annotator', 'tester') THEN 'per_object'
+          ELSE NULL
+        END
+      LEFT JOIN role_rates rr ON rr.role_name = CASE
+          WHEN u.role IN ('admin', 'annotator', 'tester') THEN u.role
+          ELSE NULL
+        END
+        AND rr.payment_type = CASE
+          WHEN u.role = 'admin' THEN 'per_hour'
+          WHEN u.role IN ('annotator', 'tester') THEN 'per_object'
+          ELSE NULL
+        END
+      WHERE u.role != 'super_admin'`;
     const params = [];
 
     if (role) {
@@ -854,7 +933,8 @@ router.get("/users", verifyToken, async (req, res) => {
 router.put("/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, role, hourly_rate, annotator_rate, tester_rate } = req.body;
+    const { name, email, role, rate, hourly_rate, annotator_rate, tester_rate } = req.body;
+    const normalizedRate = normalizeRateValue(rate);
     const normalizedHourlyRate = normalizeRateValue(hourly_rate);
     const normalizedAnnotatorRate = normalizeRateValue(annotator_rate);
     const normalizedTesterRate = normalizeRateValue(tester_rate);
@@ -885,20 +965,10 @@ router.put("/users/:id", verifyToken, async (req, res) => {
     let query = "UPDATE users SET name = ?, email = ?, role = ?";
     const params = [name, email, role];
 
-    if (hourly_rate !== undefined && role === "admin") {
-      query += ", hourly_rate = ?";
-      params.push(normalizedHourlyRate);
-    }
-
-    if (annotator_rate !== undefined && role === "annotator") {
-      query += ", annotator_rate = ?";
-      params.push(normalizedAnnotatorRate);
-    }
-
-    if (tester_rate !== undefined && role === "tester") {
-      query += ", tester_rate = ?";
-      params.push(normalizedTesterRate);
-    }
+    let selectedRate = normalizedRate;
+    if (selectedRate === null && role === "admin") selectedRate = normalizedHourlyRate;
+    if (selectedRate === null && role === "annotator") selectedRate = normalizedAnnotatorRate;
+    if (selectedRate === null && role === "tester") selectedRate = normalizedTesterRate;
 
     query += " WHERE id = ?";
     params.push(id);
@@ -906,20 +976,17 @@ router.put("/users/:id", verifyToken, async (req, res) => {
     await connection.execute(query, params);
 
     // Keep user_rates aligned with existing View All Users edit flow.
-    await connection.execute("DELETE FROM user_rates WHERE user_id = ?", [id]);
     const paymentType = ROLE_PAYMENT_TYPE[role] || null;
-    let selectedRate = null;
-    if (role === "admin") selectedRate = normalizedHourlyRate;
-    if (role === "annotator") selectedRate = normalizedAnnotatorRate;
-    if (role === "tester") selectedRate = normalizedTesterRate;
-
-    if (paymentType && selectedRate !== null) {
-      await connection.execute(
-        `INSERT INTO user_rates (user_id, payment_type, custom_rate)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`,
-        [id, paymentType, selectedRate]
-      );
+    if (paymentType) {
+      await connection.execute("DELETE FROM user_rates WHERE user_id = ? AND payment_type = ?", [id, paymentType]);
+      if (selectedRate !== null) {
+        await connection.execute(
+          `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`,
+          [id, paymentType, selectedRate]
+        );
+      }
     }
 
     await connection.release();
@@ -2644,10 +2711,10 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
         i.status,
         a.id as annotator_id,
         a.name as annotator_name,
-        COALESCE(aur.custom_rate, a.annotator_rate, arr.default_rate, 0) as annotator_rate,
+        COALESCE(aur.custom_rate, arr.default_rate, 0) as annotator_rate,
         t.id as tester_id,
         t.name as tester_name,
-        COALESCE(tur.custom_rate, t.tester_rate, trr.default_rate, 0) as tester_rate
+        COALESCE(tur.custom_rate, trr.default_rate, 0) as tester_rate
        FROM images i
        LEFT JOIN users a ON i.annotator_id = a.id
        LEFT JOIN users t ON i.tester_id = t.id
@@ -2674,11 +2741,13 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
     };
 
     rows.forEach((row) => {
-      const modelType = row.model_type || "Unknown";
-      if (!modelMap.has(modelType)) {
-        modelMap.set(modelType, {
-          modelType,
-          modelTypeDisplay: deriveModelTypeDisplay(row.image_name, modelType),
+      const modelTypeDisplay = deriveModelTypeDisplay(row.image_name, row.model_type);
+      const modelKey = modelTypeDisplay || row.model_type || "Unknown";
+
+      if (!modelMap.has(modelKey)) {
+        modelMap.set(modelKey, {
+          modelType: modelKey,
+          modelTypeDisplay: modelTypeDisplay || modelKey,
           totalImages: 0,
           finalizedImages: 0,
           approvedImages: 0,
@@ -2688,9 +2757,9 @@ router.get("/reports/model-payment-details", verifyToken, async (req, res) => {
         });
       }
 
-      const model = modelMap.get(modelType);
-      if (!model.modelTypeDisplay || model.modelTypeDisplay === modelType) {
-        model.modelTypeDisplay = deriveModelTypeDisplay(row.image_name, modelType);
+      const model = modelMap.get(modelKey);
+      if (!model.modelTypeDisplay || model.modelTypeDisplay === model.modelType) {
+        model.modelTypeDisplay = modelTypeDisplay || model.modelType;
       }
       const objectsCount = Number(row.objects_count || 0);
       const annotatorRate = Number(row.annotator_rate || 0);
@@ -3319,7 +3388,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [sourceRows] = await connection.execute(
-      `SELECT id, card_type, card_holder_name, account_name, bank_name, branch_name, masked_card_number
+      `SELECT id, card_type, card_holder_name, bank_name, branch_name, masked_card_number
        FROM payment_methods
        WHERE id = ? AND user_id = ? LIMIT 1`,
       [sourceMethodId, req.user.id]
@@ -3354,7 +3423,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
 
     if (methodId) {
       const [methodRows] = await connection.execute(
-        `SELECT id, card_type, card_holder_name, account_name, bank_name, branch_name, masked_card_number
+        `SELECT id, card_type, card_holder_name, bank_name, branch_name, masked_card_number
          FROM payment_methods
          WHERE id = ? AND user_id = ? LIMIT 1`,
         [methodId, payment.user_id]
@@ -3374,11 +3443,10 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
 
       await connection.execute(
         `INSERT INTO payment_methods
-          (user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (user_id, card_holder_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
           card_holder_name = VALUES(card_holder_name),
-          account_name = VALUES(account_name),
           bank_name = VALUES(bank_name),
           branch_name = VALUES(branch_name),
           card_type = VALUES(card_type),
@@ -3388,7 +3456,6 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
         [
           payment.user_id,
           card.card_holder_name,
-          card.account_name || card.card_holder_name,
           card.bank_name || null,
           card.branch_name || null,
           masked,
@@ -3409,7 +3476,6 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
       destinationMethod = formatPaymentMethodLabel({
         card_type: card.card_type || "Card",
         card_holder_name: card.card_holder_name,
-        account_name: card.account_name || card.card_holder_name,
         bank_name: card.bank_name || null,
         branch_name: card.branch_name || null,
         masked_card_number: masked,
@@ -3969,14 +4035,14 @@ router.get("/payment-methods", verifyToken, async (req, res) => {
 
     const [rows] = userId
       ? await connection.execute(
-          `SELECT id, user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+          `SELECT id, user_id, card_holder_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
            FROM payment_methods
            WHERE user_id = ?
            ORDER BY is_default DESC, updated_at DESC`,
           [userId]
         )
       : await connection.execute(
-          `SELECT id, user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+          `SELECT id, user_id, card_holder_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
            FROM payment_methods
            ORDER BY is_default DESC, updated_at DESC`
         );
@@ -4000,7 +4066,6 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
     const {
       user_id,
       card_holder_name,
-      account_name,
       bank_name,
       branch_name,
       masked_account_number,
@@ -4017,7 +4082,7 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
     if (!isSuperAdmin(req) && user_id && Number(user_id) !== requesterId) {
       return res.status(403).json({ error: "Not authorized" });
     }
-    const resolvedAccountName = account_name || card_holder_name;
+    const resolvedCardHolderName = card_holder_name;
     const resolvedBankName = bank_name || null;
     const resolvedBranchName = branch_name || null;
     const resolvedType = card_type || (resolvedBankName ? "Bank Account" : null);
@@ -4027,7 +4092,7 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
       buildMaskedAccountNumber(account_number || "") ||
       maskCardNumber(card_number || "");
 
-    if (!userId || !resolvedAccountName || !resolvedType || !resolvedMasked) {
+    if (!userId || !resolvedCardHolderName || !resolvedType || !resolvedMasked) {
       return res.status(400).json({ error: "name, account/card number and payment type are required" });
     }
 
@@ -4038,12 +4103,11 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
     await connection.execute(
       `INSERT INTO payment_methods
-        (user_id, card_holder_name, account_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (user_id, card_holder_name, bank_name, branch_name, masked_card_number, card_type, expiry_month, expiry_year, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
-        card_holder_name || resolvedAccountName,
-        resolvedAccountName,
+        resolvedCardHolderName,
         resolvedBankName,
         resolvedBranchName,
         resolvedMasked,
@@ -4079,7 +4143,6 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
 
     const { id } = req.params;
     const {
-      account_name,
       card_holder_name,
       bank_name,
       branch_name,
@@ -4119,7 +4182,6 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
     await connection.execute(
       `UPDATE payment_methods
        SET card_holder_name = COALESCE(?, card_holder_name),
-           account_name = COALESCE(?, account_name),
            bank_name = ?,
            branch_name = ?,
            masked_card_number = ?,
@@ -4130,8 +4192,7 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
-        card_holder_name || account_name || null,
-        account_name || card_holder_name || null,
+        card_holder_name || null,
         bank_name || null,
         branch_name || null,
         resolvedMasked,
@@ -4388,7 +4449,7 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         wh.admin_id,
         u.name as admin_name,
         u.email as admin_email,
-        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
+        COALESCE(ur.custom_rate, rr.default_rate, 0) as hourly_rate,
         wh.date,
         wh.hours_worked,
         wh.minutes_worked,
@@ -4400,7 +4461,7 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         wh.is_auto_tracked,
         wh.created_at,
         approver.name as approved_by_name,
-        ((COALESCE(NULLIF(wh.approved_minutes, 0), wh.pending_minutes, wh.minutes_worked, ROUND(wh.hours_worked * 60)) / 60) * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)) as calculated_payment
+        ((COALESCE(NULLIF(wh.approved_minutes, 0), wh.pending_minutes, wh.minutes_worked, ROUND(wh.hours_worked * 60)) / 60) * COALESCE(ur.custom_rate, rr.default_rate, 0)) as calculated_payment
       FROM work_hours wh
       JOIN users u ON wh.admin_id = u.id
       LEFT JOIN users approver ON wh.approved_by = approver.id
@@ -4452,16 +4513,16 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
         u.id,
         u.name,
         u.email,
-        COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0) as hourly_rate,
+        COALESCE(ur.custom_rate, rr.default_rate, 0) as hourly_rate,
         COALESCE(SUM(COALESCE(wh.minutes_worked, ROUND(wh.hours_worked * 60))), 0) as total_minutes,
         COALESCE(SUM(COALESCE(wh.approved_minutes, CASE WHEN wh.status = 'approved' THEN ROUND(wh.hours_worked * 60) ELSE 0 END)), 0) as approved_minutes,
-        COALESCE(SUM((COALESCE(wh.approved_minutes, CASE WHEN wh.status = 'approved' THEN ROUND(wh.hours_worked * 60) ELSE 0 END) / 60) * COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)), 0) as total_payment_due
+        COALESCE(SUM((COALESCE(wh.approved_minutes, CASE WHEN wh.status = 'approved' THEN ROUND(wh.hours_worked * 60) ELSE 0 END) / 60) * COALESCE(ur.custom_rate, rr.default_rate, 0)), 0) as total_payment_due
       FROM users u
       LEFT JOIN work_hours wh ON u.id = wh.admin_id
       LEFT JOIN user_rates ur ON ur.user_id = u.id AND ur.payment_type = 'per_hour'
       LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
       WHERE u.role = 'admin'
-      GROUP BY u.id, u.name, u.email, COALESCE(ur.custom_rate, u.hourly_rate, rr.default_rate, 0)
+      GROUP BY u.id, u.name, u.email, COALESCE(ur.custom_rate, rr.default_rate, 0)
       ORDER BY total_minutes DESC`
     );
 
@@ -4645,8 +4706,8 @@ router.get("/admin/sessions", verifyToken, async (req, res) => {
         ROUND(active_minutes / 60, 2) as session_duration,
         status,
         active_minutes,
-        ip_address,
-        created_at
+        NULL as ip_address,
+        start_time as created_at
       FROM admin_sessions
       WHERE admin_id = ?
     `;
@@ -4747,8 +4808,7 @@ const ensureActiveAdminSession = async (connection, adminId, req) => {
        SET status = 'active',
            last_activity_at = NOW(),
            last_recorded_at = NOW(),
-           end_time = NULL,
-           logout_time = NULL
+           end_time = NULL
        WHERE id = ?`,
       [pausedRows[0].id]
     );
@@ -4762,9 +4822,9 @@ const ensureActiveAdminSession = async (connection, adminId, req) => {
 
   await connection.execute(
     `INSERT INTO admin_sessions
-      (admin_id, start_time, login_time, last_activity_at, last_recorded_at, active_minutes, status, ip_address)
-     VALUES (?, NOW(), NOW(), NOW(), NOW(), 0, 'active', ?)`,
-    [adminId, req.ip || req.connection?.remoteAddress || null]
+      (admin_id, start_time, last_activity_at, last_recorded_at, active_minutes, status)
+     VALUES (?, NOW(), NOW(), NOW(), 0, 'active')`,
+    [adminId]
   );
 
   const [createdRows] = await connection.execute(
@@ -4778,7 +4838,7 @@ const accruePendingMinutes = async (connection, adminId, session, minutesToAdd) 
   const addMinutes = Math.max(0, Number(minutesToAdd || 0));
   if (!addMinutes) return;
 
-  const startAt = session.start_time || session.login_time || new Date();
+  const startAt = session.start_time || new Date();
   const workDate = new Date(startAt).toISOString().split("T")[0];
 
   const [rows] = await connection.execute(
@@ -4922,8 +4982,7 @@ router.post("/admin/work-sessions/heartbeat", verifyToken, async (req, res) => {
         `UPDATE admin_sessions
          SET status = 'paused',
              end_time = NOW(),
-             logout_time = NOW(),
-             session_duration = ROUND(active_minutes / 60, 2)
+             updated_at = NOW()
          WHERE id = ?`,
         [session.id]
       );
@@ -4945,11 +5004,9 @@ router.post("/admin/work-sessions/heartbeat", verifyToken, async (req, res) => {
          SET active_minutes = active_minutes + ?,
              last_recorded_at = NOW(),
              end_time = NOW(),
-             logout_time = NOW(),
-             session_duration = ROUND((active_minutes + ?) / 60, 2),
              status = 'active'
          WHERE id = ?`,
-        [minutesToAdd, minutesToAdd, session.id]
+        [minutesToAdd, session.id]
       );
 
       await accruePendingMinutes(connection, adminId, session, minutesToAdd);
@@ -4992,8 +5049,7 @@ router.post("/admin/work-sessions/pause", verifyToken, async (req, res) => {
       `UPDATE admin_sessions
        SET status = 'paused',
            end_time = NOW(),
-           logout_time = NOW(),
-           session_duration = ROUND(active_minutes / 60, 2)
+           updated_at = NOW()
        WHERE admin_id = ? AND status = 'active'`,
       [adminId]
     );
@@ -5018,9 +5074,7 @@ router.post("/admin/work-sessions/stop", verifyToken, async (req, res) => {
     await connection.execute(
       `UPDATE admin_sessions
        SET status = 'completed',
-           end_time = NOW(),
-           logout_time = NOW(),
-           session_duration = ROUND(active_minutes / 60, 2)
+           end_time = NOW()
        WHERE admin_id = ? AND status IN ('active', 'paused')`,
       [adminId]
     );
@@ -5175,7 +5229,7 @@ router.delete("/admins/:id", verifyToken, async (req, res) => {
 // POST Add admin
 router.post("/admins", verifyToken, async (req, res) => {
   try {
-    const { name, email, password, hourly_rate } = req.body;
+    const { name, email, password, rate, hourly_rate } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: "All fields required" });
@@ -5186,21 +5240,35 @@ router.post("/admins", verifyToken, async (req, res) => {
     const bcrypt = require("bcryptjs");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    let resolvedHourlyRate = normalizeRateValue(hourly_rate);
-    if (resolvedHourlyRate === null) {
+    let resolvedRate = normalizeRateValue(rate);
+    if (resolvedRate === null) {
+      resolvedRate = normalizeRateValue(hourly_rate);
+    }
+    if (resolvedRate === null) {
       const [defaults] = await connection.execute(
         `SELECT default_rate
          FROM role_rates
          WHERE role_name = 'admin' AND payment_type = 'per_hour'
          LIMIT 1`
       );
-      resolvedHourlyRate = Number(defaults?.[0]?.default_rate || 0);
+      resolvedRate = Number(defaults?.[0]?.default_rate || 0);
     }
 
     await connection.execute(
-      "INSERT INTO users (name, email, password, role, hourly_rate) VALUES (?, ?, ?, ?, ?)",
-      [name, email, hashedPassword, "admin", resolvedHourlyRate]
+      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
+      [name, email, hashedPassword, "admin"]
     );
+
+    const [createdUserRows] = await connection.execute("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
+    const createdUserId = createdUserRows?.[0]?.id;
+    if (createdUserId && resolvedRate !== null) {
+      await connection.execute(
+        `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+         VALUES (?, 'per_hour', ?)
+         ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`,
+        [createdUserId, resolvedRate]
+      );
+    }
 
     await connection.release();
 
@@ -5793,14 +5861,14 @@ if (feedback && annotatorId) {
     // Create task if assigning to annotator
     if (annotatorId) {
       try {
-        const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const taskId = await createTaskWithReadableId(connection, {
+          imageId: id,
+          userId: annotatorId,
+          assignedBy: adminId,
+          taskType: "annotation",
+          status: "pending",
+        });
         const imageName = currentImage.image_name || `Image #${id}`;
-
-        await connection.execute(
-          `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
-           VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
-          [taskId, id, annotatorId, adminId]
-        );
         // Create notification for annotator
         await createNotification(
           connection,
@@ -5818,18 +5886,19 @@ if (feedback && annotatorId) {
     // Create task if assigning to tester
     if (testerId) {
       try {
-        const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         const [existingTesterTask] = await connection.execute(
           `SELECT id FROM tasks WHERE image_id = ? AND task_type = 'testing' LIMIT 1`,
           [id]
         );
         const imageName = currentImage.image_name || `Image #${id}`;
         if (existingTesterTask.length === 0) {
-          await connection.execute(
-            `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
-             VALUES (?, ?, ?, ?, 'testing', 'pending_review', NOW())`,
-            [taskId, id, testerId, adminId]
-          );
+          const taskId = await createTaskWithReadableId(connection, {
+            imageId: id,
+            userId: testerId,
+            assignedBy: adminId,
+            taskType: "testing",
+            status: "pending_review",
+          });
           await createNotification(
             connection,
             testerId,
@@ -5878,7 +5947,7 @@ router.get("/admin/payment-eligibility", verifyToken, async (req, res) => {
     const [tasks] = await connection.execute(`
       SELECT 
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name,
         i.id as image_id,
         u.name as annotator_name,
@@ -6025,6 +6094,11 @@ router.put("/admin/change-password", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Current and new password required" });
     }
 
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
     const connection = await pool.getConnection();
     const bcrypt = require("bcryptjs");
 
@@ -6070,6 +6144,11 @@ router.put("/change-password", verifyToken, async (req, res) => {
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const connection = await pool.getConnection();
@@ -6143,6 +6222,11 @@ router.put("/super-admin/change-password", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Current and new password required" });
     }
 
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
     const connection = await pool.getConnection();
     const bcrypt = require("bcryptjs");
 
@@ -6212,6 +6296,11 @@ router.put("/melbourne/change-password", verifyToken, async (req, res) => {
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const connection = await pool.getConnection();
@@ -6366,7 +6455,7 @@ router.get("/annotator/recent-reviews", verifyToken, async (req, res) => {
     const [reviews] = await connection.execute(
       `SELECT
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name as image_set_name,
         COALESCE(
           tester_task_user.name,
@@ -6447,7 +6536,7 @@ router.get("/annotator/tasks", verifyToken, async (req, res) => {
     const [tasks] = await connection.execute(`
       SELECT 
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name,
         t.status,
         u.name as assigned_by,
@@ -6564,7 +6653,7 @@ router.get("/annotator/task-history", verifyToken, async (req, res) => {
     let query = `
       SELECT 
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name,
         t.status,
         t.notes,
@@ -6789,7 +6878,7 @@ router.put("/admin/images/:id/approve-rework", verifyToken, async (req, res) => 
     }
 
     const annotatorName = annotatorRows[0].name;
-    const taskId = `TASK_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const imageName = image.image_name || `Image #${id}`;
 
     await connection.execute(
       `UPDATE images
@@ -6798,11 +6887,13 @@ router.put("/admin/images/:id/approve-rework", verifyToken, async (req, res) => 
       [targetAnnotatorId, id]
     );
 
-    await connection.execute(
-      `INSERT INTO tasks (task_id, image_id, user_id, assigned_by, task_type, status, assigned_date)
-       VALUES (?, ?, ?, ?, 'annotation', 'pending', NOW())`,
-      [taskId, id, targetAnnotatorId, adminId]
-    );
+    const taskId = await createTaskWithReadableId(connection, {
+      imageId: id,
+      userId: targetAnnotatorId,
+      assignedBy: adminId,
+      taskType: "annotation",
+      status: "pending",
+    });
 
     await logImageHistory(connection, {
       imageId: id,
@@ -6821,7 +6912,7 @@ router.put("/admin/images/:id/approve-rework", verifyToken, async (req, res) => 
       connection,
       targetAnnotatorId,
       "rework_approved",
-      `${adminName} approved rework for \"${image.image_name || `Image #${id}`}\" | ACTION: Open Dashboard and continue annotation`,
+      `${adminName} approved rework for \"${imageName}\" | ACTION: Open Dashboard and continue annotation`,
       id
     );
 
@@ -6845,7 +6936,7 @@ router.get("/annotator/review-results", verifyToken, async (req, res) => {
     const [reviews] = await connection.execute(
       `SELECT
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name as image_set_name,
         COALESCE(
           tester_task_user.name,
@@ -7041,6 +7132,11 @@ router.put("/annotator/change-password", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Current and new password required" });
     }
 
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
     const connection = await pool.getConnection();
     const bcrypt = require("bcryptjs");
 
@@ -7144,7 +7240,7 @@ router.get("/tester/tasks", verifyToken, async (req, res) => {
     const [tasks] = await connection.execute(
       `SELECT 
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name,
         i.objects_count,
         t.status,
@@ -7373,7 +7469,7 @@ router.get("/tester/task-history", verifyToken, async (req, res) => {
     const validStatuses = ["completed", "in_progress", "pending", "rejected"];
     let query = `SELECT 
         t.id,
-        t.task_id,
+        COALESCE(t.task_code, CONCAT('Task_', LPAD(t.id, 2, '0'))) as task_id,
         i.image_name,
         i.objects_count,
         t.status,
@@ -7492,6 +7588,11 @@ router.put("/tester/change-password", verifyToken, async (req, res) => {
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: "Current and new password required" });
+    }
+
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const connection = await pool.getConnection();

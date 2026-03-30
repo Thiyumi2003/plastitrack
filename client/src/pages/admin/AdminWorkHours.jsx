@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Calendar, Clock, Plus, Trash2, CheckCircle, XCircle, Zap, ZapOff } from "lucide-react";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./admin.css";
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -320,7 +321,7 @@ export default function AdminWorkHours() {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm("Are you sure you want to delete this entry?")) return;
+    if (!(await showAppConfirm("Are you sure you want to delete this entry?", { confirmText: "Delete", tone: "danger" }))) return;
 
     try {
       await axios.delete(

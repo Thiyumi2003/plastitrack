@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./superadmin.css";
 
 const getRoleLabel = (role) => {
@@ -110,7 +111,7 @@ export default function ManageRates() {
   };
 
   const handleUserDelete = async (rate) => {
-    if (!window.confirm(`Delete custom override for ${rate.name}?`)) return;
+    if (!(await showAppConfirm(`Delete custom override for ${rate.name}?`, { confirmText: "Delete Override", tone: "danger" }))) return;
 
     try {
       await axios.delete(

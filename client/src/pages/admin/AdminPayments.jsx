@@ -67,7 +67,6 @@ export default function AdminPayments() {
       const payload = {
         bank_name: methodForm.bank_name,
         branch_name: methodForm.branch_name,
-        account_name: methodForm.name,
         card_holder_name: methodForm.name,
         account_number: methodForm.account_number,
         card_type: "Bank Account",
@@ -260,7 +259,7 @@ export default function AdminPayments() {
                       <tr key={m.id}>
                         <td>{m.bank_name || "-"}</td>
                         <td>{m.branch_name || "-"}</td>
-                        <td>{m.account_name || m.card_holder_name || "-"}</td>
+                        <td>{m.card_holder_name || "-"}</td>
                         <td>{m.masked_card_number}</td>
                         <td>{m.is_default ? "Yes" : "No"}</td>
                         <td>

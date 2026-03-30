@@ -841,7 +841,7 @@
   justify-content: center;
   text-align: left;
   padding: 6rem 2rem 2rem 2rem;
-  background-image: url('../images/home2.png');
+  background-image: url('../images/home.png');
   background-size: cover;
   background-position: center;
   position: relative;
@@ -850,16 +850,16 @@
 
 @keyframes backgroundTransition {
   0%, 25% {
-    background-image: url('../images/home2.png');
+    background-image: url('../images/home.png');
   }
   25.1%, 50% {
-    background-image: url('../images/home3.png');
+    background-image: url('../images/home.png');
   }
   50.1%, 75% {
-    background-image: url('../images/home4.png');
+    background-image: url('../images/home.png');
   }
   75.1%, 100% {
-    background-image: url('../images/home5.png');
+    background-image: url('../images/home.png');
   }
 }
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Calendar, Clock, CheckCircle, XCircle, DollarSign } from "lucide-react";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./superadmin.css";
 
 export default function ManageAdminWorkHours() {
@@ -43,7 +44,7 @@ export default function ManageAdminWorkHours() {
       ? "Approve this work hours entry?"
       : "Reject this work hours entry?";
 
-    if (!confirm(confirmMsg)) return;
+    if (!(await showAppConfirm(confirmMsg, { confirmText: status === "approved" ? "Approve" : "Reject", tone: status === "approved" ? "warning" : "danger" }))) return;
 
     try {
       await axios.put(

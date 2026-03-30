@@ -13,6 +13,13 @@ export default function ForgotPassword() {
     newPassword: "",
     confirmPassword: "",
   });
+  const [passwordValidation, setPasswordValidation] = useState({
+    minLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecialChar: false,
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -20,6 +27,16 @@ export default function ForgotPassword() {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
     setError("");
+
+    if (name === "newPassword") {
+      setPasswordValidation({
+        minLength: value.length >= 6,
+        hasUpperCase: /[A-Z]/.test(value),
+        hasLowerCase: /[a-z]/.test(value),
+        hasNumber: /[0-9]/.test(value),
+        hasSpecialChar: /[!@#$%^&*(),.?":{}|<>]/.test(value),
+      });
+    }
   };
 
   const handleForgotPassword = async (e) => {
@@ -37,6 +54,22 @@ export default function ForgotPassword() {
     }
     if (formData.newPassword.length < 6) {
       setError("Password must be at least 6 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(formData.newPassword)) {
+      setError("Password must contain at least one uppercase letter");
+      return;
+    }
+    if (!/[a-z]/.test(formData.newPassword)) {
+      setError("Password must contain at least one lowercase letter");
+      return;
+    }
+    if (!/[0-9]/.test(formData.newPassword)) {
+      setError("Password must contain at least one number");
+      return;
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(formData.newPassword)) {
+      setError("Password must contain at least one special character");
       return;
     }
     if (formData.newPassword !== formData.confirmPassword) {
@@ -139,6 +172,32 @@ export default function ForgotPassword() {
                   disabled={loading}
                 />
               </div>
+
+              {formData.newPassword && (
+                <div className="login-password-hints">
+                  <div className="login-hint-title">Password Requirements:</div>
+                  <div className={passwordValidation.minLength ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.minLength ? "✓" : "x"}</span>
+                    At least 6 characters
+                  </div>
+                  <div className={passwordValidation.hasUpperCase ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasUpperCase ? "✓" : "x"}</span>
+                    One uppercase letter (A-Z)
+                  </div>
+                  <div className={passwordValidation.hasLowerCase ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasLowerCase ? "✓" : "x"}</span>
+                    One lowercase letter (a-z)
+                  </div>
+                  <div className={passwordValidation.hasNumber ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasNumber ? "✓" : "x"}</span>
+                    One number (0-9)
+                  </div>
+                  <div className={passwordValidation.hasSpecialChar ? "login-hint-item is-valid" : "login-hint-item is-invalid"}>
+                    <span className="login-hint-icon">{passwordValidation.hasSpecialChar ? "✓" : "x"}</span>
+                    One special character (!@#$%^&*)
+                  </div>
+                </div>
+              )}
 
               <label className="login-label" htmlFor="confirmPassword">Confirm Password</label>
               <div className="login-input">

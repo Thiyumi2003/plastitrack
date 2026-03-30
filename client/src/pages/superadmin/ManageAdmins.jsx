@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { Plus, Edit2, Trash2 } from "lucide-react";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./superadmin.css";
 
 const getProfileSrc = (profilePicture) => {
@@ -94,7 +95,7 @@ export default function ManageAdmins() {
   };
 
   const handleDeleteAdmin = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this admin?")) return;
+    if (!(await showAppConfirm("Are you sure you want to delete this admin?", { confirmText: "Delete Admin", tone: "danger" }))) return;
     setError("");
     setSuccess("");
     try {

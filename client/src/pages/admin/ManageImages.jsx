@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./admin.css";
 
 export default function ManageImages() {
@@ -180,7 +181,7 @@ export default function ManageImages() {
   };
 
   const handleDeleteImage = async (imageId, imageName) => {
-    if (!window.confirm(`Are you sure you want to delete "${imageName}"? This will also delete all related tasks.`)) {
+    if (!(await showAppConfirm(`Are you sure you want to delete "${imageName}"? This will also delete all related tasks.`, { confirmText: "Delete Image", tone: "danger" }))) {
       return;
     }
 

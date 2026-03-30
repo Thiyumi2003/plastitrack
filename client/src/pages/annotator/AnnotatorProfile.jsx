@@ -17,6 +17,13 @@ export default function AnnotatorProfile() {
     new: "",
     confirm: "",
   });
+  const [passwordValidation, setPasswordValidation] = useState({
+    minLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecialChar: false,
+  });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -44,6 +51,16 @@ export default function AnnotatorProfile() {
   const handlePasswordChange = (e) => {
     const { name, value } = e.target;
     setPassword((prev) => ({ ...prev, [name]: value }));
+
+    if (name === "new") {
+      setPasswordValidation({
+        minLength: value.length >= 6,
+        hasUpperCase: /[A-Z]/.test(value),
+        hasLowerCase: /[a-z]/.test(value),
+        hasNumber: /[0-9]/.test(value),
+        hasSpecialChar: /[!@#$%^&*(),.?":{}|<>]/.test(value),
+      });
+    }
   };
 
   const handleProfilePictureUpload = async (e) => {
@@ -132,6 +149,22 @@ export default function AnnotatorProfile() {
 
     if (password.new.length < 6) {
       setMessage("Password must be at least 6 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(password.new)) {
+      setMessage("Password must contain at least one uppercase letter");
+      return;
+    }
+    if (!/[a-z]/.test(password.new)) {
+      setMessage("Password must contain at least one lowercase letter");
+      return;
+    }
+    if (!/[0-9]/.test(password.new)) {
+      setMessage("Password must contain at least one number");
+      return;
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password.new)) {
+      setMessage("Password must contain at least one special character");
       return;
     }
 
@@ -353,6 +386,32 @@ export default function AnnotatorProfile() {
               onChange={handlePasswordChange}
               placeholder="Enter new password"
             />
+
+            {password.new && (
+              <div className="profile-password-hints">
+                <div className="profile-hint-title">Password Requirements:</div>
+                <div className={passwordValidation.minLength ? "profile-hint-item is-valid" : "profile-hint-item is-invalid"}>
+                  <span>{passwordValidation.minLength ? "✓" : "x"}</span>
+                  At least 6 characters
+                </div>
+                <div className={passwordValidation.hasUpperCase ? "profile-hint-item is-valid" : "profile-hint-item is-invalid"}>
+                  <span>{passwordValidation.hasUpperCase ? "✓" : "x"}</span>
+                  One uppercase letter (A-Z)
+                </div>
+                <div className={passwordValidation.hasLowerCase ? "profile-hint-item is-valid" : "profile-hint-item is-invalid"}>
+                  <span>{passwordValidation.hasLowerCase ? "✓" : "x"}</span>
+                  One lowercase letter (a-z)
+                </div>
+                <div className={passwordValidation.hasNumber ? "profile-hint-item is-valid" : "profile-hint-item is-invalid"}>
+                  <span>{passwordValidation.hasNumber ? "✓" : "x"}</span>
+                  One number (0-9)
+                </div>
+                <div className={passwordValidation.hasSpecialChar ? "profile-hint-item is-valid" : "profile-hint-item is-invalid"}>
+                  <span>{passwordValidation.hasSpecialChar ? "✓" : "x"}</span>
+                  One special character (!@#$%^&*)
+                </div>
+              </div>
+            )}
           </div>
           <div className="form-group">
             <label className="input-label">Confirm New Password</label>

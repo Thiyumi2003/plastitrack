@@ -6,12 +6,38 @@ const axios = require("axios");
 const pool = require("../db/pool");
 
 const router = express.Router();
+const allowSelfSignedMailTls =
+  process.env.MAIL_ALLOW_SELF_SIGNED === "true" ||
+  (process.env.NODE_ENV !== "production" && process.env.MAIL_ALLOW_SELF_SIGNED !== "false");
+
+const validateStrongPassword = (password) => {
+  const value = String(password || "");
+  if (value.length < 6) {
+    return "Password must be at least 6 characters";
+  }
+  if (!/[A-Z]/.test(value)) {
+    return "Password must contain at least one uppercase letter";
+  }
+  if (!/[a-z]/.test(value)) {
+    return "Password must contain at least one lowercase letter";
+  }
+  if (!/[0-9]/.test(value)) {
+    return "Password must contain at least one number";
+  }
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) {
+    return "Password must contain at least one special character";
+  }
+  return null;
+};
 
 // Configure email transporter for Gmail
 const transporter = nodemailer.createTransport({
   host: process.env.MAIL_HOST || "smtp.gmail.com",
-  port: process.env.MAIL_PORT || 587,
+  port: Number(process.env.MAIL_PORT || 587),
   secure: false,
+  tls: {
+    rejectUnauthorized: !allowSelfSignedMailTls,
+  },
   auth: {
     user: process.env.MAIL_USER,
     pass: (process.env.MAIL_PASS || "").replace(/\s/g, ""),
@@ -21,7 +47,11 @@ const transporter = nodemailer.createTransport({
 // Verify transporter on startup
 transporter.verify((error, success) => {
   if (error) {
-    console.error("✗ Email transporter error:", error.message);
+    if ((error.message || "").includes("self-signed certificate")) {
+      console.warn("! Email transporter TLS warning:", error.message);
+    } else {
+      console.error("✗ Email transporter error:", error.message);
+    }
   } else {
     console.log("✓ Email transporter ready");
   }
@@ -35,6 +65,11 @@ router.post("/register", async (req, res) => {
 
     if (!name || !normalizedEmail || !password || !role) {
       return res.status(400).json({ error: "All fields required" });
+    }
+
+    const passwordError = validateStrongPassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const connection = await pool.getConnection();
@@ -187,9 +222,7 @@ router.post("/logout", async (req, res) => {
         await connection.execute(
           `UPDATE admin_sessions
            SET status = 'completed',
-               end_time = NOW(),
-               logout_time = NOW(),
-               session_duration = ROUND(active_minutes / 60, 2)
+               end_time = NOW()
            WHERE admin_id = ? AND status IN ('active', 'paused')`,
           [userId]
         );
@@ -357,8 +390,19 @@ router.post("/verify-otp", async (req, res) => {
     ]);
     console.log("OTP marked as verified");
 
-    // If this is a password reset OTP, update the password
-    if (otpRecord.purpose === "password_reset" && newPassword) {
+    // If this is a password reset OTP, validate and update the password
+    if (otpRecord.purpose === "password_reset") {
+      if (!newPassword) {
+        await connection.release();
+        return res.status(400).json({ error: "New password is required" });
+      }
+
+      const passwordError = validateStrongPassword(newPassword);
+      if (passwordError) {
+        await connection.release();
+        return res.status(400).json({ error: passwordError });
+      }
+
       console.log("Updating password for:", email);
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       await connection.execute("UPDATE users SET password = ? WHERE email = ?", [

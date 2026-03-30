@@ -716,6 +716,43 @@ select.text-input:disabled {
   transform: none;
 }
 
+.profile-password-hints {
+  margin-top: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.profile-hint-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 6px;
+}
+
+.profile-hint-item {
+  font-size: 12px;
+  line-height: 1.35;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-hint-item:last-child {
+  margin-bottom: 0;
+}
+
+.profile-hint-item.is-valid {
+  color: #34d399;
+}
+
+.profile-hint-item.is-invalid {
+  color: #f87171;
+}
+
 /* Payment Styles */
 .payment-summary {
   display: grid;

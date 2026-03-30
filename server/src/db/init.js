@@ -19,6 +19,7 @@ async function initDatabase() {
 
     // Connect to the database
     await connection.changeUser({ database: dbName });
+    let hasUserRateColumn = false;
 
     // Create users table
     const createTableQuery = `
@@ -150,25 +151,37 @@ async function initDatabase() {
     await ensureColumn("images", "previous_tester_name", "VARCHAR(255) NULL");
     await ensureColumn("images", "previous_feedback", "TEXT NULL");
     
-    // Data migration: Extract model_type from image_name if NULL
+    // Data migration: Normalize model_type from image_name (e.g., PET_01_2300_2400 -> PET_01)
     try {
       const [imagesToFix] = await connection.query(`
-        SELECT id, image_name FROM images WHERE model_type IS NULL OR model_type = ''
+        SELECT id, image_name, model_type
+        FROM images
+        WHERE image_name IS NOT NULL AND image_name <> ''
       `);
       
       if (imagesToFix.length > 0) {
-        console.log(`🔄 Fixing ${imagesToFix.length} images with missing model_type...`);
+        let updatedCount = 0;
+        console.log(`🔄 Normalizing model_type for ${imagesToFix.length} images...`);
         for (const img of imagesToFix) {
-          // Extract model type from image name pattern (e.g., "PET_01_2300_2400" -> "PET")
-          const match = img.image_name.match(/^([A-Z]+)_/);
-          if (match) {
+          const rawName = String(img.image_name || "").trim();
+          const parts = rawName.split("_").filter(Boolean);
+          let normalizedModelType = null;
+
+          if (parts.length >= 2 && /^\d+$/.test(parts[1])) {
+            normalizedModelType = `${parts[0]}_${parts[1]}`;
+          } else if (parts.length >= 1) {
+            normalizedModelType = parts[0];
+          }
+
+          if (normalizedModelType && normalizedModelType !== img.model_type) {
             await connection.query(
               `UPDATE images SET model_type = ? WHERE id = ?`,
-              [match[1], img.id]
+              [normalizedModelType, img.id]
             );
+            updatedCount += 1;
           }
         }
-        console.log(`✓ Fixed model_type for ${imagesToFix.length} images`);
+        console.log(`✓ Normalized model_type for ${updatedCount} images`);
       }
     } catch (err) {
       console.warn("Could not fix model_type:", err.message);
@@ -290,6 +303,37 @@ async function initDatabase() {
     await ensureColumn("users", "last_login", "TIMESTAMP NULL");
     await ensureColumn("users", "profile_picture", "VARCHAR(255) NULL");
 
+    // Consolidate legacy profile image data into profile_picture before cleanup.
+    const [hasProfileImageRows] = await connection.query(
+      `SELECT COUNT(*) as cnt
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'profile_image'`
+    );
+    const hasProfileImageColumn = Number(hasProfileImageRows?.[0]?.cnt || 0) > 0;
+    if (hasProfileImageColumn) {
+      await connection.query(
+        `UPDATE users
+         SET profile_picture = profile_image
+         WHERE (profile_picture IS NULL OR profile_picture = '')
+           AND profile_image IS NOT NULL
+           AND profile_image <> ''`
+      );
+    }
+
+    // Detect whether a legacy unified users.rate column exists from prior migrations.
+    const [hasRateColumnRows] = await connection.query(
+      `SELECT COUNT(*) as cnt
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'rate'`
+    );
+    hasUserRateColumn = Number(hasRateColumnRows?.[0]?.cnt || 0) > 0;
+
+    // Drop deprecated users columns after backfill.
+    await dropColumnIfExists("users", "profile_image");
+    await dropColumnIfExists("users", "hourly_rate");
+    await dropColumnIfExists("users", "annotator_rate");
+    await dropColumnIfExists("users", "tester_rate");
+
     // Create image history table for full image set lifecycle timeline
     const createImageHistoryTableQuery = `
       CREATE TABLE IF NOT EXISTS image_history (
@@ -315,7 +359,6 @@ async function initDatabase() {
     const createTasksTableQuery = `
       CREATE TABLE IF NOT EXISTS tasks (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        task_id VARCHAR(100) UNIQUE,
         image_id INT NOT NULL,
         user_id INT NOT NULL,
         assigned_by INT,
@@ -341,7 +384,23 @@ async function initDatabase() {
       // Ignore if already migrated
     }
 
-    await ensureColumn("tasks", "task_id", "VARCHAR(100) UNIQUE");
+    // task_id is now generated dynamically from id (Task_XX) in queries.
+    await dropColumnIfExists("tasks", "task_id");
+    await ensureColumn("tasks", "task_code", "VARCHAR(100) NULL");
+    try {
+      const [taskCodeUpdate] = await connection.query(
+        `UPDATE tasks
+         SET task_code = CONCAT('Task_', LPAD(id, 2, '0'))
+         WHERE task_code IS NULL
+            OR task_code = ''
+            OR task_code NOT REGEXP '^Task_[0-9]+$'`
+      );
+      if (taskCodeUpdate.affectedRows > 0) {
+        console.log(`✓ Backfilled ${taskCodeUpdate.affectedRows} task codes to readable format`);
+      }
+    } catch (err) {
+      console.warn("Could not backfill task_code values:", err.message);
+    }
     await ensureColumn("tasks", "assigned_by", "INT");
     await ensureColumn("tasks", "notes", "TEXT");
     await ensureColumn("tasks", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
@@ -454,7 +513,6 @@ async function initDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
         card_holder_name VARCHAR(255) NOT NULL,
-        account_name VARCHAR(255) NULL,
         bank_name VARCHAR(120) NULL,
         branch_name VARCHAR(120) NULL,
         masked_card_number VARCHAR(25) NOT NULL,
@@ -471,12 +529,9 @@ async function initDatabase() {
     await connection.query(createPaymentMethodsTableQuery);
     console.log("✓ Payment methods table created or already exists");
 
-    await ensureColumn("payment_methods", "account_name", "VARCHAR(255) NULL AFTER card_holder_name");
-    await ensureColumn("payment_methods", "bank_name", "VARCHAR(120) NULL AFTER account_name");
+    await ensureColumn("payment_methods", "bank_name", "VARCHAR(120) NULL AFTER card_holder_name");
     await ensureColumn("payment_methods", "branch_name", "VARCHAR(120) NULL AFTER bank_name");
-    await connection.query(
-      "UPDATE payment_methods SET account_name = card_holder_name WHERE (account_name IS NULL OR account_name = '')"
-    );
+    await dropColumnIfExists("payment_methods", "account_name");
 
     // Add FK from payments.payment_method_id to payment_methods.id if missing.
     try {
@@ -563,16 +618,17 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS admin_sessions (
         id INT AUTO_INCREMENT PRIMARY KEY,
         admin_id INT NOT NULL,
-        login_time DATETIME NOT NULL,
-        logout_time DATETIME,
-        session_duration DECIMAL(5,2) COMMENT 'Duration in hours',
+        start_time DATETIME NULL COMMENT 'Active work session start time',
+        end_time DATETIME NULL COMMENT 'Active work session end time',
+        last_activity_at DATETIME NULL COMMENT 'Last detected admin activity',
+        last_recorded_at DATETIME NULL COMMENT 'Last minute accrual checkpoint',
+        active_minutes INT NOT NULL DEFAULT 0 COMMENT 'Accrued active minutes in the session',
+        status ENUM('active','paused','completed') NOT NULL DEFAULT 'active' COMMENT 'Current lifecycle state of the work session',
         is_processed BOOLEAN DEFAULT FALSE COMMENT 'Whether hours have been added to work_hours',
-        ip_address VARCHAR(45),
         user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_admin_login (admin_id, login_time),
+        INDEX idx_admin_start (admin_id, start_time),
         INDEX idx_is_processed (is_processed)
       ) COMMENT 'Tracks admin login/logout sessions for automatic hour tracking'
     `;
@@ -610,28 +666,14 @@ async function initDatabase() {
            END`
     );
 
-    await connection.query(
-      `UPDATE admin_sessions
-       SET start_time = COALESCE(start_time, login_time),
-           end_time = COALESCE(end_time, logout_time),
-           last_activity_at = COALESCE(last_activity_at, login_time),
-           last_recorded_at = COALESCE(last_recorded_at, login_time),
-           status = CASE
-             WHEN status IS NOT NULL THEN status
-             WHEN logout_time IS NULL THEN 'active'
-             ELSE 'completed'
-           END,
-           active_minutes = CASE
-             WHEN active_minutes > 0 THEN active_minutes
-             WHEN session_duration IS NOT NULL THEN ROUND(session_duration * 60)
-             ELSE 0
-           END`
-    );
+    // Drop legacy/redundant admin_sessions columns in a MySQL-compatible way.
+    await dropColumnIfExists("admin_sessions", "login_time");
+    await dropColumnIfExists("admin_sessions", "logout_time");
+    await dropColumnIfExists("admin_sessions", "session_duration");
+    await dropColumnIfExists("admin_sessions", "ip_address");
+    await dropColumnIfExists("admin_sessions", "created_at");
 
-    // Add hourly_rate and auto_track_hours columns to users table
-    await ensureColumn("users", "hourly_rate", "DECIMAL(10,2) DEFAULT 1000.00 COMMENT 'Hourly rate for admin payments'");
-    await ensureColumn("users", "annotator_rate", "DECIMAL(10,2) DEFAULT 0 COMMENT 'Rate per object for annotators'");
-    await ensureColumn("users", "tester_rate", "DECIMAL(10,2) DEFAULT 0 COMMENT 'Rate per object for testers'");
+    // Ensure user account controls exist.
     await ensureColumn("users", "auto_track_hours", "BOOLEAN DEFAULT TRUE COMMENT 'Auto-track working hours for admins'");
     await ensureColumn("users", "is_active", "BOOLEAN DEFAULT TRUE COMMENT 'User account active status'");
 
@@ -663,6 +705,22 @@ async function initDatabase() {
     `;
     await connection.query(createUserRatesTableQuery);
     console.log("✓ User rates table created or already exists");
+
+    // If unified users.rate exists from a previous migration, move it into user_rates then drop users.rate.
+    if (hasUserRateColumn) {
+      await connection.query(
+        `INSERT INTO user_rates (user_id, payment_type, custom_rate)
+         SELECT u.id,
+                CASE WHEN u.role = 'admin' THEN 'per_hour' ELSE 'per_object' END,
+                u.rate
+         FROM users u
+         WHERE u.role IN ('admin', 'annotator', 'tester')
+           AND u.rate IS NOT NULL
+           AND u.rate > 0
+         ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
+      );
+      await dropColumnIfExists("users", "rate");
+    }
 
     // Ensure sample users always exist (and keep superadmin credentials recoverable).
     const bcrypt = require("bcryptjs");
@@ -721,52 +779,16 @@ async function initDatabase() {
       role: "melbourne_user",
     });
 
-    // Seed role defaults from existing legacy user rates where possible.
+    // Seed default role rates (first run only).
     await connection.query(
       `INSERT INTO role_rates (role_name, payment_type, default_rate)
        VALUES
-         ('annotator', 'per_object', COALESCE((SELECT ROUND(AVG(annotator_rate), 2) FROM users WHERE role = 'annotator' AND annotator_rate IS NOT NULL), 0)),
-         ('tester', 'per_object', COALESCE((SELECT ROUND(AVG(tester_rate), 2) FROM users WHERE role = 'tester' AND tester_rate IS NOT NULL), 0)),
-         ('admin', 'per_hour', COALESCE((SELECT ROUND(AVG(hourly_rate), 2) FROM users WHERE role = 'admin' AND hourly_rate IS NOT NULL), 1000))
+         ('annotator', 'per_object', 0),
+         ('tester', 'per_object', 0),
+         ('admin', 'per_hour', 1000)
        ON DUPLICATE KEY UPDATE default_rate = default_rate`
     );
     console.log("✓ Role rates seeded (first run only)");
-
-    // Backfill user override rates only when user-specific rate differs from role default.
-    await connection.query(
-      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
-       SELECT u.id, 'per_object', u.annotator_rate
-       FROM users u
-       JOIN role_rates rr ON rr.role_name = 'annotator' AND rr.payment_type = 'per_object'
-       WHERE u.role = 'annotator'
-         AND u.annotator_rate IS NOT NULL
-         AND u.annotator_rate <> rr.default_rate
-       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
-    );
-
-    await connection.query(
-      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
-       SELECT u.id, 'per_object', u.tester_rate
-       FROM users u
-       JOIN role_rates rr ON rr.role_name = 'tester' AND rr.payment_type = 'per_object'
-       WHERE u.role = 'tester'
-         AND u.tester_rate IS NOT NULL
-         AND u.tester_rate <> rr.default_rate
-       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
-    );
-
-    await connection.query(
-      `INSERT INTO user_rates (user_id, payment_type, custom_rate)
-       SELECT u.id, 'per_hour', u.hourly_rate
-       FROM users u
-       JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
-       WHERE u.role = 'admin'
-         AND u.hourly_rate IS NOT NULL
-         AND u.hourly_rate <> rr.default_rate
-       ON DUPLICATE KEY UPDATE custom_rate = VALUES(custom_rate), updated_at = CURRENT_TIMESTAMP`
-    );
-    console.log("✓ User rate overrides backfilled from existing user records");
-
     // Backfill completed_date for existing completed tasks
     try {
       const [updated] = await connection.query(

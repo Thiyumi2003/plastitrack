@@ -39,6 +39,7 @@ import MelbourneAdminDashboard from "./pages/melbourne/MelbourneAdminDashboard";
 import MelbourneManageImages from "./pages/melbourne/MelbourneManageImages";
 import MelbourneReports from "./pages/melbourne/MelbourneReports";
 import MelbourneLayout from "./pages/melbourne/MelbourneLayout";
+import SystemMessages from "./components/SystemMessages";
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRole }) {
@@ -80,6 +81,7 @@ function ProtectedRoute({ children, requiredRole }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <SystemMessages />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
