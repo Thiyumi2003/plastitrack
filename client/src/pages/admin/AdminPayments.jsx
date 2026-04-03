@@ -21,6 +21,43 @@ export default function AdminPayments() {
     Authorization: `Bearer ${localStorage.getItem("token")}`,
   });
 
+  const isPaidEntry = (payment) => {
+    const statusText = String(payment?.status || payment?.description || "").toLowerCase();
+    return statusText.includes("paid") && !statusText.includes("pending");
+  };
+
+  const historyRows = paymentData?.history || [];
+  const paidHistoryRows = historyRows.filter(isPaidEntry);
+
+  const paidAmountFromHistory = paidHistoryRows.reduce(
+    (sum, row) => sum + Number(row?.amount || 0),
+    0
+  );
+  const paidHoursFromHistory = paidHistoryRows.reduce(
+    (sum, row) => sum + Number(row?.hours || 0),
+    0
+  );
+
+  // Backward-safe display: if backend still sends mixed totals, derive paid-only values from history.
+  const shouldUseHistoryDerived =
+    paymentData &&
+    paymentData.pendingAmount === undefined &&
+    historyRows.some((row) => !isPaidEntry(row));
+
+  const displayTotalPaid = shouldUseHistoryDerived
+    ? paidAmountFromHistory
+    : Number(paymentData?.totalEarned || 0);
+  const displayPaidHours = shouldUseHistoryDerived
+    ? paidHoursFromHistory
+    : Number(paymentData?.totalHours || 0);
+  const displayPerHourRate = displayPaidHours > 0
+    ? displayTotalPaid / displayPaidHours
+    : Number(paymentData?.perHourRate || 0);
+  const displayMonthlyPaid = shouldUseHistoryDerived
+    ? paidAmountFromHistory
+    : Number(paymentData?.monthlyTotal || 0);
+  const displayPendingAmount = Number(paymentData?.pendingAmount || 0);
+
   useEffect(() => {
     const fetchPayments = async () => {
       try {
@@ -129,24 +166,28 @@ export default function AdminPayments() {
         <>
             <div className="payment-summary">
               <div className="payment-card earned">
-                <div className="payment-value">Rs. {paymentData.totalEarned || 0}</div>
-                <div className="payment-label">Total Earned</div>
+                <div className="payment-value">Rs. {displayTotalPaid.toLocaleString()}</div>
+                <div className="payment-label">Total Paid</div>
               </div>
               <div className="payment-card hours">
-                <div className="payment-value">{paymentData.totalHours || 0}h</div>
-                <div className="payment-label">Total hours Worked</div>
+                <div className="payment-value">{displayPaidHours.toFixed(2)}h</div>
+                <div className="payment-label">Paid Hours</div>
               </div>
               <div className="payment-card rate">
-                <div className="payment-value">Rs. {paymentData.perHourRate || 10}</div>
-                <div className="payment-label">Per hour</div>
+                <div className="payment-value">Rs. {displayPerHourRate.toFixed(2)}</div>
+                <div className="payment-label">Paid Avg Rate / Hour</div>
+              </div>
+              <div className="payment-card">
+                <div className="payment-value">Rs. {displayPendingAmount.toLocaleString()}</div>
+                <div className="payment-label">Pending / Not Paid Yet</div>
               </div>
             </div>
 
             <div className="payment-history">
-              <h3>Payment History Overviow</h3>
+              <h3>Paid Payment History</h3>
               <div className="history-timeline">
                 {paymentData.history && paymentData.history.length > 0 ? (
-                  paymentData.history.map((payment, index) => (
+                  paidHistoryRows.map((payment, index) => (
                     <div key={index} className="history-item">
                       <div className="history-date">
                         <div className="date-value">{new Date(payment.date).toLocaleDateString()}</div>
@@ -154,18 +195,18 @@ export default function AdminPayments() {
                       </div>
                       <div className="history-amount">
                         <div className="amount-value">Rs. {payment.amount?.toLocaleString()}</div>
-                        <div className="amount-label">{payment.hours || 0} scm paid</div>
+                        <div className="amount-label">{payment.hours || 0} hours paid</div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="no-data">No payment history available</p>
+                  <p className="no-data">No paid payment history available yet</p>
                 )}
               </div>
 
-              {paymentData.monthlyTotal && (
+              {displayMonthlyPaid > 0 && (
                 <div className="monthly-total">
-                  <div className="total-value">Rs. {paymentData.monthlyTotal?.toLocaleString()}</div>
+                  <div className="total-value">Rs. {displayMonthlyPaid.toLocaleString()}</div>
                   <div className="total-label">Total Paid This Month</div>
                 </div>
               )}
@@ -260,7 +301,7 @@ export default function AdminPayments() {
                         <td>{m.bank_name || "-"}</td>
                         <td>{m.branch_name || "-"}</td>
                         <td>{m.card_holder_name || "-"}</td>
-                        <td>{m.masked_card_number}</td>
+                        <td>{m.account_number || m.masked_card_number}</td>
                         <td>{m.is_default ? "Yes" : "No"}</td>
                         <td>
                           {!m.is_default && (

@@ -7,6 +7,7 @@ import { AnnotatorPerformanceReport } from "../../components/reports/AnnotatorPe
 import { TesterReviewReport } from "../../components/reports/TesterReviewReport";
 import { PaymentReport } from "../../components/reports/PaymentReport";
 import { ImageDetailsReport } from "../../components/reports/ImageDetailsReport";
+import PaymentEligibility from "../admin/PaymentEligibility";
 import "../admin/admin.css";
 
 export default function MelbourneReports() {
@@ -40,6 +41,12 @@ export default function MelbourneReports() {
       component: ImageDetailsReport,
     },
     {
+      id: "payment-eligibility",
+      label: "Payment Eligible",
+      icon: "",
+      component: PaymentEligibility,
+    },
+    {
       id: "payment",
       label: "Payment Report",
       icon: "Payment",
@@ -57,11 +64,12 @@ export default function MelbourneReports() {
 
     try {
       setIsDownloadingAll(true);
-      const [summaryRes, annotatorRes, testerRes, imageRes, paymentRes] = await Promise.all([
+      const [summaryRes, annotatorRes, testerRes, imageRes, paymentEligibilityRes, paymentRes] = await Promise.all([
         axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", { headers }),
         axios.get("http://localhost:5000/api/dashboard/reports/annotator-performance", { headers }),
         axios.get("http://localhost:5000/api/dashboard/reports/tester-review", { headers }),
         axios.get("http://localhost:5000/api/dashboard/reports/image-details", { headers }),
+        axios.get("http://localhost:5000/api/dashboard/admin/payment-eligibility", { headers }),
         axios.get("http://localhost:5000/api/dashboard/reports/payment-report", { headers }),
       ]);
 
@@ -69,7 +77,16 @@ export default function MelbourneReports() {
       const annotatorData = annotatorRes.data || {};
       const testerData = testerRes.data || {};
       const imageData = imageRes.data || {};
+      const paymentEligibilityData = paymentEligibilityRes.data || {};
       const paymentData = paymentRes.data || {};
+
+      const paymentEligibilityTasks = paymentEligibilityData.tasks || [];
+      const paymentEligibilitySummary = {
+        total: paymentEligibilityTasks.length,
+        eligible: paymentEligibilityTasks.filter((task) => task.eligible_for_payment).length,
+        notEligible: paymentEligibilityTasks.filter((task) => !task.eligible_for_payment).length,
+        reassigned: paymentEligibilityTasks.filter((task) => Number(task.total_assignments || 0) > 1).length,
+      };
 
       const reportsForPdf = [
         {
@@ -198,6 +215,45 @@ export default function MelbourneReports() {
                 "Annotation Completed": formatDate(img.annotationCompletedDate),
                 "Testing Assigned": formatDate(img.testingAssignedDate),
                 "Testing Completed": formatDate(img.testingCompletedDate),
+              })),
+            },
+          ],
+        },
+        {
+          title: "Payment Eligible Report",
+          filters: paymentEligibilityData.filters || {},
+          kpis: [
+            { label: "Total Records", value: paymentEligibilitySummary.total },
+            { label: "Eligible", value: paymentEligibilitySummary.eligible },
+            { label: "Not Eligible", value: paymentEligibilitySummary.notEligible },
+            { label: "Reassigned Cases", value: paymentEligibilitySummary.reassigned },
+          ],
+          tables: [
+            {
+              title: "Eligibility Details",
+              columns: [
+                "Image ID",
+                "Image Name",
+                "Annotator Name",
+                "Annotator Email",
+                "Status",
+                "Assigned Date",
+                "Completed Date",
+                "Assigned By",
+                "Total Assignments",
+                "Payment Eligible",
+              ],
+              rows: paymentEligibilityTasks.map((task) => ({
+                "Image ID": task.image_id,
+                "Image Name": task.image_name,
+                "Annotator Name": task.annotator_name,
+                "Annotator Email": task.annotator_email,
+                Status: task.status,
+                "Assigned Date": task.assigned_date ? new Date(task.assigned_date).toLocaleString() : "-",
+                "Completed Date": task.completed_date ? new Date(task.completed_date).toLocaleString() : "-",
+                "Assigned By": task.assigned_by_name || "-",
+                "Total Assignments": Number(task.total_assignments || 0),
+                "Payment Eligible": task.eligible_for_payment ? "ELIGIBLE" : "NOT ELIGIBLE",
               })),
             },
           ],

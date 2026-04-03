@@ -3,11 +3,12 @@ import axios from "axios";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import logo from "../../images/logo (2).png";
+import { showAppConfirm } from "../../utils/appMessages";
 import "./superadmin.css";
 
 export default function ManagePayments() {
+  const supportedTabs = ["model", "pending", "ready", "transfer", "history"];
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
-  const [paymentOverview, setPaymentOverview] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState(null);
   const [modelPayments, setModelPayments] = useState(null);
   const [modelPaymentDetails, setModelPaymentDetails] = useState([]);
@@ -33,7 +34,7 @@ export default function ManagePayments() {
   const [approvalStatus, setApprovalStatus] = useState({ type: "", message: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("model");
   const [eligibleModels, setEligibleModels] = useState([]);
   const [eligibleUsers, setEligibleUsers] = useState({ modelSummary: null, annotators: [], testers: [] });
   const [adminUsers, setAdminUsers] = useState([]);
@@ -57,6 +58,11 @@ export default function ManagePayments() {
   const [sendingNotificationId, setSendingNotificationId] = useState(null);
   const [sentReceiptNotifications, setSentReceiptNotifications] = useState({});
   const [paymentRoleTab, setPaymentRoleTab] = useState("all");
+  const [transferFilters, setTransferFilters] = useState({
+    role: "all",
+    bank: "all",
+    status: "all",
+  });
   const [adminWorkSummary, setAdminWorkSummary] = useState({
     totalWorkedHours: 0,
     paidHours: 0,
@@ -90,6 +96,12 @@ export default function ManagePayments() {
     fetchSuperAdminMethods();
     fetchPendingWorkHours();
   }, []);
+
+  useEffect(() => {
+    if (!supportedTabs.includes(activeTab)) {
+      setActiveTab("model");
+    }
+  }, [activeTab]);
 
   const fetchPendingWorkHours = async () => {
     try {
@@ -133,8 +145,7 @@ export default function ManagePayments() {
     try {
       setLoading(true);
       setError("");
-      const [overviewRes, historyRes, modelRes, modelsRes, adminsRes, modelDetailsRes, adminDetailsRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/payments", { headers: getAuthHeader() }),
+      const [historyRes, modelRes, modelsRes, adminsRes, modelDetailsRes, adminDetailsRes] = await Promise.all([
         axios.get("http://localhost:5000/api/dashboard/payment-history", {
           headers: getAuthHeader(),
         }),
@@ -156,8 +167,6 @@ export default function ManagePayments() {
         }),
       ]);
 
-      console.log("Payment data loaded:", { overviewRes: overviewRes.data, historyRes: historyRes.data, modelRes: modelRes.data });
-      setPaymentOverview(overviewRes.data);
       setPaymentHistory(historyRes.data);
       setModelPayments(modelRes.data);
       setEligibleModels(modelsRes.data?.models || []);
@@ -559,7 +568,7 @@ export default function ManagePayments() {
         type: "error",
         message: "Select or add a default payment card before paying",
       });
-      setActiveTab("methods");
+      setActiveTab("ready");
       return;
     }
 
@@ -643,7 +652,7 @@ export default function ManagePayments() {
         message: "Select or add a default payment card before paying",
       });
       closePayDialog();
-      setActiveTab("methods");
+      setActiveTab("ready");
       return;
     }
 
@@ -708,6 +717,42 @@ export default function ManagePayments() {
       });
     } finally {
       setSendingNotificationId(null);
+    }
+  };
+
+  const handleManualMarkPaid = async (payment) => {
+    if (!payment?.id) return;
+
+    const confirmed = await showAppConfirm(
+      `Mark payment as paid for ${getPaymentDisplayName(payment)}?`,
+      { confirmText: "Mark Paid", tone: "warning" }
+    );
+    if (!confirmed) return;
+
+    try {
+      setPayingPaymentId(payment.id);
+      await axios.post(
+        `http://localhost:5000/api/dashboard/payments/${payment.id}/pay`,
+        {
+          payment_method_id: payment.recipient_payment_method_id ? Number(payment.recipient_payment_method_id) : null,
+          payment_method: "manual_bank_transfer",
+        },
+        { headers: getAuthHeader() }
+      );
+
+      setApprovalStatus({
+        type: "success",
+        message: "Payment marked as paid (manual bank transfer)",
+      });
+      fetchPaymentData();
+      setActiveTab("history");
+    } catch (err) {
+      setApprovalStatus({
+        type: "error",
+        message: err.response?.data?.error || "Failed to mark payment as paid",
+      });
+    } finally {
+      setPayingPaymentId(null);
     }
   };
 
@@ -804,6 +849,14 @@ export default function ManagePayments() {
 
   const getModelTypeDisplay = (payment) => {
     return payment?.model_type_display || payment?.model_type || "-";
+  };
+
+  const getRecipientBankName = (payment) => {
+    return payment?.recipient_bank_name || "-";
+  };
+
+  const getRecipientAccount = (payment) => {
+    return payment?.recipient_account_number || "-";
   };
 
   const getModelCardDisplay = (model) => {
@@ -1230,10 +1283,18 @@ export default function ManagePayments() {
     return `${String(method.expiry_month).padStart(2, "0")}/${String(method.expiry_year).slice(-2)}`;
   };
 
+  const getMethodPrimaryValue = (method) => {
+    if (!method) return "****";
+    if (isBankMethod(method)) {
+      return method.account_number || method.masked_card_number || "****";
+    }
+    return method.masked_card_number || "****";
+  };
+
   const getMethodOptionLabel = (method) => {
     if (!method) return "";
     const type = getMethodBrandLabel(method);
-    const primary = method.masked_card_number || "****";
+    const primary = getMethodPrimaryValue(method);
     const owner = getMethodOwnerLabel(method);
     const secondary = getMethodSecondaryValue(method);
     return `${type} ${primary} (${owner}${secondary && secondary !== "-" ? ` • ${secondary}` : ""})`;
@@ -1243,21 +1304,41 @@ export default function ManagePayments() {
   const defaultMethod = superAdminMethods.find((m) => m.is_default) || selectedMethod || null;
   const selectedMethodBrand = getMethodBrandLabel(selectedMethod);
   const selectedMethodHolder = getMethodOwnerLabel(selectedMethod) || methodForm.cardHolderName || "CARD HOLDER";
-  const selectedMethodMasked = selectedMethod?.masked_card_number || "**** **** **** ****";
+  const selectedMethodMasked = getMethodPrimaryValue(selectedMethod) || "**** **** **** ****";
   const selectedMethodExpiry = getMethodSecondaryValue(selectedMethod);
-  const defaultMethodMasked = defaultMethod?.masked_card_number || "No card";
+  const defaultMethodMasked = getMethodPrimaryValue(defaultMethod) || "No card";
   const defaultMethodHolder = getMethodOwnerLabel(defaultMethod) || "Add a payment card";
   const defaultMethodBrand = getMethodBrandLabel(defaultMethod);
   const payDialogRecipientMethod = payDialog.recipientMethods.find(
     (method) => String(method.id) === String(payDialog.selectedRecipientMethodId)
   ) || null;
-  const paidRecentTransactions = (paymentOverview?.recentTransactions || []).filter(
-    (payment) => payment?.status === "paid"
-  );
   const allHistoryPayments = paymentHistory?.history || [];
   const roleFilteredPayments = allHistoryPayments.filter((payment) => {
     if (paymentRoleTab === "all") return true;
     return String(payment.user_role || "").toLowerCase() === paymentRoleTab;
+  });
+  const bankFilterOptions = Array.from(
+    new Set(
+      allHistoryPayments
+        .map((payment) => String(payment?.recipient_bank_name || "").trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  const transferListPayments = allHistoryPayments.filter((payment) => {
+    const role = String(payment?.user_role || "").toLowerCase();
+    const bank = String(payment?.recipient_bank_name || "").trim();
+    const status = String(payment?.status || "").toLowerCase();
+
+    if (transferFilters.role !== "all" && role !== transferFilters.role) {
+      return false;
+    }
+    if (transferFilters.bank !== "all" && bank !== transferFilters.bank) {
+      return false;
+    }
+    if (transferFilters.status !== "all" && status !== transferFilters.status) {
+      return false;
+    }
+    return true;
   });
   const adminWorkProgress = adminWorkSummary.totalWorkedHours > 0
     ? Math.min(100, (adminWorkSummary.paidHours / adminWorkSummary.totalWorkedHours) * 100)
@@ -1265,18 +1346,113 @@ export default function ManagePayments() {
   const pendingObjectPayments = pendingPayments.filter(
     (payment) => payment?.user_role !== "admin"
   );
+  const pendingAdminPayments = pendingPayments.filter(
+    (payment) => payment?.user_role === "admin"
+  );
   const readyObjectPayments = readyPayments.filter(
     (payment) => payment?.user_role !== "admin"
   );
   const readyAdminPayments = readyPayments.filter(
     (payment) => payment?.user_role === "admin"
   );
-  const totalPendingApprovals = pendingObjectPayments.length + pendingWorkHours.length;
+  const totalPendingApprovals = pendingObjectPayments.length + pendingAdminPayments.length + pendingWorkHours.length;
+  const safeActiveTab = supportedTabs.includes(activeTab) ? activeTab : "model";
+
+  const downloadBankWiseTransferList = () => {
+    if (transferFilters.bank === "all") {
+      setApprovalStatus({
+        type: "error",
+        message: "Select a bank to download a bank-wise transfer list",
+      });
+      return;
+    }
+
+    if (!transferListPayments.length) {
+      setApprovalStatus({
+        type: "error",
+        message: "No records found for selected bank/filter",
+      });
+      return;
+    }
+
+    const safeBank = String(transferFilters.bank)
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "bank";
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `bank_transfer_${safeBank}_${stamp}.pdf`;
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const headers = ["User", "Role", "Bank", "Branch", "Account No", "Holder Name", "Amount", "Status"];
+    const colWidths = [40, 20, 30, 28, 32, 36, 20, 24];
+    const startX = 8;
+    const lineHeight = 7;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    let y = 14;
+
+    const drawHeader = () => {
+      doc.setFontSize(14);
+      doc.text("PlastiTrack - Bank Transfer List", startX, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.text(`Bank: ${transferFilters.bank}   Date: ${stamp}`, startX, y);
+      y += 6;
+
+      doc.setFontSize(9);
+      let x = startX;
+      headers.forEach((header, idx) => {
+        doc.rect(x, y - 4, colWidths[idx], lineHeight);
+        doc.text(header, x + 1.5, y);
+        x += colWidths[idx];
+      });
+      y += lineHeight;
+    };
+
+    drawHeader();
+
+    transferListPayments.forEach((payment) => {
+      if (y > pageHeight - 10) {
+        doc.addPage();
+        y = 14;
+        drawHeader();
+      }
+
+      const row = [
+        getPaymentDisplayName(payment),
+        String(payment.user_role || "-").toUpperCase(),
+        getRecipientBankName(payment),
+        payment?.recipient_branch_name || "-",
+        getRecipientAccount(payment),
+        payment?.recipient_account_holder || "-",
+        Number(payment.amount || 0).toFixed(2),
+        getStatusLabel(payment.status),
+      ];
+
+      let x = startX;
+      row.forEach((cell, idx) => {
+        doc.rect(x, y - 4, colWidths[idx], lineHeight);
+        doc.text(String(cell).slice(0, 26), x + 1.5, y);
+        x += colWidths[idx];
+      });
+
+      y += lineHeight;
+    });
+
+    doc.save(fileName);
+
+    setApprovalStatus({
+      type: "success",
+      message: `Downloaded bank-wise PDF for ${transferFilters.bank}`,
+    });
+  };
 
   return (
     <>
       <div className="dashboard-header">
         <h1>Manage Payments</h1>
+      </div>
+
+      <div className="form-hint" style={{ marginBottom: 14 }}>
+        Role-based payroll workflow: users provide bank details, payments are calculated by approved work (annotator/tester by objects, admin by approved hours), Super Admin approves, performs manual bank transfer, then marks as paid.
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
@@ -1286,91 +1462,35 @@ export default function ManagePayments() {
         </div>
       )}
 
-        {/* Payment Overview Cards */}
-        <div className="payment-cards-section">
-          <div className="payment-card">
-            <div className="payment-icon">₨</div>
-            <div className="payment-content">
-              <div className="payment-value">
-                ₨ {paymentOverview?.totalPaidThisMonth?.toLocaleString() || 0}
-              </div>
-              <div className="payment-label">Total Paid This Month</div>
-            </div>
-          </div>
-
-          <div className="payment-card">
-            <div className="payment-icon">📦</div>
-            <div className="payment-content">
-              <div className="payment-value">{paymentOverview?.modelsReadyForPayment || 0}</div>
-              <div className="payment-label">Models Ready for Payment</div>
-            </div>
-          </div>
-
-          <div className="payment-card">
-            <div className="payment-icon">⏳</div>
-            <div className="payment-content">
-              <div className="payment-value">
-                ₨ {paymentOverview?.pendingAdminPayment?.toLocaleString() || 0}
-              </div>
-              <div className="payment-label">Pending Admin Payment</div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="payment-card payment-card-button"
-            onClick={() => {
-              setActiveTab("methods");
-              if (defaultMethod?.id) {
-                setSelectedMethodId(defaultMethod.id);
-              }
-            }}
-          >
-            <div className="payment-icon">💳</div>
-            <div className="payment-content">
-              <div className="payment-method-preview">{defaultMethodMasked}</div>
-              <div className="payment-label">Default Withdrawal Card</div>
-              <div className="payment-card-note">{defaultMethodBrand} • {defaultMethodHolder}</div>
-              <div className="payment-card-note">Click to change card</div>
-            </div>
-          </button>
-        </div>
-
         {/* Tabs */}
         <div className="tabs-section">
           <div className="tabs">
             <button
-              className={`tab ${activeTab === "overview" ? "active" : ""}`}
-              onClick={() => setActiveTab("overview")}
-            >
-              Payment Overview
-            </button>
-            <button
-              className={`tab ${activeTab === "pending" ? "active" : ""}`}
-              onClick={() => setActiveTab("pending")}
-            >
-              Pending Approvals ({totalPendingApprovals})
-            </button>
-            <button
-              className={`tab ${activeTab === "ready" ? "active" : ""}`}
-              onClick={() => setActiveTab("ready")}
-            >
-              Ready To Pay ({readyPayments.length})
-            </button>
-            <button
-              className={`tab ${activeTab === "model" ? "active" : ""}`}
+              className={`tab ${safeActiveTab === "model" ? "active" : ""}`}
               onClick={() => setActiveTab("model")}
             >
               Model Based Payments
             </button>
             <button
-              className={`tab ${activeTab === "methods" ? "active" : ""}`}
-              onClick={() => setActiveTab("methods")}
+              className={`tab ${safeActiveTab === "pending" ? "active" : ""}`}
+              onClick={() => setActiveTab("pending")}
             >
-              Payment Methods
+              Pending Approvals ({totalPendingApprovals})
             </button>
             <button
-              className={`tab ${activeTab === "history" ? "active" : ""}`}
+              className={`tab ${safeActiveTab === "ready" ? "active" : ""}`}
+              onClick={() => setActiveTab("ready")}
+            >
+              Ready For Bank Transfer ({readyPayments.length})
+            </button>
+            <button
+              className={`tab ${safeActiveTab === "transfer" ? "active" : ""}`}
+              onClick={() => setActiveTab("transfer")}
+            >
+              Bank Transfer List
+            </button>
+            <button
+              className={`tab ${safeActiveTab === "history" ? "active" : ""}`}
               onClick={() => setActiveTab("history")}
             >
               Payment History
@@ -1379,94 +1499,7 @@ export default function ManagePayments() {
         </div>
 
         {/* Tab Content */}
-        {activeTab === "overview" && (
-          <div>
-            <div className="table-container" style={{ marginBottom: 20 }}>
-              <h3>Withdrawal Methods</h3>
-              <table className="payments-table">
-                <thead>
-                  <tr>
-                    <th>Payment Method</th>
-                    <th>Count</th>
-                    <th>Total Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paymentOverview?.withdrawalMethods?.map((method, idx) => (
-                    <tr key={idx}>
-                      <td className="method-name">{method.payment_method || "Bank Transfer"}</td>
-                      <td>{method.count || 0}</td>
-                      <td>₨ {(method.total || 0).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {!paymentOverview?.withdrawalMethods?.length && (
-                    <tr>
-                      <td colSpan="3" className="no-data">
-                        No payment data available
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="table-container">
-              <h3>Recent Transactions</h3>
-              <table className="payments-table">
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Role</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Method</th>
-                    <th>Date</th>
-                    <th>Receipt</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paidRecentTransactions.map((payment) => (
-                    <tr key={payment.id}>
-                      <td>{payment.user_name || "Unknown"}</td>
-                      <td>{payment.user_role || "-"}</td>
-                      <td>{formatCurrency(payment.amount || 0)}</td>
-                      <td>
-                        <span className={`status-badge status-${getStatusClass(payment.status)}`}>
-                          {getStatusLabel(payment.status)}
-                        </span>
-                      </td>
-                      <td>{payment.payment_method || "-"}</td>
-                      <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
-                      <td>
-                        {canDownloadReceipt(payment) ? (
-                          <button
-                            className="btn-secondary"
-                            type="button"
-                            onClick={() => downloadReceipt(payment.id)}
-                            disabled={downloadingReceiptId === payment.id}
-                          >
-                            {downloadingReceiptId === payment.id ? "Downloading..." : "Download Receipt"}
-                          </button>
-                        ) : (
-                          <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Available after payment</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {!paidRecentTransactions.length && (
-                    <tr>
-                      <td colSpan="7" className="no-data">
-                        No paid transactions available
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "pending" && (
+        {safeActiveTab === "pending" && (
           <div className="table-container">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
               <h3 style={{ margin: 0 }}>Pending Object-Based Payment Approvals (Annotator / Tester)</h3>
@@ -1493,7 +1526,8 @@ export default function ManagePayments() {
                   <th>Amount</th>
                   <th>Model Type</th>
                   <th>Objects</th>
-                  <th>Method</th>
+                  <th>Bank</th>
+                  <th>Account No</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -1501,7 +1535,7 @@ export default function ManagePayments() {
               <tbody>
                 {pendingObjectPayments.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="no-data">
+                    <td colSpan="8" className="no-data">
                       No pending annotator/tester payments
                     </td>
                   </tr>
@@ -1512,7 +1546,8 @@ export default function ManagePayments() {
                       <td><strong>₨ {(payment.amount || 0).toLocaleString()}</strong></td>
                       <td>{getModelTypeDisplay(payment)}</td>
                       <td>{payment.objects_count || 0}</td>
-                      <td>{payment.payment_method || "-"}</td>
+                      <td>{getRecipientBankName(payment)}</td>
+                      <td>{getRecipientAccount(payment)}</td>
                       <td>{new Date(payment.created_at).toLocaleDateString()}</td>
                       <td>
                         <div style={{ display: "flex", gap: "5px" }}>
@@ -1628,10 +1663,10 @@ export default function ManagePayments() {
           </div>
         )}
 
-        {activeTab === "ready" && (
+        {safeActiveTab === "ready" && (
           <div>
             <div className="table-container" style={{ marginBottom: 18 }}>
-              <h3>Ready To Pay - Annotator / Tester</h3>
+              <h3>Ready For Bank Transfer - Annotator / Tester</h3>
               <table className="payments-table">
                 <thead>
                   <tr>
@@ -1640,7 +1675,8 @@ export default function ManagePayments() {
                     <th>Model Type</th>
                     <th>Objects</th>
                     <th>Status</th>
-                    <th>Method</th>
+                    <th>Bank</th>
+                    <th>Account No</th>
                     <th>Approved Date</th>
                     <th>Action</th>
                   </tr>
@@ -1648,8 +1684,8 @@ export default function ManagePayments() {
                 <tbody>
                   {readyObjectPayments.length === 0 ? (
                     <tr>
-                      <td colSpan="8" className="no-data">
-                        No annotator/tester payments ready to pay
+                      <td colSpan="9" className="no-data">
+                        No annotator/tester payments ready for bank transfer
                       </td>
                     </tr>
                   ) : (
@@ -1664,16 +1700,17 @@ export default function ManagePayments() {
                             {payment.status === "approved" ? "Ready to Pay" : getStatusLabel(payment.status)}
                           </span>
                         </td>
-                        <td>{payment.payment_method || "-"}</td>
+                        <td>{getRecipientBankName(payment)}</td>
+                        <td>{getRecipientAccount(payment)}</td>
                         <td>{payment.approved_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-"}</td>
                         <td>
                           <button
                             className="btn-primary"
                             type="button"
-                            onClick={() => openPayDialog(payment)}
+                            onClick={() => handleManualMarkPaid(payment)}
                             disabled={payingPaymentId === payment.id}
                           >
-                            {payingPaymentId === payment.id ? "Paying..." : "Pay"}
+                            {payingPaymentId === payment.id ? "Updating..." : "Mark Paid"}
                           </button>
                         </td>
                       </tr>
@@ -1684,7 +1721,7 @@ export default function ManagePayments() {
             </div>
 
             <div className="table-container">
-              <h3>Ready To Pay - Admin Work Hours</h3>
+              <h3>Ready For Bank Transfer - Admin Work Hours</h3>
               <table className="payments-table">
                 <thead>
                   <tr>
@@ -1701,7 +1738,7 @@ export default function ManagePayments() {
                   {readyAdminPayments.length === 0 ? (
                     <tr>
                       <td colSpan="7" className="no-data">
-                        No admin payments ready to pay
+                        No admin payments ready for bank transfer
                       </td>
                     </tr>
                   ) : (
@@ -1721,10 +1758,10 @@ export default function ManagePayments() {
                           <button
                             className="btn-primary"
                             type="button"
-                            onClick={() => openPayDialog(payment)}
+                            onClick={() => handleManualMarkPaid(payment)}
                             disabled={payingPaymentId === payment.id}
                           >
-                            {payingPaymentId === payment.id ? "Paying..." : "Pay"}
+                            {payingPaymentId === payment.id ? "Updating..." : "Mark Paid"}
                           </button>
                         </td>
                       </tr>
@@ -1736,7 +1773,7 @@ export default function ManagePayments() {
           </div>
         )}
 
-        {activeTab === "model" && (
+        {safeActiveTab === "model" && (
           <div className="model-payments-section">
             <h3>Payment by Model Completion</h3>
             <p className="section-hint">Payments are released only after all image sets of a model are finalized.</p>
@@ -1855,7 +1892,7 @@ export default function ManagePayments() {
           </div>
         )}
 
-        {activeTab === "methods" && (
+        {safeActiveTab === "methods" && (
           <div className="table-container">
             <h3>Select Payment Method</h3>
 
@@ -1872,7 +1909,7 @@ export default function ManagePayments() {
                       <span>{getMethodBrandLabel(method)}</span>
                       {method.is_default && <small>Default</small>}
                     </div>
-                    <div className="pm-card-number">{method.masked_card_number}</div>
+                    <div className="pm-card-number">{getMethodPrimaryValue(method)}</div>
                     <div className="pm-card-bottom">
                       <span>{getMethodOwnerLabel(method)}</span>
                       <span>{getMethodSecondaryValue(method)}</span>
@@ -2064,7 +2101,96 @@ export default function ManagePayments() {
           </div>
         )}
 
-        {activeTab === "history" && (
+        {safeActiveTab === "transfer" && (
+          <div className="table-container" style={{ marginBottom: 18 }}>
+            <h3 style={{ marginTop: 0 }}>Bank Transfer List</h3>
+            <div className="form-hint" style={{ marginBottom: 10 }}>
+              This list supports manual payroll transfers through bank processing.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+              <select
+                value={transferFilters.role}
+                onChange={(e) => setTransferFilters((prev) => ({ ...prev, role: e.target.value }))}
+              >
+                <option value="all">All Roles</option>
+                <option value="annotator">Annotator</option>
+                <option value="tester">Tester</option>
+                <option value="admin">Admin</option>
+              </select>
+
+              <select
+                value={transferFilters.bank}
+                onChange={(e) => setTransferFilters((prev) => ({ ...prev, bank: e.target.value }))}
+              >
+                <option value="all">All Banks</option>
+                {bankFilterOptions.map((bank) => (
+                  <option key={bank} value={bank}>{bank}</option>
+                ))}
+              </select>
+
+              <select
+                value={transferFilters.status}
+                onChange={(e) => setTransferFilters((prev) => ({ ...prev, status: e.target.value }))}
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending_calculation">Pending Calculation</option>
+                <option value="pending_approval">Pending Approval</option>
+                <option value="approved">Approved</option>
+                <option value="ready_to_pay">Ready For Transfer</option>
+                <option value="paid">Paid</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+              <button className="btn-primary" type="button" onClick={downloadBankWiseTransferList}>
+                Download Bank-Wise PDF
+              </button>
+            </div>
+
+            <table className="payments-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Bank</th>
+                  <th>Branch</th>
+                  <th>Account No</th>
+                  <th>Holder Name</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transferListPayments.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="no-data">No records for current filters</td>
+                  </tr>
+                ) : (
+                  transferListPayments.map((payment) => (
+                    <tr key={`transfer-${payment.id}`}>
+                      <td>{getPaymentDisplayName(payment)}</td>
+                      <td>{String(payment.user_role || "-").toUpperCase()}</td>
+                      <td>{getRecipientBankName(payment)}</td>
+                      <td>{payment?.recipient_branch_name || "-"}</td>
+                      <td>{getRecipientAccount(payment)}</td>
+                      <td>{payment?.recipient_account_holder || "-"}</td>
+                      <td>{formatCurrency(payment.amount || 0)}</td>
+                      <td>
+                        <span className={`status-badge status-${getStatusClass(payment.status)}`}>
+                          {getStatusLabel(payment.status)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {safeActiveTab === "history" && (
           <div>
             <div className="payment-summary">
               <h3>Cumulative Payment Summary</h3>
@@ -2204,8 +2330,8 @@ export default function ManagePayments() {
                             </>
                           )}
                           {isApproved && (
-                            <button className="btn-primary" type="button" onClick={() => openPayDialog(payment)}>
-                              Pay Now
+                            <button className="btn-primary" type="button" onClick={() => handleManualMarkPaid(payment)}>
+                              Mark Paid
                             </button>
                           )}
                           {payment.status === "paid" && (
@@ -2249,41 +2375,49 @@ export default function ManagePayments() {
                     <th>Model Type</th>
                     <th>Objects</th>
                     <th>Status</th>
-                    <th>Method</th>
+                    <th>Bank</th>
+                    <th>Account No</th>
                     <th>Date</th>
                     <th>Receipt</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {roleFilteredPayments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td>{getPaymentDisplayName(payment)}</td>
-                      <td>₨ {(payment.amount || 0).toLocaleString()}</td>
-                      <td>{getModelTypeDisplay(payment)}</td>
-                      <td>{payment.objects_count || 0}</td>
-                      <td>
-                        <span className={`status-badge status-${payment.status}`}>
-                          {payment.status}
-                        </span>
-                      </td>
-                      <td>{payment.payment_method || "-"}</td>
-                      <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0]}</td>
-                      <td>
-                        {canDownloadReceipt(payment) ? (
-                          <button
-                            className="btn-secondary"
-                            type="button"
-                            onClick={() => downloadReceipt(payment.id)}
-                            disabled={downloadingReceiptId === payment.id}
-                          >
-                            {downloadingReceiptId === payment.id ? "Downloading..." : "Download Receipt"}
-                          </button>
-                        ) : (
-                          <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Paid only</span>
-                        )}
-                      </td>
+                  {roleFilteredPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" className="no-data">No payments found</td>
                     </tr>
-                  ))}
+                  ) : (
+                    roleFilteredPayments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td>{getPaymentDisplayName(payment)}</td>
+                        <td>₨ {(payment.amount || 0).toLocaleString()}</td>
+                        <td>{getModelTypeDisplay(payment)}</td>
+                        <td>{payment.objects_count || 0}</td>
+                        <td>
+                          <span className={`status-badge status-${payment.status}`}>
+                            {payment.status}
+                          </span>
+                        </td>
+                        <td>{getRecipientBankName(payment)}</td>
+                        <td>{getRecipientAccount(payment)}</td>
+                        <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0]}</td>
+                        <td>
+                          {canDownloadReceipt(payment) ? (
+                            <button
+                              className="btn-secondary"
+                              type="button"
+                              onClick={() => downloadReceipt(payment.id)}
+                              disabled={downloadingReceiptId === payment.id}
+                            >
+                              {downloadingReceiptId === payment.id ? "Downloading..." : "Download Receipt"}
+                            </button>
+                          ) : (
+                            <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Paid only</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2373,7 +2507,7 @@ export default function ManagePayments() {
                           {payDialogRecipientMethod && (
                             <div className="pay-dialog-card destination">
                               <div className="pay-dialog-brand">{getMethodBrandLabel(payDialogRecipientMethod)}</div>
-                              <div className="pay-dialog-number">{payDialogRecipientMethod.masked_card_number}</div>
+                              <div className="pay-dialog-number">{getMethodPrimaryValue(payDialogRecipientMethod)}</div>
                               <div className="pay-dialog-meta">{getMethodOwnerLabel(payDialogRecipientMethod)}</div>
                               <div className="pay-dialog-meta">{getMethodSecondaryLabel(payDialogRecipientMethod)} {getMethodSecondaryValue(payDialogRecipientMethod)}</div>
                             </div>

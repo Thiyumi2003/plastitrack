@@ -8,7 +8,7 @@ const PAGE_TITLES = {
   "/admin/users": "Users",
   "/admin/reports": "Reports",
   "/admin/payments": "Payments",
-  "/admin/payment-eligibility": "Payment Eligibility",
+  "/admin/payment-eligibility": "Payment Eligible",
   "/admin/work-hours": "My Work Hours",
   "/admin/profile": "Profile",
 };

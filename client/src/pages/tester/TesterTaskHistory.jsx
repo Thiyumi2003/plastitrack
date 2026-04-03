@@ -15,6 +15,28 @@ export default function TesterTaskHistory() {
     Authorization: `Bearer ${localStorage.getItem("token")}`,
   });
 
+  const matchesStatusFilter = (task) => {
+    if (statusFilter === "all") {
+      return true;
+    }
+
+    if (statusFilter === "pending_review") {
+      return task.status === "pending_review";
+    }
+
+    if (statusFilter === "approved") {
+      return task.status === "approved";
+    }
+
+    if (statusFilter === "rejected") {
+      return task.status === "rejected";
+    }
+
+    return true;
+  };
+
+  const visibleTasks = tasks.filter(matchesStatusFilter);
+
   useEffect(() => {
     fetchTaskHistory();
   }, [statusFilter, dateFrom, dateTo]);
@@ -49,10 +71,8 @@ export default function TesterTaskHistory() {
     const statusMap = {
       pending: "Pending",
       pending_review: "Pending Review",
-      completed: "Completed",
       approved: "Approved",
       rejected: "Rejected",
-      in_progress: "In Progress",
     };
     return (
       <span className={`status-badge status-${status?.replace("_", "-")}`}>
@@ -94,9 +114,8 @@ export default function TesterTaskHistory() {
             className="filter-select"
           >
             <option value="all">All Tasks</option>
-            <option value="pending">Pending</option>
-            <option value="in_progress">In Progress</option>
-            <option value="completed">Completed</option>
+            <option value="pending_review">Pending Review</option>
+            <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
 
@@ -125,7 +144,7 @@ export default function TesterTaskHistory() {
         </div>
 
         <div className="tasks-section">
-          <h2>All Tasks ({tasks.length})</h2>
+          <h2>{statusFilter === "all" ? "All Tasks" : `${statusFilter === "pending_review" ? "Pending Review" : statusFilter === "approved" ? "Approved" : "Rejected"} Tasks`} ({visibleTasks.length})</h2>
           <div className="table-container">
             <table className="tasks-table">
               <thead>
@@ -140,14 +159,14 @@ export default function TesterTaskHistory() {
                 </tr>
               </thead>
               <tbody>
-                {tasks.length === 0 ? (
+                {visibleTasks.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="no-data">
                       No tasks found
                     </td>
                   </tr>
                 ) : (
-                  tasks.map((task) => (
+                  visibleTasks.map((task) => (
                     <tr key={task.id}>
                       <td>{task.task_id}</td>
                       <td>
@@ -187,28 +206,24 @@ export default function TesterTaskHistory() {
       <div className="summary-section">
         <div className="summary-card">
           <div className="summary-label">Total Tasks</div>
-          <div className="summary-value">{tasks.length}</div>
+          <div className="summary-value">{visibleTasks.length}</div>
         </div>
         <div className="summary-card">
           <div className="summary-label">Approved</div>
           <div className="summary-value">
-            {tasks.filter((t) => t.status === "approved").length}
+            {visibleTasks.filter((t) => t.status === "approved").length}
           </div>
         </div>
         <div className="summary-card">
           <div className="summary-label">Rejected</div>
           <div className="summary-value">
-            {tasks.filter((t) => t.status === "rejected").length}
+            {visibleTasks.filter((t) => t.status === "rejected").length}
           </div>
         </div>
         <div className="summary-card">
           <div className="summary-label">Pending</div>
           <div className="summary-value">
-            {
-              tasks.filter(
-                (t) => t.status === "pending" || t.status === "pending_review"
-              ).length
-            }
+            {visibleTasks.filter((t) => t.status === "pending_review").length}
           </div>
         </div>
       </div>

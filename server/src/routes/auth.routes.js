@@ -218,7 +218,103 @@ router.post("/logout", async (req, res) => {
         [userId]
       );
       
-      if (users.length > 0 && users[0].role === 'admin') {
+      if (users.length > 0 && users[0].role === "admin" && users[0].auto_track_hours) {
+        const [sessions] = await connection.execute(
+          `SELECT id, start_time, last_activity_at, last_recorded_at, active_minutes, status
+           FROM admin_sessions
+           WHERE admin_id = ? AND status IN ('active', 'paused')
+           ORDER BY start_time DESC
+           LIMIT 1`,
+          [userId]
+        );
+
+        if (sessions.length > 0) {
+          const session = sessions[0];
+          const now = new Date();
+          const idleTimeoutMs = 5 * 60 * 1000;
+          const lastRecorded = session.last_recorded_at
+            ? new Date(session.last_recorded_at)
+            : session.start_time
+              ? new Date(session.start_time)
+              : now;
+          const lastActivity = session.last_activity_at
+            ? new Date(session.last_activity_at)
+            : lastRecorded;
+
+          const hasRecentActivity = now.getTime() - lastActivity.getTime() <= idleTimeoutMs;
+          const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - lastRecorded.getTime()) / 60000));
+          const minutesToAdd = session.status === "active" && hasRecentActivity
+            ? Math.min(elapsedMinutes, 5)
+            : 0;
+
+          const totalActiveMinutes = Number(session.active_minutes || 0) + minutesToAdd;
+
+          if (minutesToAdd > 0) {
+            await connection.execute(
+              `UPDATE admin_sessions
+               SET active_minutes = active_minutes + ?,
+                   last_recorded_at = NOW(),
+                   updated_at = NOW()
+               WHERE id = ?`,
+              [minutesToAdd, session.id]
+            );
+          }
+
+          if (totalActiveMinutes >= 5 && minutesToAdd > 0) {
+            const workDate = new Date(session.start_time || now).toISOString().split("T")[0];
+            const [rows] = await connection.execute(
+              `SELECT id, minutes_worked, pending_minutes, approved_minutes, paid_minutes
+               FROM work_hours
+               WHERE admin_id = ? AND date = ? AND is_auto_tracked = TRUE AND status = 'pending'
+               ORDER BY id DESC
+               LIMIT 1`,
+              [userId, workDate]
+            );
+
+            if (rows.length > 0) {
+              const row = rows[0];
+              const newMinutesWorked = Number(row.minutes_worked || 0) + minutesToAdd;
+              const newPending = Number(row.pending_minutes || 0) + minutesToAdd;
+              const approvedMinutes = Number(row.approved_minutes || 0);
+              const paidMinutes = Number(row.paid_minutes || 0);
+
+              await connection.execute(
+                `UPDATE work_hours
+                 SET minutes_worked = ?,
+                     pending_minutes = ?,
+                     hours_worked = ROUND((? + ? + ?) / 60, 2),
+                     session_start = COALESCE(session_start, ?),
+                     session_end = NOW(),
+                     updated_at = NOW()
+                 WHERE id = ?`,
+                [
+                  newMinutesWorked,
+                  newPending,
+                  newPending,
+                  approvedMinutes,
+                  paidMinutes,
+                  session.start_time || now,
+                  row.id,
+                ]
+              );
+            } else {
+              await connection.execute(
+                `INSERT INTO work_hours
+                  (admin_id, date, hours_worked, minutes_worked, pending_minutes, approved_minutes, paid_minutes, task_description, status, is_auto_tracked, session_start, session_end)
+                 VALUES (?, ?, ROUND(? / 60, 2), ?, ?, 0, 0, 'Auto-tracked active session', 'pending', TRUE, ?, NOW())`,
+                [
+                  userId,
+                  workDate,
+                  minutesToAdd,
+                  minutesToAdd,
+                  minutesToAdd,
+                  session.start_time || now,
+                ]
+              );
+            }
+          }
+        }
+
         await connection.execute(
           `UPDATE admin_sessions
            SET status = 'completed',

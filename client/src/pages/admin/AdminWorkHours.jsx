@@ -24,6 +24,17 @@ const parseHoursInputToMinutes = (value) => {
     return hours * 60 + minutes;
   }
 
+  // Support HH.MM-style input (e.g., 1.30 => 1h 30m, 0.70 => 1h 10m).
+  // Only two-digit fractions are treated as minute notation.
+  const dotMatch = raw.match(/^(\d+)\.(\d{2})$/);
+  if (dotMatch) {
+    const hours = Number(dotMatch[1]);
+    const minutes = Number(dotMatch[2]);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+    if (hours < 0 || minutes < 0) return null;
+    return hours * 60 + minutes;
+  }
+
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.round(parsed * 60) : null;
 };
@@ -43,7 +54,6 @@ export default function AdminWorkHours() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     hours_worked: "",
@@ -65,9 +75,6 @@ export default function AdminWorkHours() {
 
     const loadPageData = async () => {
       await fetchWorkHours();
-      if (!unmounted) {
-        await startWorkSession();
-      }
     };
 
     loadPageData();
@@ -104,53 +111,6 @@ export default function AdminWorkHours() {
     } catch (err) {
       console.error("Failed to pause session:", err);
     }
-  };
-
-  const stopWorkSession = async () => {
-    try {
-      await axios.post(
-        "http://localhost:5000/api/dashboard/admin/work-sessions/stop",
-        {},
-        { headers: getAuthHeader() }
-      );
-      trackingStateRef.current = "paused";
-      await fetchWorkHours();
-    } catch (err) {
-      console.error("Failed to stop session:", err);
-    }
-  };
-
-  const handleStartTracking = async () => {
-    if (!autoTrackEnabled) {
-      alert("Enable Auto-Tracking first");
-      return;
-    }
-    setSessionActionLoading(true);
-    await startWorkSession();
-    setSessionActionLoading(false);
-  };
-
-  const handlePauseTracking = async () => {
-    setSessionActionLoading(true);
-    await pauseWorkSession();
-    setSessionActionLoading(false);
-  };
-
-  const handleResumeTracking = async () => {
-    if (!autoTrackEnabled) {
-      alert("Enable Auto-Tracking first");
-      return;
-    }
-    setSessionActionLoading(true);
-    await startWorkSession();
-    await sendHeartbeat({ userActive: true });
-    setSessionActionLoading(false);
-  };
-
-  const handleStopSession = async () => {
-    setSessionActionLoading(true);
-    await stopWorkSession();
-    setSessionActionLoading(false);
   };
 
   const sendHeartbeat = async ({ userActive = false, forcePause = false } = {}) => {
@@ -194,6 +154,7 @@ export default function AdminWorkHours() {
       setWorkHours(response.data.workHours);
       setSummary(response.data.summary);
       setCurrentSession(response.data.currentSession || null);
+      setAutoTrackEnabled(Boolean(response.data.auto_track_hours));
       if (response.data.currentSession?.status === "active") {
         trackingStateRef.current = "active";
       } else {
@@ -214,19 +175,18 @@ export default function AdminWorkHours() {
       const now = Date.now();
       if (now - lastActivityPingRef.current > 30000) {
         lastActivityPingRef.current = now;
+        startWorkSession();
         sendHeartbeat({ userActive: true });
       }
     };
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        pauseWorkSession();
+        sendHeartbeat({ forcePause: true });
         return;
       }
 
       lastActivityRef.current = Date.now();
-      startWorkSession();
-      sendHeartbeat({ userActive: true });
     };
 
     window.addEventListener("mousemove", onActivity);
@@ -276,8 +236,6 @@ export default function AdminWorkHours() {
         await pauseWorkSession();
       } else {
         lastActivityRef.current = Date.now();
-        await startWorkSession();
-        await sendHeartbeat({ userActive: true });
       }
       alert(`Auto-tracking ${newStatus ? "enabled" : "disabled"}`);
     } catch (err) {
@@ -380,21 +338,6 @@ export default function AdminWorkHours() {
             <Plus size={18} /> Log Manual Hours
           </button>
         </div>
-      </div>
-
-      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
-        <button className="btn-primary" onClick={handleStartTracking} disabled={sessionActionLoading || !autoTrackEnabled}>
-          Start Tracking
-        </button>
-        <button className="btn-cancel" onClick={handlePauseTracking} disabled={sessionActionLoading || !currentSession || currentSession.status !== "active"}>
-          Pause Tracking
-        </button>
-        <button className="btn-save" onClick={handleResumeTracking} disabled={sessionActionLoading || !autoTrackEnabled || (currentSession && currentSession.status === "active")}>
-          Resume Tracking
-        </button>
-        <button className="btn-delete" onClick={handleStopSession} disabled={sessionActionLoading || !currentSession}>
-          Stop Session
-        </button>
       </div>
 
         {error && <div className="dashboard-error">{error}</div>}
@@ -523,12 +466,14 @@ export default function AdminWorkHours() {
 
         <div style={{ marginTop: "20px", padding: "15px", backgroundColor: "#f8f9fa", borderRadius: "8px", borderLeft: "4px solid #667eea" }}>
           <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>ℹ️ About Work Hours Tracking</h3>
-           <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
-            <li><strong>Auto-Tracking:</strong> Tracks only active work (mousemove, click, keydown, scroll, interaction)</li>
-            <li><strong>Idle Protection:</strong> Tracking pauses after 5 minutes of inactivity and resumes on activity</li>
-            <li><strong>Manual Entry:</strong> You can also manually log hours for offline work or adjust entries</li>
-            <li><strong>Approval:</strong> Approved/Paid values are locked and never changed by live tracking</li>
-            <li><strong>Editing:</strong> Auto-tracked entries cannot be deleted. Manual entries can be deleted if pending</li>
+          <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
+            <li><strong>Auto Mode:</strong> Tracking runs automatically when Auto-Tracking is ON.</li>
+            <li><strong>Active Work Only:</strong> Time is counted only during real activity (mousemove, click, keydown, scroll, pointer interaction).</li>
+            <li><strong>Idle Protection:</strong> Tracking pauses after 5 minutes of inactivity or when the tab is hidden.</li>
+            <li><strong>No Manual Session Buttons:</strong> Start/Pause/Resume/Stop buttons were removed; activity controls tracking.</li>
+            <li><strong>Logout Save Rule:</strong> On logout, active tracked time is finalized and appears in Work Hours when tracked time reaches at least 5 minutes.</li>
+            <li><strong>Manual Entry:</strong> You can still log manual hours for offline/admin tasks.</li>
+            <li><strong>Approval & Locking:</strong> Approved/Paid values are locked; auto-tracking does not overwrite them.</li>
           </ul>
         </div>
 

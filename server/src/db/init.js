@@ -507,7 +507,7 @@ async function initDatabase() {
       }
     }
 
-    // Create payment methods table (store masked payment identifiers only)
+    // Create payment methods table (stores masked identifiers and optional full bank account number)
     const createPaymentMethodsTableQuery = `
       CREATE TABLE IF NOT EXISTS payment_methods (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -515,6 +515,7 @@ async function initDatabase() {
         card_holder_name VARCHAR(255) NOT NULL,
         bank_name VARCHAR(120) NULL,
         branch_name VARCHAR(120) NULL,
+        account_number VARCHAR(40) NULL,
         masked_card_number VARCHAR(25) NOT NULL,
         card_type VARCHAR(50) NOT NULL,
         expiry_month INT NOT NULL,
@@ -524,13 +525,14 @@ async function initDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_user_masked_card (user_id, masked_card_number),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      ) COMMENT 'Stores payment methods with masked card numbers only'
+      ) COMMENT 'Stores payment methods with masked identifiers and optional full bank account number'
     `;
     await connection.query(createPaymentMethodsTableQuery);
     console.log("✓ Payment methods table created or already exists");
 
     await ensureColumn("payment_methods", "bank_name", "VARCHAR(120) NULL AFTER card_holder_name");
     await ensureColumn("payment_methods", "branch_name", "VARCHAR(120) NULL AFTER bank_name");
+    await ensureColumn("payment_methods", "account_number", "VARCHAR(40) NULL AFTER branch_name");
     await dropColumnIfExists("payment_methods", "account_name");
 
     // Add FK from payments.payment_method_id to payment_methods.id if missing.

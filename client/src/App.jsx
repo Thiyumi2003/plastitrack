@@ -17,7 +17,6 @@ import ManageImages from "./pages/admin/ManageImages";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminReports from "./pages/admin/AdminReports";
 import AdminPayments from "./pages/admin/AdminPayments";
-import PaymentEligibility from "./pages/admin/PaymentEligibility";
 import AdminWorkHours from "./pages/admin/AdminWorkHours";
 import AdminProfile from "./pages/admin/AdminProfile";
 import AdminDashboardLayout from "./pages/admin/AdminDashboardLayout";
@@ -122,7 +121,7 @@ export default function App() {
           <Route path="users" element={<AdminUsers />} />
           <Route path="reports" element={<AdminReports />} />
           <Route path="payments" element={<AdminPayments />} />
-          <Route path="payment-eligibility" element={<PaymentEligibility />} />
+          <Route path="payment-eligibility" element={<Navigate to="/admin/reports" replace />} />
           <Route path="work-hours" element={<AdminWorkHours />} />
           <Route path="profile" element={<AdminProfile />} />
         </Route>

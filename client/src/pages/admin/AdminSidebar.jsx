@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, DollarSign, Clock, User } from "lucide-react";
+import { Menu, X, LayoutDashboard, Image, Users, FileText, Wallet, LogOut, Clock, User } from "lucide-react";
 import Notifications from "../../components/Notifications";
 import logo from "../../images/logo (2).png";
 import "../superadmin/sidebar.css";
@@ -54,7 +54,6 @@ export default function AdminSidebar() {
     { name: "Users", icon: Users, path: "/admin/users" },
     { name: "Reports", icon: FileText, path: "/admin/reports" },
     { name: "Payments", icon: Wallet, path: "/admin/payments" },
-    { name: "Payment Eligibility", icon: DollarSign, path: "/admin/payment-eligibility" },
     { name: "My Work Hours", icon: Clock, path: "/admin/work-hours" },
     { name: "Profile", icon: User, path: "/admin/profile" },
   ];
