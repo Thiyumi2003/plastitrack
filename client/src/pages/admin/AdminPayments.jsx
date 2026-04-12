@@ -58,6 +58,13 @@ export default function AdminPayments() {
     : Number(paymentData?.monthlyTotal || 0);
   const displayPendingAmount = Number(paymentData?.pendingAmount || 0);
 
+  const formatHoursAsClockValue = (hoursValue) => {
+    const totalMinutes = Math.max(0, Math.round(Number(hoursValue || 0) * 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}.${String(minutes).padStart(2, "0")}`;
+  };
+
   useEffect(() => {
     const fetchPayments = async () => {
       try {
@@ -170,7 +177,7 @@ export default function AdminPayments() {
                 <div className="payment-label">Total Paid</div>
               </div>
               <div className="payment-card hours">
-                <div className="payment-value">{displayPaidHours.toFixed(2)}h</div>
+                <div className="payment-value">{formatHoursAsClockValue(displayPaidHours)}h</div>
                 <div className="payment-label">Paid Hours</div>
               </div>
               <div className="payment-card rate">
@@ -195,7 +202,7 @@ export default function AdminPayments() {
                       </div>
                       <div className="history-amount">
                         <div className="amount-value">Rs. {payment.amount?.toLocaleString()}</div>
-                        <div className="amount-label">{payment.hours || 0} hours paid</div>
+                        <div className="amount-label">{formatHoursAsClockValue(payment.hours || 0)} hours paid</div>
                       </div>
                     </div>
                   ))

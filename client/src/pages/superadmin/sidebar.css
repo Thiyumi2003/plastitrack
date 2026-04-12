@@ -5,10 +5,15 @@
   color: white;
   padding: 20px;
   overflow-y: auto;
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  height: 100vh;
   transition: all 0.3s ease;
   box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
   border-right: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 1000;
 }
 
 .sidebar::before {
@@ -31,6 +36,14 @@
 
 .sidebar.closed {
   width: 80px;
+}
+
+.sidebar.open + .dashboard-main {
+  margin-left: 280px;
+}
+
+.sidebar.closed + .dashboard-main {
+  margin-left: 80px;
 }
 
 .sidebar-toggle {
@@ -265,11 +278,7 @@
 @media (max-width: 768px) {
   .sidebar {
     width: 80px;
-    position: fixed;
-    left: 0;
-    top: 0;
-    height: 100vh;
-    z-index: 1000;
+    padding: 16px 12px;
   }
 
   .sidebar.open {
@@ -300,12 +309,12 @@
     justify-content: flex-start;
   }
 
-  .dashboard-container {
-    margin-left: 80px;
+  .sidebar.open + .dashboard-main {
+    margin-left: 280px;
   }
 
-  .dashboard-container .sidebar.open {
-    margin-left: 0;
+  .sidebar.closed + .dashboard-main {
+    margin-left: 80px;
   }
 }
 

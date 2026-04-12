@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./FilterManager";
@@ -26,14 +36,29 @@ export const AnnotatorPerformanceReport = () => {
     return {
       totalAnnotators: annotatorPerf.length,
       avgAccuracy: (
-        annotatorPerf.reduce((sum, row) => sum + row.accuracyRate, 0) /
+        annotatorPerf.reduce((sum, row) => sum + Number(row.accuracyRate || 0), 0) /
         annotatorPerf.length
       ).toFixed(1),
-      totalAssigned: annotatorPerf.reduce((sum, row) => sum + row.totalAssigned, 0),
-      totalCompleted: annotatorPerf.reduce((sum, row) => sum + row.completed, 0),
-      approvedObjects: annotatorPerf.reduce((sum, row) => sum + row.approvedObjects, 0),
+      totalAssigned: annotatorPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
+      totalCompleted: annotatorPerf.reduce((sum, row) => sum + Number(row.completed || 0), 0),
+      approvedObjects: annotatorPerf.reduce((sum, row) => sum + Number(row.approvedObjects || 0), 0),
     };
   }, [annotatorPerf]);
+
+  const chartData = useMemo(() => {
+    return (annotatorPerf || []).map((row) => ({
+      name: row.name,
+      assigned: Number(row.totalAssigned || 0),
+      completed: Number(row.completed || 0),
+      approved: Number(row.approved || 0),
+      rejected: Number(row.rejected || 0),
+    }));
+  }, [annotatorPerf]);
+
+  const chartSeriesOrder = useMemo(
+    () => ({ assigned: 0, completed: 1, approved: 2, rejected: 3 }),
+    []
+  );
 
   useEffect(() => {
     const loadPerformance = async () => {
@@ -128,6 +153,20 @@ export const AnnotatorPerformanceReport = () => {
       {
         title: "Annotator Performance Report",
         filters: { startDate, endDate },
+        charts: [
+          {
+            title: "Annotator Status Comparison",
+            type: "bar",
+            labelKey: "name",
+            data: chartData,
+            series: [
+              { key: "assigned", label: "Assigned", color: "#4D96FF" },
+              { key: "completed", label: "Completed", color: "#6BCB77" },
+              { key: "approved", label: "Approved", color: "#8B5CF6" },
+              { key: "rejected", label: "Rejected", color: "#FF6B6B" },
+            ],
+          },
+        ],
         kpis: [
           { label: "Total Annotators", value: stats?.totalAnnotators || 0 },
           { label: "Avg Accuracy", value: `${stats?.avgAccuracy || 0}%` },
@@ -227,6 +266,45 @@ export const AnnotatorPerformanceReport = () => {
                 icon="🎨"
                 color="#FF6B9D"
               />
+            </div>
+          )}
+
+          {chartData.length > 0 && (
+            <div className="chart-container" style={{ marginBottom: "20px" }}>
+              <h4 style={{ marginTop: 0, color: "#ffffff" }}>Annotator Status Comparison</h4>
+              <div style={{ width: "100%", height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 50 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" angle={-20} textAnchor="end" height={60} interval={0} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const labelMap = {
+                          assigned: "Assigned",
+                          completed: "Completed",
+                          approved: "Approved",
+                          rejected: "Rejected",
+                        };
+                        return [value, labelMap[name] || name];
+                      }}
+                      itemSorter={(entry) => chartSeriesOrder[entry?.dataKey] ?? 999}
+                    />
+                    <Legend
+                      payload={[
+                        { value: "Assigned", type: "square", color: "#4D96FF", id: "assigned" },
+                        { value: "Completed", type: "square", color: "#6BCB77", id: "completed" },
+                        { value: "Approved", type: "square", color: "#8B5CF6", id: "approved" },
+                        { value: "Rejected", type: "square", color: "#FF6B6B", id: "rejected" },
+                      ]}
+                    />
+                    <Bar dataKey="assigned" fill="#4D96FF" name="Assigned" />
+                    <Bar dataKey="completed" fill="#6BCB77" name="Completed" />
+                    <Bar dataKey="approved" fill="#8B5CF6" name="Approved" />
+                    <Bar dataKey="rejected" fill="#FF6B6B" name="Rejected" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
 

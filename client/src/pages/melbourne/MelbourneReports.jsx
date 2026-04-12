@@ -19,13 +19,13 @@ export default function MelbourneReports() {
     {
       id: "summary",
       label: "Annotation Summary",
-      icon: "Summary",
+      icon: "",
       component: AnnotationSummaryReport,
     },
     {
       id: "performance",
       label: "Annotator Performance",
-      icon: "Performance",
+      icon: "",
       component: AnnotatorPerformanceReport,
     },
     {
@@ -49,7 +49,7 @@ export default function MelbourneReports() {
     {
       id: "payment",
       label: "Payment Report",
-      icon: "Payment",
+      icon: "",
       component: PaymentReport,
     },
   ];
@@ -92,6 +92,48 @@ export default function MelbourneReports() {
         {
           title: "Annotation Summary Report",
           filters: summaryData.filters || {},
+          charts: [
+            {
+              title: "Image Status Distribution",
+              type: "pie",
+              data: summaryData.pie || [],
+              colors: ["#8B0000", "#FF6B6B", "#FFA07A", "#FFB6C1", "#DDA0DD", "#FF69B4"],
+            },
+            {
+              title: "User Contributions",
+              type: "bar",
+              labelKey: "name",
+              data: (summaryData.userContributions || []).map((row) => ({
+                name: row.name?.split(" ")?.[0] || row.name || row.email,
+                completed: Number(row.completed_count || 0),
+                total: Number(row.images_count || 0),
+              })),
+              series: [
+                { key: "completed", label: "Completed", color: "#6BCB77" },
+                { key: "total", label: "Total", color: "#4D96FF" },
+              ],
+            },
+            {
+              title: "Progress Over Time",
+              type: "bar",
+              labelKey: "date",
+              data: (summaryData.progressOverTime || []).map((item) => ({
+                date: item.date,
+                pending: Number(item.pending || 0),
+                inProgress: Number(item.in_progress || 0),
+                completed: Number(item.completed || 0),
+                approved: Number(item.approved || 0),
+                rejected: Number(item.rejected || 0),
+              })),
+              series: [
+                { key: "pending", label: "Pending", color: "#FF6B6B" },
+                { key: "inProgress", label: "In Progress", color: "#FFA07A" },
+                { key: "completed", label: "Completed", color: "#98D8C8" },
+                { key: "approved", label: "Approved", color: "#6BCB77" },
+                { key: "rejected", label: "Rejected", color: "#FF5252" },
+              ],
+            },
+          ],
           kpis: [
             { label: "Total Image Sets", value: summaryData.summary?.totalImageSets || 0 },
             { label: "Total Assigned", value: summaryData.summary?.totalAssigned || 0 },
@@ -116,6 +158,26 @@ export default function MelbourneReports() {
         {
           title: "Annotator Performance Report",
           filters: annotatorData.filters || {},
+          charts: [
+            {
+              title: "Annotator Status Comparison",
+              type: "bar",
+              labelKey: "name",
+              data: (annotatorData.rows || []).map((row) => ({
+                name: row.name,
+                assigned: Number(row.totalAssigned || 0),
+                completed: Number(row.completed || 0),
+                approved: Number(row.approved || 0),
+                rejected: Number(row.rejected || 0),
+              })),
+              series: [
+                { key: "assigned", label: "Assigned", color: "#4D96FF" },
+                { key: "completed", label: "Completed", color: "#6BCB77" },
+                { key: "approved", label: "Approved", color: "#8B5CF6" },
+                { key: "rejected", label: "Rejected", color: "#FF6B6B" },
+              ],
+            },
+          ],
           kpis: [
             { label: "Total Annotators", value: (annotatorData.rows || []).length },
             { label: "Avg Accuracy", value: `${((annotatorData.rows || []).reduce((sum, row) => sum + Number(row.accuracyRate || 0), 0) / Math.max((annotatorData.rows || []).length, 1)).toFixed(1)}%` },
@@ -145,6 +207,24 @@ export default function MelbourneReports() {
         {
           title: "Tester Performance Report",
           filters: testerData.filters || {},
+          charts: [
+            {
+              title: "Tester Status Comparison",
+              type: "bar",
+              labelKey: "name",
+              data: (testerData.rows || []).map((row) => ({
+                name: row.name,
+                assigned: Number(row.totalAssigned || 0),
+                approved: Number(row.approved || 0),
+                rejected: Number(row.rejected || 0),
+              })),
+              series: [
+                { key: "assigned", label: "Assigned", color: "#4D96FF" },
+                { key: "approved", label: "Approved", color: "#6BCB77" },
+                { key: "rejected", label: "Rejected", color: "#FF6B6B" },
+              ],
+            },
+          ],
           kpis: [
             { label: "Total Testers", value: (testerData.rows || []).length },
             { label: "Avg Accuracy", value: `${((testerData.rows || []).reduce((sum, row) => sum + Number(row.accuracy || 0), 0) / Math.max((testerData.rows || []).length, 1)).toFixed(1)}%` },
@@ -172,6 +252,18 @@ export default function MelbourneReports() {
         {
           title: "Image Details Report",
           filters: imageData.filters || {},
+          charts: [
+            {
+              title: "Image Status Mix",
+              type: "pie",
+              data: Object.entries((imageData.images || []).reduce((counts, img) => {
+                const key = String(img.status || "unknown").replace(/_/g, " ");
+                counts[key] = (counts[key] || 0) + 1;
+                return counts;
+              }, {})).map(([name, value]) => ({ name, value })),
+              colors: ["#4D96FF", "#6BCB77", "#FFA07A", "#FF6B6B", "#9C27B0"],
+            },
+          ],
           kpis: [
             { label: "Total Images", value: imageData.summary?.totalImages || 0 },
             { label: "Total Objects", value: imageData.summary?.totalObjects || 0 },
@@ -222,6 +314,18 @@ export default function MelbourneReports() {
         {
           title: "Payment Eligible Report",
           filters: paymentEligibilityData.filters || {},
+          charts: [
+            {
+              title: "Eligibility Mix",
+              type: "pie",
+              data: [
+                { name: "Eligible", value: paymentEligibilitySummary.eligible },
+                { name: "Not Eligible", value: paymentEligibilitySummary.notEligible },
+                { name: "Reassigned", value: paymentEligibilitySummary.reassigned },
+              ],
+              colors: ["#6BCB77", "#FF6B6B", "#FFA07A"],
+            },
+          ],
           kpis: [
             { label: "Total Records", value: paymentEligibilitySummary.total },
             { label: "Eligible", value: paymentEligibilitySummary.eligible },
@@ -261,6 +365,19 @@ export default function MelbourneReports() {
         {
           title: "Payment Report",
           filters: paymentData.filters || {},
+          charts: [
+            {
+              title: "Payment Status Mix",
+              type: "pie",
+              data: [
+                { name: "Pending", value: paymentData.summary?.pendingCount || 0 },
+                { name: "Approved", value: paymentData.summary?.approvedCount || 0 },
+                { name: "Paid", value: paymentData.summary?.paidCount || 0 },
+                { name: "Rejected", value: paymentData.summary?.rejectedCount || 0 },
+              ],
+              colors: ["#FFB74D", "#4D96FF", "#6BCB77", "#FF6B6B"],
+            },
+          ],
           kpis: [
             { label: "Total Payments", value: paymentData.summary?.totalPayments || 0 },
             { label: "Total Amount (Rs)", value: Number(paymentData.summary?.totalAmount || 0).toLocaleString("en-IN") },

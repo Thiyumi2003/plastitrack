@@ -431,7 +431,7 @@ const formatPaymentMethodLabel = (method = {}) => {
   const bank = method.bank_name || null;
   const branch = method.branch_name || null;
   const accountName = method.card_holder_name || null;
-  const accountOrMasked = method.account_number || method.masked_card_number || "****";
+  const accountOrMasked = method.account_number || "****";
 
   if (bank || branch) {
     const left = [bank, branch].filter(Boolean).join(" / ") || "Bank Account";
@@ -439,7 +439,7 @@ const formatPaymentMethodLabel = (method = {}) => {
     return `${left} ${accountOrMasked}${suffix}`.trim();
   }
 
-  return `${method.card_type || "Card"} ${method.masked_card_number || "****"}`.trim();
+  return `${method.card_type || "Card"} ${accountOrMasked}`.trim();
 };
 
 const escapeHtml = (value) => {
@@ -1088,17 +1088,21 @@ router.get("/reports", verifyToken, async (req, res) => {
 
     // Progress over time (last 30 days)
     const [progressData] = await connection.execute(`
-      SELECT 
-        DATE(created_at) as date,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
-      FROM images
-      GROUP BY DATE(created_at)
-      ORDER BY date DESC
-      LIMIT 30
+      SELECT *
+      FROM (
+        SELECT 
+          DATE(created_at) as date,
+          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+        FROM images
+        GROUP BY DATE(created_at)
+        ORDER BY date DESC
+        LIMIT 30
+      ) recent_progress
+      ORDER BY date ASC
     `);
 
     // User contributions (including testers)
@@ -1197,15 +1201,29 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
     console.log(`[ANNOTATION-SUMMARY] Executing query with whereClause: ${whereClause}, params:`, params);
 
     const [imageCounts] = await connection.execute(
-      `SELECT COUNT(*) as totalImageSets FROM images`
+      `SELECT COUNT(*) as totalImageSets
+       FROM (
+         SELECT DISTINCT t.image_id
+         FROM tasks t
+         LEFT JOIN users u ON t.user_id = u.id
+         ${whereClause}
+       ) filtered_images`,
+      params
     );
 
     const [imagesByStatus] = await connection.execute(
       `SELECT 
-        status,
+        i.status,
         COUNT(*) as count
-       FROM images
-       GROUP BY status`
+       FROM images i
+       INNER JOIN (
+         SELECT DISTINCT t.image_id
+         FROM tasks t
+         LEFT JOIN users u ON t.user_id = u.id
+         ${whereClause}
+       ) x ON x.image_id = i.id
+       GROUP BY i.status`,
+      params
     );
 
     const [summaryRows] = await connection.execute(
@@ -1250,6 +1268,41 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
       params
     );
 
+    const [userContributionRows] = await connection.execute(
+      `SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        COUNT(DISTINCT t.image_id) as images_count,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approved_count,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected_count
+       FROM tasks t
+       LEFT JOIN users u ON t.user_id = u.id
+       ${whereClause}
+         AND u.role IN ('annotator', 'tester')
+       GROUP BY u.id, u.name, u.email, u.role
+       ORDER BY images_count DESC, completed_count DESC`,
+      params
+    );
+
+    const [progressRows] = await connection.execute(
+      `SELECT
+        DATE(t.assigned_date) as date,
+        SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN t.status IN ('in_progress', 'pending_review') THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM tasks t
+       LEFT JOIN users u ON t.user_id = u.id
+       ${whereClause}
+       GROUP BY DATE(t.assigned_date)
+       ORDER BY DATE(t.assigned_date) ASC`,
+      params
+    );
+
     await connection.release();
 
     const summary = summaryRows[0] || {};
@@ -1276,6 +1329,24 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
         name: row.name,
         assigned: Number(row.assigned || 0),
         completed: Number(row.completed || 0),
+      })),
+      userContributions: userContributionRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        images_count: Number(row.images_count || 0),
+        completed_count: Number(row.completed_count || 0),
+        approved_count: Number(row.approved_count || 0),
+        rejected_count: Number(row.rejected_count || 0),
+      })),
+      progressOverTime: progressRows.map((row) => ({
+        date: row.date,
+        pending: Number(row.pending || 0),
+        in_progress: Number(row.in_progress || 0),
+        completed: Number(row.completed || 0),
+        approved: Number(row.approved || 0),
+        rejected: Number(row.rejected || 0),
       })),
     });
   } catch (err) {
@@ -2340,10 +2411,8 @@ router.get("/payments", verifyToken, async (req, res) => {
         pm.user_id,
         u.name as user_name,
         pm.card_holder_name,
-        pm.masked_card_number,
+        pm.account_number,
         pm.card_type,
-        pm.expiry_month,
-        pm.expiry_year,
         pm.is_default,
         pm.created_at
        FROM payment_methods pm
@@ -2406,7 +2475,7 @@ router.get("/payment-history", verifyToken, async (req, res) => {
         pm.card_holder_name as recipient_account_holder,
         pm.bank_name as recipient_bank_name,
         pm.branch_name as recipient_branch_name,
-        COALESCE(pm.account_number, pm.masked_card_number) as recipient_account_number,
+        pm.account_number as recipient_account_number,
         pm.card_type as recipient_account_type,
         p.amount,
         p.model_type,
@@ -2436,6 +2505,7 @@ router.get("/payment-history", verifyToken, async (req, res) => {
         p.objects_count,
         p.hours,
         p.rate_used,
+        p.payment_method_id,
         p.status,
         p.payment_method,
         p.payment_date,
@@ -2954,6 +3024,10 @@ router.post("/payments/auto-generate", verifyToken, async (req, res) => {
         paidMinutes = null,
         minuteRate = null,
         rateUsed = 0,
+        status = PAYMENT_STATUS.PENDING_APPROVAL,
+        approvedBy = null,
+        approvedDate = null,
+        paymentDate = null,
       } = payload;
 
       const [result] = await connection.execute(
@@ -2985,10 +3059,10 @@ router.post("/payments/auto-generate", verifyToken, async (req, res) => {
           minuteRate === null ? null : Number(minuteRate || 0),
           Number(rateUsed || 0),
           "bank",
-          PAYMENT_STATUS.PENDING_APPROVAL,
-          null,
-          null,
-          null,
+          status,
+          paymentDate,
+          approvedDate,
+          approvedBy,
         ]
       );
 
@@ -3143,6 +3217,9 @@ router.post("/payments/auto-generate", verifyToken, async (req, res) => {
         paidMinutes: payMinutes,
         minuteRate: Number(eligibility.minuteRate || 0),
         rateUsed: Number(eligibility.hourlyRate || 0),
+          status: PAYMENT_STATUS.READY_TO_PAY,
+          approvedBy: req.user.id,
+          approvedDate: new Date(),
       });
 
       created.push({ paymentId, role: "admin", userId: adminId, paidMinutes: payMinutes, amount: Number(amount.toFixed(2)) });
@@ -3420,7 +3497,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     let sourceMethod = null;
     if (sourceMethodId) {
       const [sourceRows] = await connection.execute(
-        `SELECT id, card_type, card_holder_name, bank_name, branch_name, account_number, masked_card_number
+        `SELECT id, card_type, card_holder_name, bank_name, branch_name, account_number
          FROM payment_methods
          WHERE id = ? AND user_id = ? LIMIT 1`,
         [sourceMethodId, req.user.id]
@@ -3433,7 +3510,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     }
 
     const [rows] = await connection.execute(
-      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, u.name, u.role, u.email, u.phone
+      `SELECT p.id, p.user_id, p.amount, p.model_type, p.status, p.payment_method_id, u.name, u.role, u.email, u.phone
        FROM payments p
        JOIN users u ON u.id = p.user_id
        WHERE p.id = ? LIMIT 1`,
@@ -3456,7 +3533,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
 
     if (methodId) {
       const [methodRows] = await connection.execute(
-        `SELECT id, card_type, card_holder_name, bank_name, branch_name, account_number, masked_card_number
+        `SELECT id, card_type, card_holder_name, bank_name, branch_name, account_number
          FROM payment_methods
          WHERE id = ? AND user_id = ? LIMIT 1`,
         [methodId, payment.user_id]
@@ -3468,43 +3545,36 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
       const method = methodRows[0];
       destinationMethod = formatPaymentMethodLabel(method);
     } else if (card && card.card_holder_name) {
-      const masked = card.masked_card_number || maskCardNumber(card.card_number || "");
-      if (!masked) {
+      const accountIdentifier =
+        String(card.account_number || "").trim() ||
+        buildMaskedAccountNumber(card.card_number || "") ||
+        maskCardNumber(card.card_number || "");
+      if (!accountIdentifier) {
         await connection.release();
-        return res.status(400).json({ error: "Valid card number (or masked card number) is required" });
+        return res.status(400).json({ error: "Valid account/card number is required" });
       }
 
-      await connection.execute(
+      const [insertMethodResult] = await connection.execute(
         `INSERT INTO payment_methods
-          (user_id, card_holder_name, bank_name, branch_name, account_number, masked_card_number, card_type, expiry_month, expiry_year, is_default)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-          card_holder_name = VALUES(card_holder_name),
-          bank_name = VALUES(bank_name),
-          branch_name = VALUES(branch_name),
-          account_number = VALUES(account_number),
-          card_type = VALUES(card_type),
-          expiry_month = VALUES(expiry_month),
-          expiry_year = VALUES(expiry_year),
-          updated_at = CURRENT_TIMESTAMP`,
+          (user_id, card_holder_name, bank_name, branch_name, account_number, card_type, is_default)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           payment.user_id,
           card.card_holder_name,
           card.bank_name || null,
           card.branch_name || null,
-          card.account_number || null,
-          masked,
+          accountIdentifier,
           card.card_type || "Card",
-          Number(card.expiry_month || 1),
-          Number(card.expiry_year || new Date().getFullYear()),
           Number(card.is_default ? 1 : 0),
         ]
       );
 
-      if (card.is_default) {
+      methodId = Number(insertMethodResult?.insertId || 0) || null;
+
+      if (card.is_default && methodId) {
         await connection.execute(
-          "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND masked_card_number <> ?",
-          [payment.user_id, masked]
+          "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND id <> ?",
+          [payment.user_id, methodId]
         );
       }
 
@@ -3513,20 +3583,49 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
         card_holder_name: card.card_holder_name,
         bank_name: card.bank_name || null,
         branch_name: card.branch_name || null,
-        account_number: card.account_number || null,
-        masked_card_number: masked,
+        account_number: accountIdentifier,
       });
     }
 
-    const resolvedMethod = sourceMethod
-      ? `From ${formatPaymentMethodLabel(sourceMethod)} -> To ${destinationMethod}`
-      : `Manual Bank Transfer -> ${destinationMethod}`;
+    if (!methodId) {
+      const [fallbackMethodRows] = await connection.execute(
+        `SELECT id, card_type, card_holder_name, bank_name, branch_name, account_number
+         FROM payment_methods
+         WHERE user_id = ?
+         ORDER BY
+           CASE
+             WHEN account_number IS NOT NULL AND TRIM(account_number) <> '' THEN 1
+             ELSE 0
+           END DESC,
+           is_default DESC,
+           updated_at DESC,
+           id DESC
+         LIMIT 1`,
+        [payment.user_id]
+      );
+
+      if (fallbackMethodRows.length > 0) {
+        const fallbackMethod = fallbackMethodRows[0];
+        methodId = Number(fallbackMethod.id || 0) || null;
+        destinationMethod = formatPaymentMethodLabel(fallbackMethod);
+      }
+    }
+
+    const sourceLabel = sourceMethod
+      ? formatPaymentMethodLabel(sourceMethod)
+      : "Manual Bank Transfer";
+    const resolvedMethod = `From ${sourceLabel} -> To ${destinationMethod}`;
 
     await connection.execute(
       `UPDATE payments
-       SET status = ?, payment_method = ?, payment_date = NOW(), approved_by = ?, updated_at = NOW()
+       SET status = ?,
+           payment_method = ?,
+           payment_method_id = COALESCE(?, payment_method_id),
+           payment_date = NOW(),
+           approved_by = ?,
+           updated_at = NOW()
        WHERE id = ?`,
-      [PAYMENT_STATUS.PAID, resolvedMethod, req.user.id, id]
+      [PAYMENT_STATUS.PAID, resolvedMethod, methodId || null, req.user.id, id]
     );
 
     await connection.release();
@@ -3552,6 +3651,7 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
         model_type: payment.model_type,
         amount: Number(payment.amount || 0),
         status: PAYMENT_STATUS.PAID,
+        payment_method_id: methodId || Number(payment.payment_method_id || 0) || null,
         payment_method: resolvedMethod,
         source_account: sourceLabel,
         destination_account: destinationMethod,
@@ -4073,14 +4173,14 @@ router.get("/payment-methods", verifyToken, async (req, res) => {
 
     const [rows] = userId
       ? await connection.execute(
-          `SELECT id, user_id, card_holder_name, bank_name, branch_name, account_number, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+          `SELECT id, user_id, card_holder_name, bank_name, branch_name, account_number, card_type, is_default, created_at, updated_at
            FROM payment_methods
            WHERE user_id = ?
            ORDER BY is_default DESC, updated_at DESC`,
           [userId]
         )
       : await connection.execute(
-          `SELECT id, user_id, card_holder_name, bank_name, branch_name, account_number, masked_card_number, card_type, expiry_month, expiry_year, is_default, created_at, updated_at
+          `SELECT id, user_id, card_holder_name, bank_name, branch_name, account_number, card_type, is_default, created_at, updated_at
            FROM payment_methods
            ORDER BY is_default DESC, updated_at DESC`
         );
@@ -4106,13 +4206,9 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
       card_holder_name,
       bank_name,
       branch_name,
-      masked_account_number,
       account_number,
-      masked_card_number,
       card_number,
       card_type,
-      expiry_month,
-      expiry_year,
       is_default,
     } = req.body;
 
@@ -4125,52 +4221,45 @@ router.post("/payment-methods", verifyToken, async (req, res) => {
     const resolvedBranchName = branch_name || null;
     const resolvedType = card_type || (resolvedBankName ? "Bank Account" : null);
     const isBankAccount = !!resolvedBankName || (resolvedType && resolvedType.toLowerCase().includes("bank"));
-    const resolvedAccountNumber = isBankAccount ? String(account_number || "").trim() || null : null;
-    const resolvedMasked =
-      masked_account_number ||
-      masked_card_number ||
+    const resolvedAccountNumber =
+      String(account_number || "").trim() ||
       buildMaskedAccountNumber(account_number || "") ||
-      maskCardNumber(card_number || "");
+      maskCardNumber(card_number || "") ||
+      null;
 
-    if (!userId || !resolvedCardHolderName || !resolvedType || !resolvedMasked) {
+    if (!userId || !resolvedCardHolderName || !resolvedType || !resolvedAccountNumber) {
       return res.status(400).json({ error: "name, account/card number and payment type are required" });
     }
 
     if ((resolvedBankName && !resolvedBranchName) || (!resolvedBankName && resolvedBranchName)) {
       return res.status(400).json({ error: "bank_name and branch_name should be provided together" });
     }
-    if (isBankAccount && !resolvedAccountNumber) {
-      return res.status(400).json({ error: "full account number is required for bank accounts" });
-    }
-
     const connection = await pool.getConnection();
-    await connection.execute(
+    const [insertResult] = await connection.execute(
       `INSERT INTO payment_methods
-        (user_id, card_holder_name, bank_name, branch_name, account_number, masked_card_number, card_type, expiry_month, expiry_year, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (user_id, card_holder_name, bank_name, branch_name, account_number, card_type, is_default)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         resolvedCardHolderName,
         resolvedBankName,
         resolvedBranchName,
         resolvedAccountNumber,
-        resolvedMasked,
         resolvedType,
-        Number(expiry_month || 1),
-        Number(expiry_year || new Date().getFullYear()),
         Number(is_default ? 1 : 0),
       ]
     );
 
     if (is_default) {
+      const insertedMethodId = Number(insertResult?.insertId || 0);
       await connection.execute(
-        "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND masked_card_number <> ?",
-        [userId, resolvedMasked]
+        "UPDATE payment_methods SET is_default = 0 WHERE user_id = ? AND id <> ?",
+        [userId, insertedMethodId]
       );
     }
 
     await connection.release();
-    res.status(201).json({ message: "Payment method saved", masked_card_number: resolvedMasked });
+    res.status(201).json({ message: "Payment method saved", account_number: resolvedAccountNumber });
   } catch (err) {
     console.error("Add payment method error:", err);
     res.status(500).json({ error: "Failed to save payment method" });
@@ -4191,18 +4280,14 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
       bank_name,
       branch_name,
       account_number,
-      masked_account_number,
       card_number,
-      masked_card_number,
       card_type,
-      expiry_month,
-      expiry_year,
       is_default,
     } = req.body;
 
     const connection = await pool.getConnection();
     const [rows] = await connection.execute(
-      "SELECT id, user_id, masked_card_number, bank_name, card_type, account_number FROM payment_methods WHERE id = ? LIMIT 1",
+      "SELECT id, user_id, bank_name, card_type, account_number FROM payment_methods WHERE id = ? LIMIT 1",
       [id]
     );
     if (!rows.length) {
@@ -4216,23 +4301,16 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    const resolvedMasked =
-      masked_account_number ||
-      masked_card_number ||
-      buildMaskedAccountNumber(account_number || "") ||
-      maskCardNumber(card_number || "") ||
-      rows[0].masked_card_number;
     const resolvedBankName = bank_name !== undefined ? bank_name : rows[0].bank_name;
     const resolvedType = card_type || rows[0].card_type || "";
-    const isBankAccount = !!resolvedBankName || String(resolvedType).toLowerCase().includes("bank");
     const resolvedAccountNumber =
       account_number !== undefined
-        ? String(account_number || "").trim() || null
+        ? String(account_number || "").trim() || buildMaskedAccountNumber(account_number || "") || maskCardNumber(card_number || "") || null
         : rows[0].account_number || null;
 
-    if (isBankAccount && !resolvedAccountNumber) {
+    if (!resolvedAccountNumber) {
       await connection.release();
-      return res.status(400).json({ error: "full account number is required for bank accounts" });
+      return res.status(400).json({ error: "account/card number is required" });
     }
 
     await connection.execute(
@@ -4241,10 +4319,7 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
            bank_name = ?,
            branch_name = ?,
            account_number = ?,
-           masked_card_number = ?,
            card_type = COALESCE(?, card_type),
-           expiry_month = COALESCE(?, expiry_month),
-           expiry_year = COALESCE(?, expiry_year),
            is_default = COALESCE(?, is_default),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
@@ -4253,10 +4328,7 @@ router.put("/payment-methods/:id", verifyToken, async (req, res) => {
         bank_name || null,
         branch_name || null,
         resolvedAccountNumber,
-        resolvedMasked,
         card_type || null,
-        expiry_month ? Number(expiry_month) : null,
-        expiry_year ? Number(expiry_year) : null,
         is_default === undefined ? null : Number(!!is_default),
         id,
       ]
@@ -4614,6 +4686,7 @@ router.get("/superadmin/work-hours", verifyToken, async (req, res) => {
 router.put("/superadmin/work-hours/:id/status", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const workHourId = Number(id);
     const { status } = req.body;
     const superAdminId = req.user?.id;
 
@@ -4626,48 +4699,138 @@ router.put("/superadmin/work-hours/:id/status", verifyToken, async (req, res) =>
       return res.status(400).json({ error: "Invalid status. Must be approved, rejected, or pending" });
     }
 
-    const connection = await pool.getConnection();
-
-    if (status === "approved") {
-      await connection.execute(
-        `UPDATE work_hours
-         SET status = 'approved',
-             approved_by = ?,
-             approved_minutes = approved_minutes + COALESCE(pending_minutes, 0),
-             pending_minutes = 0,
-             hours_worked = ROUND((approved_minutes + COALESCE(pending_minutes, 0) + COALESCE(paid_minutes, 0)) / 60, 2),
-             updated_at = NOW()
-         WHERE id = ?`,
-        [superAdminId, id]
-      );
-    } else if (status === "rejected") {
-      await connection.execute(
-        `UPDATE work_hours
-         SET status = 'rejected',
-             approved_by = ?,
-             pending_minutes = 0,
-             hours_worked = ROUND((COALESCE(approved_minutes, 0) + COALESCE(paid_minutes, 0)) / 60, 2),
-             updated_at = NOW()
-         WHERE id = ?`,
-        [superAdminId, id]
-      );
-    } else {
-      await connection.execute(
-        `UPDATE work_hours
-         SET status = 'pending',
-             approved_by = ?,
-             pending_minutes = COALESCE(pending_minutes, 0) + COALESCE(approved_minutes, 0),
-             approved_minutes = 0,
-             hours_worked = ROUND((COALESCE(minutes_worked, 0)) / 60, 2),
-             updated_at = NOW()
-         WHERE id = ?`,
-        [superAdminId, id]
-      );
+    if (!workHourId) {
+      return res.status(400).json({ error: "Valid work hour id is required" });
     }
 
-    await connection.release();
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    res.json({ message: `Work hours ${status}` });
+    try {
+      const [workHourRows] = await connection.execute(
+        `SELECT
+          wh.id,
+          wh.admin_id,
+          COALESCE(wh.pending_minutes, 0) as pending_minutes,
+          COALESCE(wh.minutes_worked, ROUND(COALESCE(wh.hours_worked, 0) * 60)) as minutes_worked,
+          COALESCE(wh.approved_minutes, 0) as approved_minutes,
+          COALESCE(wh.paid_minutes, 0) as paid_minutes,
+          u.role,
+          COALESCE(ur.custom_rate, rr.default_rate, 0) as hourly_rate
+         FROM work_hours wh
+         INNER JOIN users u ON u.id = wh.admin_id
+         LEFT JOIN user_rates ur ON ur.user_id = wh.admin_id AND ur.payment_type = 'per_hour'
+         LEFT JOIN role_rates rr ON rr.role_name = 'admin' AND rr.payment_type = 'per_hour'
+         WHERE wh.id = ?
+         FOR UPDATE`,
+        [workHourId]
+      );
+
+      if (!workHourRows.length) {
+        await connection.rollback();
+        await connection.release();
+        return res.status(404).json({ error: "Work hour entry not found" });
+      }
+
+      const workHour = workHourRows[0];
+      if (workHour.role !== "admin") {
+        await connection.rollback();
+        await connection.release();
+        return res.status(400).json({ error: "Selected work hour entry does not belong to an admin" });
+      }
+
+      let paymentCreated = false;
+
+      if (status === "approved") {
+        const fallbackWorkedMinutes = Math.max(
+          0,
+          Number(workHour.minutes_worked || 0) - Number(workHour.approved_minutes || 0) - Number(workHour.paid_minutes || 0)
+        );
+        const approvedNowMinutes = Number(workHour.pending_minutes || 0) > 0
+          ? Number(workHour.pending_minutes || 0)
+          : fallbackWorkedMinutes;
+
+        await connection.execute(
+          `UPDATE work_hours
+           SET status = 'approved',
+               approved_by = ?,
+               approved_minutes = approved_minutes + ?,
+               pending_minutes = 0,
+               hours_worked = ROUND((approved_minutes + ? + COALESCE(paid_minutes, 0)) / 60, 2),
+               updated_at = NOW()
+           WHERE id = ?`,
+          [superAdminId, approvedNowMinutes, approvedNowMinutes, workHourId]
+        );
+
+        if (approvedNowMinutes > 0) {
+          const hourlyRate = Number(workHour.hourly_rate || 0);
+          const minuteRate = hourlyRate / 60;
+          const amount = Number((approvedNowMinutes * minuteRate).toFixed(2));
+
+          if (amount > 0) {
+            await connection.execute(
+              `INSERT INTO payments (
+                user_id,
+                amount,
+                status,
+                hours,
+                paid_minutes,
+                minute_rate,
+                rate_used,
+                payment_method,
+                approved_by,
+                approved_date,
+                created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+              [
+                Number(workHour.admin_id),
+                amount,
+                PAYMENT_STATUS.READY_TO_PAY,
+                Number((approvedNowMinutes / 60).toFixed(2)),
+                approvedNowMinutes,
+                Number(minuteRate.toFixed(4)),
+                hourlyRate,
+                "bank",
+                superAdminId,
+              ]
+            );
+            paymentCreated = true;
+          }
+        }
+      } else if (status === "rejected") {
+        await connection.execute(
+          `UPDATE work_hours
+           SET status = 'rejected',
+               approved_by = ?,
+               pending_minutes = 0,
+               hours_worked = ROUND((COALESCE(approved_minutes, 0) + COALESCE(paid_minutes, 0)) / 60, 2),
+               updated_at = NOW()
+           WHERE id = ?`,
+          [superAdminId, workHourId]
+        );
+      } else {
+        await connection.execute(
+          `UPDATE work_hours
+           SET status = 'pending',
+               approved_by = ?,
+               pending_minutes = COALESCE(pending_minutes, 0) + COALESCE(approved_minutes, 0),
+               approved_minutes = 0,
+               hours_worked = ROUND((COALESCE(minutes_worked, 0)) / 60, 2),
+               updated_at = NOW()
+           WHERE id = ?`,
+          [superAdminId, workHourId]
+        );
+      }
+
+      await connection.commit();
+      await connection.release();
+
+      res.json({ message: `Work hours ${status}`, paymentCreated });
+    } catch (innerErr) {
+      await connection.rollback();
+      await connection.release();
+      throw innerErr;
+    }
   } catch (err) {
     console.error("Update work hours status error:", err);
     res.status(500).json({ error: "Failed to update work hours status" });
@@ -5173,7 +5336,7 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [existing] = await connection.execute(
-      "SELECT status FROM payments WHERE id = ?",
+      "SELECT status, user_id, payment_method_id FROM payments WHERE id = ?",
       [id]
     );
 
@@ -5250,6 +5413,29 @@ router.put("/payments/:id", verifyToken, async (req, res) => {
     if (nextStatus === PAYMENT_STATUS.PAID && !payment_date) {
       updates.push("payment_date = ?");
       values.push(toMySqlDateTime(new Date()));
+    }
+
+    if (nextStatus === PAYMENT_STATUS.PAID && !Number(existing[0].payment_method_id || 0)) {
+      const [methodRows] = await connection.execute(
+        `SELECT id
+         FROM payment_methods
+         WHERE user_id = ?
+         ORDER BY
+           CASE
+             WHEN account_number IS NOT NULL AND TRIM(account_number) <> '' THEN 1
+             ELSE 0
+           END DESC,
+           is_default DESC,
+           updated_at DESC,
+           id DESC
+         LIMIT 1`,
+        [existing[0].user_id]
+      );
+
+      if (methodRows.length > 0) {
+        updates.push("payment_method_id = ?");
+        values.push(Number(methodRows[0].id));
+      }
     }
 
     if (updates.length === 0) {
@@ -5489,16 +5675,20 @@ router.get("/admin/reports", verifyToken, async (req, res) => {
 
     // Progress over time
     const [progressOverTime] = await connection.execute(
-      `SELECT DATE(created_at) as date,
-              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-              SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-              SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-              SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-              SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
-       FROM images
-       GROUP BY DATE(created_at)
-       ORDER BY date DESC
-       LIMIT 30`
+      `SELECT *
+       FROM (
+         SELECT DATE(created_at) as date,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+         FROM images
+         GROUP BY DATE(created_at)
+         ORDER BY date DESC
+         LIMIT 30
+       ) recent_progress
+       ORDER BY date ASC`
     );
 
     await connection.release();

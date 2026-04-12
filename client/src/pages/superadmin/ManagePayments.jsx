@@ -253,8 +253,6 @@ export default function ManagePayments() {
               card_holder_name: methodForm.cardHolderName,
               card_number: methodForm.cardNumber,
               card_type: methodForm.cardType,
-              expiry_month: Number(methodForm.expiryMonth),
-              expiry_year: Number(methodForm.expiryYear),
               is_default: !!methodForm.isDefault,
             },
         { headers: getAuthHeader() }
@@ -543,6 +541,7 @@ export default function ManagePayments() {
         { status },
         { headers: getAuthHeader() }
       );
+
       setApprovalStatus({
         type: "success",
         message: `Work hours ${status === "approved" ? "approved" : "rejected"} successfully`,
@@ -725,7 +724,7 @@ export default function ManagePayments() {
 
     const confirmed = await showAppConfirm(
       `Mark payment as paid for ${getPaymentDisplayName(payment)}?`,
-      { confirmText: "Mark Paid", tone: "warning" }
+      { confirmText: "Pay", tone: "warning" }
     );
     if (!confirmed) return;
 
@@ -1272,7 +1271,7 @@ export default function ManagePayments() {
   };
 
   const getMethodSecondaryLabel = (method) => {
-    return isBankMethod(method) ? "Bank / Branch" : "Expiry";
+    return isBankMethod(method) ? "Bank / Branch" : "Account";
   };
 
   const getMethodSecondaryValue = (method) => {
@@ -1280,15 +1279,12 @@ export default function ManagePayments() {
     if (isBankMethod(method)) {
       return [method.bank_name, method.branch_name].filter(Boolean).join(" / ") || "-";
     }
-    return `${String(method.expiry_month).padStart(2, "0")}/${String(method.expiry_year).slice(-2)}`;
+    return method.account_number || "-";
   };
 
   const getMethodPrimaryValue = (method) => {
     if (!method) return "****";
-    if (isBankMethod(method)) {
-      return method.account_number || method.masked_card_number || "****";
-    }
-    return method.masked_card_number || "****";
+    return method.account_number || "****";
   };
 
   const getMethodOptionLabel = (method) => {
@@ -1359,43 +1355,47 @@ export default function ManagePayments() {
   const safeActiveTab = supportedTabs.includes(activeTab) ? activeTab : "model";
 
   const downloadBankWiseTransferList = () => {
-    if (transferFilters.bank === "all") {
+    const paidTransferPayments = transferListPayments.filter((payment) => payment.status === "paid");
+
+    if (!paidTransferPayments.length) {
       setApprovalStatus({
         type: "error",
-        message: "Select a bank to download a bank-wise transfer list",
+        message: "No paid records found for selected bank/filter",
       });
       return;
     }
 
-    if (!transferListPayments.length) {
-      setApprovalStatus({
-        type: "error",
-        message: "No records found for selected bank/filter",
-      });
-      return;
-    }
-
-    const safeBank = String(transferFilters.bank)
-      .replace(/[^a-zA-Z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "bank";
     const stamp = new Date().toISOString().slice(0, 10);
-    const fileName = `bank_transfer_${safeBank}_${stamp}.pdf`;
+    const fileName = `bank_transfer_${stamp}.pdf`;
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    const headers = ["User", "Role", "Bank", "Branch", "Account No", "Holder Name", "Amount", "Status"];
-    const colWidths = [40, 20, 30, 28, 32, 36, 20, 24];
+    const headers = ["User", "Role", "Branch", "Account No", "Holder Name", "Paid Amount", "Paid Date"];
+    const colWidths = [42, 22, 30, 34, 38, 30, 30];
     const startX = 8;
     const lineHeight = 7;
     const pageHeight = doc.internal.pageSize.getHeight();
     let y = 14;
 
-    const drawHeader = () => {
+    const bankGroups = paidTransferPayments.reduce((groups, payment) => {
+      const bankName = getRecipientBankName(payment) || "Unknown Bank";
+      if (!groups[bankName]) {
+        groups[bankName] = [];
+      }
+      groups[bankName].push(payment);
+      return groups;
+    }, {});
+
+    const bankNames = Object.keys(bankGroups).sort((a, b) => a.localeCompare(b));
+
+    const drawHeader = (bankName, bankTotal, bankCount) => {
       doc.setFontSize(14);
-      doc.text("PlastiTrack - Bank Transfer List", startX, y);
+      doc.text("PlastiTrack - Bank Transfer Sheet", startX, y);
       y += 6;
       doc.setFontSize(10);
-      doc.text(`Bank: ${transferFilters.bank}   Date: ${stamp}`, startX, y);
-      y += 6;
+      doc.text(`Bank: ${bankName}   Date: ${stamp}`, startX, y);
+      y += 5;
+      doc.text(`Paid Records: ${bankCount}   Total Paid: Rs ${bankTotal.toLocaleString()}`, startX, y);
+      y += 7;
 
       doc.setFontSize(9);
       let x = startX;
@@ -1407,41 +1407,50 @@ export default function ManagePayments() {
       y += lineHeight;
     };
 
-    drawHeader();
+    bankNames.forEach((bankName, bankIndex) => {
+      const bankPayments = bankGroups[bankName];
+      const bankTotal = bankPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
 
-    transferListPayments.forEach((payment) => {
-      if (y > pageHeight - 10) {
+      if (bankIndex > 0) {
         doc.addPage();
         y = 14;
-        drawHeader();
       }
 
-      const row = [
-        getPaymentDisplayName(payment),
-        String(payment.user_role || "-").toUpperCase(),
-        getRecipientBankName(payment),
-        payment?.recipient_branch_name || "-",
-        getRecipientAccount(payment),
-        payment?.recipient_account_holder || "-",
-        Number(payment.amount || 0).toFixed(2),
-        getStatusLabel(payment.status),
-      ];
+      drawHeader(bankName, bankTotal, bankPayments.length);
 
-      let x = startX;
-      row.forEach((cell, idx) => {
-        doc.rect(x, y - 4, colWidths[idx], lineHeight);
-        doc.text(String(cell).slice(0, 26), x + 1.5, y);
-        x += colWidths[idx];
+      bankPayments.forEach((payment) => {
+        if (y > pageHeight - 10) {
+          doc.addPage();
+          y = 14;
+          drawHeader(bankName, bankTotal, bankPayments.length);
+        }
+
+        const row = [
+          getPaymentDisplayName(payment),
+          String(payment.user_role || "-").toUpperCase(),
+          payment?.recipient_branch_name || "-",
+          getRecipientAccount(payment),
+          payment?.recipient_account_holder || "-",
+          Number(payment.amount || 0).toFixed(2),
+          payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0] || "-",
+        ];
+
+        let x = startX;
+        row.forEach((cell, idx) => {
+          doc.rect(x, y - 4, colWidths[idx], lineHeight);
+          doc.text(String(cell).slice(0, 26), x + 1.5, y);
+          x += colWidths[idx];
+        });
+
+        y += lineHeight;
       });
-
-      y += lineHeight;
     });
 
     doc.save(fileName);
 
     setApprovalStatus({
       type: "success",
-      message: `Downloaded bank-wise PDF for ${transferFilters.bank}`,
+      message: "Downloaded bank-wise PDF with paid records grouped by bank",
     });
   };
 
@@ -1549,36 +1558,18 @@ export default function ManagePayments() {
                       <td>{getRecipientBankName(payment)}</td>
                       <td>{getRecipientAccount(payment)}</td>
                       <td>{new Date(payment.created_at).toLocaleDateString()}</td>
-                      <td>
-                        <div style={{ display: "flex", gap: "5px" }}>
-                          <button
-                            className="btn-approve"
-                            onClick={() => openApprovalDialog(payment, "approved")}
-                            style={{
-                              padding: "6px 12px",
-                              backgroundColor: "#10b981",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "4px",
-                              cursor: "pointer",
-                              fontSize: "12px",
-                            }}
-                          >
+                        <td>
+                          <div className="payment-action-group">
+                            <button
+                              className="payment-action-button approve"
+                              onClick={() => openApprovalDialog(payment, "approved")}
+                            >
                             ✓ Approve
                           </button>
                           <button
-                            className="btn-reject"
-                            onClick={() => openApprovalDialog(payment, "rejected")}
-                            style={{
-                              padding: "6px 12px",
-                              backgroundColor: "#ef4444",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "4px",
-                              cursor: "pointer",
-                              fontSize: "12px",
-                            }}
-                          >
+                              className="payment-action-button reject"
+                              onClick={() => openApprovalDialog(payment, "rejected")}
+                            >
                             ✗ Reject
                           </button>
                         </div>
@@ -1621,34 +1612,16 @@ export default function ManagePayments() {
                         <td>{new Date(workHour.date).toLocaleDateString()}</td>
                         <td>{workHour.task_description || "-"}</td>
                         <td>
-                          <div style={{ display: "flex", gap: "5px" }}>
+                          <div className="payment-action-group">
                             <button
-                              className="btn-approve"
+                              className="payment-action-button approve"
                               onClick={() => handleWorkHoursApproval(workHour.id, "approved")}
-                              style={{
-                                padding: "6px 12px",
-                                backgroundColor: "#10b981",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontSize: "12px",
-                              }}
                             >
                               ✓ Approve
                             </button>
                             <button
-                              className="btn-reject"
+                              className="payment-action-button reject"
                               onClick={() => handleWorkHoursApproval(workHour.id, "rejected")}
-                              style={{
-                                padding: "6px 12px",
-                                backgroundColor: "#ef4444",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                fontSize: "12px",
-                              }}
                             >
                               ✗ Reject
                             </button>
@@ -1710,7 +1683,7 @@ export default function ManagePayments() {
                             onClick={() => handleManualMarkPaid(payment)}
                             disabled={payingPaymentId === payment.id}
                           >
-                            {payingPaymentId === payment.id ? "Updating..." : "Mark Paid"}
+                            {payingPaymentId === payment.id ? "Updating..." : "Pay"}
                           </button>
                         </td>
                       </tr>
@@ -1761,7 +1734,7 @@ export default function ManagePayments() {
                             onClick={() => handleManualMarkPaid(payment)}
                             disabled={payingPaymentId === payment.id}
                           >
-                            {payingPaymentId === payment.id ? "Updating..." : "Mark Paid"}
+                            {payingPaymentId === payment.id ? "Updating..." : "Pay"}
                           </button>
                         </td>
                       </tr>
@@ -1849,46 +1822,6 @@ export default function ManagePayments() {
                 </div>
               );
             })}
-
-            <div className="admin-payments-section">
-              <h3>Admin Payments</h3>
-              <div className="table-container">
-                <table className="payments-table">
-                  <thead>
-                    <tr>
-                      <th>Admin</th>
-                      <th>Hours</th>
-                      <th>Amount</th>
-                      <th>Status</th>
-                      <th>Method</th>
-                      <th>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminPaymentDetails.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="no-data">No admin payments</td>
-                      </tr>
-                    ) : (
-                      adminPaymentDetails.map((payment) => (
-                        <tr key={payment.id}>
-                          <td>{payment.admin_name}</td>
-                          <td>{formatHoursAsHM(payment.hours)}</td>
-                          <td>₨ {Number(payment.amount || 0).toLocaleString()}</td>
-                          <td>
-                            <span className={`status-badge status-${payment.status}`}>
-                              {payment.status}
-                            </span>
-                          </td>
-                          <td>{payment.payment_method || "-"}</td>
-                          <td>{payment.payment_date?.split("T")[0] || payment.created_at?.split("T")[0]}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
         )}
 
@@ -2322,16 +2255,16 @@ export default function ManagePayments() {
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <div className="payment-card-actions">
                           {isPending && (
                             <>
-                              <button className="btn-approve" type="button" onClick={() => openApprovalDialog(payment, "approved")}>Approve</button>
-                              <button className="btn-reject" type="button" onClick={() => openApprovalDialog(payment, "rejected")}>Reject</button>
+                              <button className="payment-action-button approve" type="button" onClick={() => openApprovalDialog(payment, "approved")}>Approve</button>
+                              <button className="payment-action-button reject" type="button" onClick={() => openApprovalDialog(payment, "rejected")}>Reject</button>
                             </>
                           )}
                           {isApproved && (
                             <button className="btn-primary" type="button" onClick={() => handleManualMarkPaid(payment)}>
-                              Mark Paid
+                              Pay
                             </button>
                           )}
                           {payment.status === "paid" && (

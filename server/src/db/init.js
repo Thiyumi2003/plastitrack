@@ -516,14 +516,10 @@ async function initDatabase() {
         bank_name VARCHAR(120) NULL,
         branch_name VARCHAR(120) NULL,
         account_number VARCHAR(40) NULL,
-        masked_card_number VARCHAR(25) NOT NULL,
         card_type VARCHAR(50) NOT NULL,
-        expiry_month INT NOT NULL,
-        expiry_year INT NOT NULL,
         is_default BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY uniq_user_masked_card (user_id, masked_card_number),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       ) COMMENT 'Stores payment methods with masked identifiers and optional full bank account number'
     `;
@@ -534,6 +530,9 @@ async function initDatabase() {
     await ensureColumn("payment_methods", "branch_name", "VARCHAR(120) NULL AFTER bank_name");
     await ensureColumn("payment_methods", "account_number", "VARCHAR(40) NULL AFTER branch_name");
     await dropColumnIfExists("payment_methods", "account_name");
+    await dropColumnIfExists("payment_methods", "masked_card_number");
+    await dropColumnIfExists("payment_methods", "expiry_month");
+    await dropColumnIfExists("payment_methods", "expiry_year");
 
     // Add FK from payments.payment_method_id to payment_methods.id if missing.
     try {

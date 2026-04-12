@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./FilterManager";
@@ -26,14 +36,28 @@ export const TesterReviewReport = () => {
     return {
       totalTesters: testerPerf.length,
       avgAccuracy: (
-        testerPerf.reduce((sum, row) => sum + row.accuracy, 0) /
+        testerPerf.reduce((sum, row) => sum + Number(row.accuracy || 0), 0) /
         testerPerf.length
       ).toFixed(1),
-      totalAssigned: testerPerf.reduce((sum, row) => sum + row.totalAssigned, 0),
-      totalApproved: testerPerf.reduce((sum, row) => sum + row.approved, 0),
-      totalRejected: testerPerf.reduce((sum, row) => sum + row.rejected, 0),
+      totalAssigned: testerPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
+      totalApproved: testerPerf.reduce((sum, row) => sum + Number(row.approved || 0), 0),
+      totalRejected: testerPerf.reduce((sum, row) => sum + Number(row.rejected || 0), 0),
     };
   }, [testerPerf]);
+
+  const chartData = useMemo(() => {
+    return (testerPerf || []).map((row) => ({
+      name: row.name,
+      assigned: Number(row.totalAssigned || 0),
+      approved: Number(row.approved || 0),
+      rejected: Number(row.rejected || 0),
+    }));
+  }, [testerPerf]);
+
+  const chartSeriesOrder = useMemo(
+    () => ({ assigned: 0, approved: 1, rejected: 2 }),
+    []
+  );
 
   useEffect(() => {
     const loadPerformance = async () => {
@@ -122,6 +146,19 @@ export const TesterReviewReport = () => {
       {
         title: "Tester Performance Report",
         filters: { startDate, endDate },
+        charts: [
+          {
+            title: "Tester Status Comparison",
+            type: "bar",
+            labelKey: "name",
+            data: chartData,
+            series: [
+              { key: "assigned", label: "Assigned", color: "#4D96FF" },
+              { key: "approved", label: "Approved", color: "#6BCB77" },
+              { key: "rejected", label: "Rejected", color: "#FF6B6B" },
+            ],
+          },
+        ],
         kpis: [
           { label: "Total Testers", value: stats?.totalTesters || 0 },
           { label: "Avg Accuracy", value: `${stats?.avgAccuracy || 0}%` },
@@ -218,6 +255,42 @@ export const TesterReviewReport = () => {
                 icon="✗"
                 color="#FF6B6B"
               />
+            </div>
+          )}
+
+          {chartData.length > 0 && (
+            <div className="chart-container" style={{ marginBottom: "20px" }}>
+              <h4 style={{ marginTop: 0, color: "#ffffff" }}>Tester Status Comparison</h4>
+              <div style={{ width: "100%", height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 50 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" angle={-20} textAnchor="end" height={60} interval={0} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const labelMap = {
+                          assigned: "Assigned",
+                          approved: "Approved",
+                          rejected: "Rejected",
+                        };
+                        return [value, labelMap[name] || name];
+                      }}
+                      itemSorter={(entry) => chartSeriesOrder[entry?.dataKey] ?? 999}
+                    />
+                    <Legend
+                      payload={[
+                        { value: "Assigned", type: "square", color: "#4D96FF", id: "assigned" },
+                        { value: "Approved", type: "square", color: "#6BCB77", id: "approved" },
+                        { value: "Rejected", type: "square", color: "#FF6B6B", id: "rejected" },
+                      ]}
+                    />
+                    <Bar dataKey="assigned" fill="#4D96FF" name="Assigned" />
+                    <Bar dataKey="approved" fill="#6BCB77" name="Approved" />
+                    <Bar dataKey="rejected" fill="#FF6B6B" name="Rejected" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
 

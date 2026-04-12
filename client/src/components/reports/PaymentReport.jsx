@@ -1,4 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./FilterManager";
@@ -15,6 +23,8 @@ export const PaymentReport = () => {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  const chartColors = ["#6BCB77", "#4D96FF", "#FFB74D", "#FF6B6B", "#9C27B0", "#00B8D9"];
 
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
     payments,
@@ -80,6 +90,19 @@ export const PaymentReport = () => {
 
   const formatDate = (value) => (value ? new Date(value).toLocaleString() : "-");
 
+  const paymentStatusData = useMemo(() => {
+    const statusCounts = payments.reduce((accumulator, payment) => {
+      const rawStatus = String(payment.status || "unknown");
+      const normalizedStatus = rawStatus.replace(/_/g, " ");
+      accumulator[normalizedStatus] = (accumulator[normalizedStatus] || 0) + 1;
+      return accumulator;
+    }, {});
+
+    return Object.entries(statusCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [payments]);
+
   const handleExportExcel = () => {
     const data = payments.map((payment, index) => ({
       "Payment ID": index + 1,
@@ -134,6 +157,14 @@ export const PaymentReport = () => {
           endDate,
           status: statusFilter === "all" ? "All" : statusFilter,
         },
+        charts: [
+          {
+            title: "Payment Status Mix",
+            type: "pie",
+            data: paymentStatusData,
+            colors: chartColors,
+          },
+        ],
         kpis: [
           { label: "Total Payments", value: summary.totalPayments || 0 },
           { label: "Total Amount (Rs)", value: (summary.totalAmount || 0).toLocaleString("en-IN") },
@@ -262,6 +293,33 @@ export const PaymentReport = () => {
               loading={loading}
             />
           </div>
+
+          {paymentStatusData.length > 0 && (
+            <div className="chart-container" style={{ marginBottom: "20px" }}>
+              <h4 style={{ marginTop: 0, color: "#ffffff" }}>Payment Status Mix</h4>
+              <div style={{ width: "100%", height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={paymentStatusData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={95}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    >
+                      {paymentStatusData.map((entry, index) => (
+                        <Cell key={`payment-pie-${entry.name}`} fill={chartColors[index % chartColors.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [value, "Payments"]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           {/* Payment Table */}
           {payments.length === 0 ? (

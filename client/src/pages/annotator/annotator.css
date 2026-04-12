@@ -2,6 +2,7 @@
 .dashboard-container {
   display: flex;
   min-height: 100vh;
+  height: 100vh;
   background: linear-gradient(135deg, #0a0e27 0%, #121b2f 50%, #1a1f3a 100%);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   position: relative;
@@ -23,10 +24,14 @@
 
 .dashboard-main {
   flex: 1;
+  margin-left: 280px;
+  height: 100vh;
   padding: 30px 40px;
   overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
   z-index: 1;
+  transition: margin-left 0.3s ease;
 }
 
 .admin-layout-topbar {

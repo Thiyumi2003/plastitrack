@@ -24,6 +24,171 @@ const formatFilterSummary = (filters = {}) => {
   return items.length > 0 ? items.join(" | ") : "All data";
 };
 
+const defaultChartColors = ["#4D96FF", "#6BCB77", "#FFA07A", "#FF6B6B", "#9C27B0", "#00B8D9"];
+
+const formatChartValue = (value) => {
+  if (value === null || value === undefined || value === "") return "0";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  return String(value);
+};
+
+const buildPieChartHtml = (chart) => {
+  const data = Array.isArray(chart.data) ? chart.data : [];
+  const total = data.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const colors = chart.colors?.length ? chart.colors : defaultChartColors;
+
+  if (!data.length || total <= 0) {
+    return `<div class="pdf-chart-empty">No chart data available</div>`;
+  }
+
+  const radius = 72;
+  const center = 100;
+  const pieSlicePath = (startAngle, endAngle) => {
+    const start = {
+      x: center + radius * Math.cos((Math.PI * startAngle) / 180),
+      y: center + radius * Math.sin((Math.PI * startAngle) / 180),
+    };
+    const end = {
+      x: center + radius * Math.cos((Math.PI * endAngle) / 180),
+      y: center + radius * Math.sin((Math.PI * endAngle) / 180),
+    };
+    const largeArcFlag = endAngle - startAngle <= 180 ? 0 : 1;
+    return [
+      `M ${center} ${center}`,
+      `L ${start.x.toFixed(2)} ${start.y.toFixed(2)}`,
+      `A ${radius} ${radius} 0 ${largeArcFlag} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+      "Z",
+    ].join(" ");
+  };
+
+  const slices = [];
+  let currentAngle = -90;
+  data.forEach((item, index) => {
+    const value = Number(item.value || 0);
+    const angle = (value / total) * 360;
+    const nextAngle = currentAngle + angle;
+    slices.push({
+      path: pieSlicePath(currentAngle, nextAngle),
+      color: colors[index % colors.length],
+    });
+    currentAngle = nextAngle;
+  });
+
+  const legendHtml = data
+    .map((item, index) => {
+      const color = colors[index % colors.length];
+      const value = Number(item.value || 0);
+      const percent = total > 0 ? ((value / total) * 100).toFixed(1) : "0.0";
+      return `
+        <div class="pdf-chart-legend-item">
+          <span class="pdf-chart-legend-swatch" style="background:${color}"></span>
+          <span class="pdf-chart-legend-label">${escapeHtml(item.name || `Item ${index + 1}`)}</span>
+          <span class="pdf-chart-legend-value">${escapeHtml(formatChartValue(value))} (${percent}%)</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="pdf-chart-pie-wrap">
+      <svg class="pdf-chart-pie-svg" viewBox="0 0 200 200" role="img" aria-label="Pie chart">
+        <circle cx="100" cy="100" r="76" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" />
+        ${slices
+          .map(
+            (slice) => `
+              <path d="${slice.path}" fill="${slice.color}" stroke="#ffffff" stroke-width="2" />
+            `
+          )
+          .join("")}
+        <circle cx="100" cy="100" r="40" fill="#ffffff" opacity="0.92" />
+        <text x="100" y="96" text-anchor="middle" class="pdf-chart-pie-center-label">Total</text>
+        <text x="100" y="112" text-anchor="middle" class="pdf-chart-pie-center-value">${escapeHtml(formatChartValue(total))}</text>
+      </svg>
+      <div class="pdf-chart-legend">${legendHtml}</div>
+    </div>
+  `;
+};
+
+const buildBarChartHtml = (chart) => {
+  const data = Array.isArray(chart.data) ? chart.data : [];
+  const series = Array.isArray(chart.series) ? chart.series : [];
+  const labelKey = chart.labelKey || "name";
+  const colors = chart.colors?.length ? chart.colors : defaultChartColors;
+
+  if (!data.length || !series.length) {
+    return `<div class="pdf-chart-empty">No chart data available</div>`;
+  }
+
+  const maxValue = Math.max(
+    ...data.flatMap((item) => series.map((entry) => Number(item?.[entry.key] || 0))),
+    0
+  );
+
+  const rowsHtml = data
+    .map((item) => {
+      const label = item?.[labelKey] ?? "-";
+      const bars = series
+        .map((entry, seriesIndex) => {
+          const value = Number(item?.[entry.key] || 0);
+          const width = maxValue > 0 ? (value / maxValue) * 100 : 0;
+          const color = entry.color || colors[seriesIndex % colors.length];
+          return `
+            <div class="pdf-chart-bar-series">
+              <span class="pdf-chart-bar-series-label">${escapeHtml(entry.label || entry.key)}</span>
+              <div class="pdf-chart-bar-track">
+                <div class="pdf-chart-bar-fill" style="width:${width.toFixed(2)}%; background:${color};"></div>
+              </div>
+              <span class="pdf-chart-bar-series-value">${escapeHtml(formatChartValue(value))}</span>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="pdf-chart-bar-row">
+          <div class="pdf-chart-bar-label">${escapeHtml(label)}</div>
+          <div class="pdf-chart-bar-group">${bars}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  const legendHtml = series
+    .map((entry, index) => {
+      const color = entry.color || colors[index % colors.length];
+      return `
+        <div class="pdf-chart-legend-item">
+          <span class="pdf-chart-legend-swatch" style="background:${color}"></span>
+          <span class="pdf-chart-legend-label">${escapeHtml(entry.label || entry.key)}</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="pdf-chart-bar-wrap">
+      <div class="pdf-chart-legend pdf-chart-legend-inline">${legendHtml}</div>
+      <div class="pdf-chart-bar-list">${rowsHtml}</div>
+    </div>
+  `;
+};
+
+const buildChartSectionHtml = (chart) => {
+  if (!chart) return "";
+
+  const title = chart.title || "Chart";
+  const subtitle = chart.subtitle ? `<div class="pdf-chart-subtitle">${escapeHtml(chart.subtitle)}</div>` : "";
+  const chartBody = chart.type === "bar" ? buildBarChartHtml(chart) : buildPieChartHtml(chart);
+
+  return `
+    <div class="pdf-chart-block">
+      <div class="pdf-chart-title">${escapeHtml(title)}</div>
+      ${subtitle}
+      ${chartBody}
+    </div>
+  `;
+};
+
 const buildTemplateStyles = () => `
   .pdf-root {
     background: #ffffff;
@@ -83,6 +248,132 @@ const buildTemplateStyles = () => `
     margin-top: 12px;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+  .pdf-chart-block {
+    margin-top: 12px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px;
+    background: #f8fafc;
+  }
+  .pdf-chart-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }
+  .pdf-chart-subtitle {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 8px;
+  }
+  .pdf-chart-empty {
+    font-size: 11px;
+    color: #64748b;
+    padding: 18px 6px;
+    text-align: center;
+    border: 1px dashed #cbd5e1;
+    border-radius: 6px;
+    background: #ffffff;
+  }
+  .pdf-chart-pie-wrap {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 14px;
+    align-items: center;
+  }
+  .pdf-chart-pie {
+    display: none;
+  }
+  .pdf-chart-pie-svg {
+    width: 190px;
+    height: 190px;
+    margin: 0 auto;
+    display: block;
+  }
+  .pdf-chart-pie-center-label {
+    font-size: 11px;
+    fill: #64748b;
+    font-weight: 600;
+  }
+  .pdf-chart-pie-center-value {
+    font-size: 16px;
+    fill: #0f172a;
+    font-weight: 700;
+  }
+  .pdf-chart-legend {
+    display: grid;
+    gap: 6px;
+  }
+  .pdf-chart-legend-inline {
+    margin-bottom: 8px;
+  }
+  .pdf-chart-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #0f172a;
+    flex-wrap: wrap;
+  }
+  .pdf-chart-legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+  .pdf-chart-legend-label {
+    font-weight: 600;
+  }
+  .pdf-chart-legend-value {
+    color: #475569;
+  }
+  .pdf-chart-bar-wrap {
+    display: grid;
+    gap: 10px;
+  }
+  .pdf-chart-bar-list {
+    display: grid;
+    gap: 8px;
+  }
+  .pdf-chart-bar-row {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 10px;
+    align-items: start;
+  }
+  .pdf-chart-bar-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #0f172a;
+    word-break: break-word;
+  }
+  .pdf-chart-bar-group {
+    display: grid;
+    gap: 6px;
+  }
+  .pdf-chart-bar-series {
+    display: grid;
+    grid-template-columns: 90px 1fr 40px;
+    gap: 8px;
+    align-items: center;
+  }
+  .pdf-chart-bar-series-label,
+  .pdf-chart-bar-series-value {
+    font-size: 10px;
+    color: #475569;
+  }
+  .pdf-chart-bar-track {
+    height: 10px;
+    background: #e2e8f0;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .pdf-chart-bar-fill {
+    height: 100%;
+    border-radius: 999px;
   }
   .pdf-table-title {
     font-size: 14px;
@@ -178,6 +469,7 @@ const buildReportSectionHtml = (report) => {
   const filterSummary = formatFilterSummary(report.filters || {});
   const kpis = Array.isArray(report.kpis) ? report.kpis : [];
   const tables = Array.isArray(report.tables) ? report.tables : [];
+  const charts = Array.isArray(report.charts) ? report.charts : [];
 
   const kpiHtml = kpis
     .map(
@@ -216,6 +508,8 @@ const buildReportSectionHtml = (report) => {
     })
     .join("");
 
+  const chartHtml = charts.map((chart) => buildChartSectionHtml(chart)).join("");
+
   return `
     <section class="pdf-section">
       <div class="pdf-header">
@@ -224,6 +518,7 @@ const buildReportSectionHtml = (report) => {
         <div class="pdf-meta">Filters: ${escapeHtml(filterSummary)}</div>
       </div>
       ${kpiHtml ? `<div class="pdf-kpis">${kpiHtml}</div>` : ""}
+      ${chartHtml}
       ${tableHtml}
       ${report.note ? `<div class="pdf-note">${escapeHtml(report.note)}</div>` : ""}
     </section>
@@ -422,11 +717,69 @@ export const ExportService = {
         title,
       } = options;
 
+      // Let chart layout settle before cloning/snapshotting.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const targetWidth = Math.max(element.scrollWidth, element.clientWidth);
+      const targetHeight = Math.max(element.scrollHeight, element.clientHeight);
+
+      const responsiveChartSizes = Array.from(
+        element.querySelectorAll(".recharts-responsive-container")
+      ).map((node) => ({
+        width: Math.max(node.clientWidth, 320),
+        height: Math.max(node.clientHeight, 220),
+      }));
+
       // Capture HTML as canvas
       const canvas = await html2canvas(element, {
         scale,
         logging: false,
         useCORS: true,
+        backgroundColor: "#ffffff",
+        width: targetWidth,
+        height: targetHeight,
+        windowWidth: targetWidth,
+        windowHeight: targetHeight,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          clonedDoc.documentElement.scrollTop = 0;
+          if (clonedDoc.body) clonedDoc.body.scrollTop = 0;
+          const clonedElement = clonedDoc.getElementById(elementId);
+          if (!clonedElement) return;
+
+          clonedElement.style.overflow = "visible";
+          clonedElement.style.maxHeight = "none";
+
+          const tableContainers = clonedElement.querySelectorAll(".table-container");
+          tableContainers.forEach((container) => {
+            container.style.overflow = "visible";
+            container.style.maxHeight = "none";
+            container.style.height = "auto";
+          });
+
+          const clonedResponsiveCharts = clonedElement.querySelectorAll(
+            ".recharts-responsive-container"
+          );
+          clonedResponsiveCharts.forEach((container, index) => {
+            const size = responsiveChartSizes[index] || { width: 600, height: 280 };
+            container.style.width = `${size.width}px`;
+            container.style.height = `${size.height}px`;
+            container.style.minWidth = `${size.width}px`;
+            container.style.minHeight = `${size.height}px`;
+            container.style.overflow = "visible";
+          });
+
+          const wrappers = clonedElement.querySelectorAll(".recharts-wrapper");
+          wrappers.forEach((wrapper) => {
+            wrapper.style.overflow = "visible";
+          });
+
+          const surfaces = clonedElement.querySelectorAll(".recharts-surface");
+          surfaces.forEach((surface) => {
+            surface.style.overflow = "visible";
+          });
+        },
       });
 
       // Create PDF

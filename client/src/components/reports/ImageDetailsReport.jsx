@@ -1,4 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./FilterManager";
@@ -69,6 +77,15 @@ export const ImageDetailsReport = () => {
     return text && String(text).trim().length > 0 ? text : "-";
   };
 
+  const chartColors = ["#4D96FF", "#6BCB77", "#FFA07A", "#FF6B6B", "#9C27B0", "#00B8D9"];
+  const statusChartData = Object.entries(
+    (images || []).reduce((counts, img) => {
+      const key = String(img.status || "unknown").replace(/_/g, " ");
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {})
+  ).map(([name, value]) => ({ name, value }));
+
   const handleExportExcel = () => {
     const data = images.map((img) => ({
       "Image ID": img.id,
@@ -127,6 +144,14 @@ export const ImageDetailsReport = () => {
       "Testing Completed": formatDate(img.testingCompletedDate),
     }));
 
+    const statusChartData = Object.entries(
+      (images || []).reduce((counts, img) => {
+        const key = String(img.status || "unknown").replace(/_/g, " ");
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+      }, {})
+    ).map(([name, value]) => ({ name, value }));
+
     await ExportService.exportReportTemplateToPDF(
       {
         title: "Image Details Report",
@@ -135,6 +160,14 @@ export const ImageDetailsReport = () => {
           endDate,
           status: statusFilter === "all" ? "All" : statusFilter,
         },
+        charts: [
+          {
+            title: "Image Status Mix",
+            type: "pie",
+            data: statusChartData,
+            colors: ["#4D96FF", "#6BCB77", "#FFA07A", "#FF6B6B", "#9C27B0"],
+          },
+        ],
         kpis: [
           { label: "Total Images", value: summary.totalImages || 0 },
           { label: "Total Objects", value: summary.totalObjects || 0 },
@@ -245,6 +278,30 @@ export const ImageDetailsReport = () => {
             </div>
           ) : (
             <>
+              <div className="chart-container" style={{ marginBottom: "16px" }}>
+                <h4 style={{ marginTop: 0, color: "#ffffff" }}>Image Status Distribution</h4>
+                <div style={{ width: "100%", height: 280 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusChartData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={95}
+                        dataKey="value"
+                        label={({ name, value }) => `${name}: ${value}`}
+                      >
+                        {statusChartData.map((entry, index) => (
+                          <Cell key={`image-status-${entry.name}-${index}`} fill={chartColors[index % chartColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
               <div className="table-container" style={{ marginBottom: "12px", overflowX: "auto" }}>
                 <table className="reports-table">
                   <thead>

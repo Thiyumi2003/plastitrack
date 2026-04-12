@@ -2,6 +2,7 @@
 .dashboard-container {
   display: flex;
   min-height: 100vh;
+  height: 100vh;
   background: linear-gradient(135deg, #0a0e27 0%, #121b2f 50%, #1a1f3a 100%);
   position: relative;
   overflow: hidden;
@@ -22,10 +23,14 @@
 
 .dashboard-main {
   flex: 1;
+  margin-left: 280px;
+  height: 100vh;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 30px 40px;
   position: relative;
   z-index: 1;
+  transition: margin-left 0.3s ease;
 }
 
 .admin-layout-topbar {
@@ -728,6 +733,56 @@
   gap: 10px;
 }
 
+.payment-card-actions,
+.payment-action-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.payment-action-button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+}
+
+.payment-action-button:hover {
+  transform: translateY(-1px);
+}
+
+.payment-action-button:active {
+  transform: translateY(0);
+}
+
+.payment-action-button.approve {
+  background: linear-gradient(135deg, #0f766e 0%, #10b981 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(16, 185, 129, 0.28);
+}
+
+.payment-action-button.approve:hover {
+  box-shadow: 0 14px 28px rgba(16, 185, 129, 0.34);
+}
+
+.payment-action-button.reject {
+  background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(239, 68, 68, 0.28);
+}
+
+.payment-action-button.reject:hover {
+  box-shadow: 0 14px 28px rgba(239, 68, 68, 0.34);
+}
+
 .pay-dialog-modal {
   width: min(760px, 100%);
 }
@@ -1305,6 +1360,7 @@
 
 @media (max-width: 768px) {
   .dashboard-main {
+    margin-left: 80px;
     padding: 15px;
   }
 

@@ -7,6 +7,7 @@ import "./admin.css";
 export default function AdminDashboard() {
   const [kpis, setKpis] = useState(null);
   const [reports, setReports] = useState(null);
+  const [summaryProgress, setSummaryProgress] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -18,13 +19,24 @@ export default function AdminDashboard() {
     const fetchDashboardData = async () => {
       try {
         setLoading(true);
-        const [kpiRes, reportRes] = await Promise.all([
+        const [kpiRes, reportRes, summaryRes] = await Promise.all([
           axios.get("http://localhost:5000/api/dashboard/kpis", { headers: getAuthHeader() }),
           axios.get("http://localhost:5000/api/dashboard/admin/reports", { headers: getAuthHeader() }),
+          axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", { headers: getAuthHeader() }),
         ]);
 
         setKpis(kpiRes.data);
         setReports(reportRes.data);
+        setSummaryProgress(
+          (summaryRes?.data?.progressOverTime || []).map((item) => ({
+            date: formatChartDate(item.date),
+            pending: Number(item.pending || 0),
+            inProgress: Number(item.in_progress || 0),
+            completed: Number(item.completed || 0),
+            approved: Number(item.approved || 0),
+            rejected: Number(item.rejected || 0),
+          }))
+        );
       } catch (err) {
         setError(err.response?.data?.error || "Failed to load dashboard");
         console.error("Dashboard error:", err);
@@ -51,14 +63,7 @@ export default function AdminDashboard() {
     total: item.images_count || 0,
   })) || [];
 
-  const progressData = reports?.progressOverTime?.map((item) => ({
-    date: formatChartDate(item.date),
-    pending: item.pending || 0,
-    inProgress: item.in_progress || 0,
-    completed: item.completed || 0,
-    approved: item.approved || 0,
-    rejected: item.rejected || 0,
-  })) || [];
+  const progressData = summaryProgress;
 
   return (
     <>
@@ -139,7 +144,7 @@ export default function AdminDashboard() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={(entry) => `${entry.name}: ${entry.value}`}
+                  label={({ name, value }) => `${name}: ${value}`}
                   outerRadius={100}
                   fill="#8884d8"
                   dataKey="value"

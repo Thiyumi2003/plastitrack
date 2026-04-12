@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   PieChart,
   Pie,
   Cell,
@@ -15,6 +17,7 @@ import {
 import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, KPICard } from "./FilterManager";
+import { formatChartDate } from "../../utils/dateUtils";
 
 /**
  * Annotation Summary Report Component
@@ -25,11 +28,14 @@ export const AnnotationSummaryReport = () => {
   const [summary, setSummary] = useState(null);
   const [summaryPie, setSummaryPie] = useState([]);
   const [summaryPerf, setSummaryPerf] = useState([]);
+  const [summaryProgress, setSummaryProgress] = useState([]);
+  const [summaryUserContrib, setSummaryUserContrib] = useState([]);
   const [roleFilter, setRoleFilter] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  const summaryColors = ["#6BCB77", "#FFA07A", "#FF6B6B", "#4D96FF"];
+  const summaryColors = ["#8B0000", "#FF6B6B", "#FFA07A", "#FFB6C1", "#DDA0DD", "#FF69B4"];
+  const dashboardPieColors = ["#8B0000", "#FF6B6B", "#FFA07A", "#FFB6C1", "#DDA0DD", "#FF69B4"];
 
   useEffect(() => {
     const loadSummary = async () => {
@@ -39,9 +45,35 @@ export const AnnotationSummaryReport = () => {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
         });
+        const progressSource = Array.isArray(data.progressOverTime) ? data.progressOverTime : [];
+        
+          let dashboardData = null;
+          try {
+            dashboardData = await fetchData("/api/dashboard/reports");
+          } catch (dashboardErr) {
+            console.warn("Dashboard contributions fallback load failed:", dashboardErr);
+          }
+
         setSummary(data.summary || {});
         setSummaryPie(data.pie || []);
         setSummaryPerf(data.performance || []);
+        setSummaryUserContrib(
+            (dashboardData?.userContributions || data.userContributions || []).map((item) => ({
+            name: item.name?.split(" ")?.[0] || item.email || "Unknown",
+            completed: Number(item.completed_count || 0),
+            total: Number(item.images_count || 0),
+          }))
+        );
+        setSummaryProgress(
+          (progressSource || []).map((item) => ({
+            date: formatChartDate(item.date),
+            pending: Number(item.pending || 0),
+            inProgress: Number(item.in_progress || 0),
+            completed: Number(item.completed || 0),
+            approved: Number(item.approved || 0),
+            rejected: Number(item.rejected || 0),
+          }))
+        );
       } catch (err) {
         console.error("Failed to load annotation summary:", err);
       }
@@ -49,6 +81,20 @@ export const AnnotationSummaryReport = () => {
 
     loadSummary();
   }, [startDate, endDate, roleFilter, fetchData]);
+
+  const userContributionData =
+    summaryUserContrib.length > 0
+      ? summaryUserContrib
+      : (summaryPerf || []).map((item) => ({
+          name: item.name?.split(" ")?.[0] || item.name,
+          completed: Number(item.completed || 0),
+          total: Number(item.assigned || 0),
+        }));
+
+  const statusChartData = (summaryPie || []).map((item) => ({
+    name: String(item.name || "").toLowerCase(),
+    value: Number(item.value || 0),
+  }));
 
   const handleFilterChange = useCallback((key, value) => {
     switch (key) {
@@ -122,6 +168,37 @@ export const AnnotationSummaryReport = () => {
           startDate,
           endDate,
         },
+        charts: [
+          {
+            title: "Image Status Distribution",
+            type: "pie",
+            data: statusChartData,
+            colors: dashboardPieColors,
+          },
+          {
+            title: "User Contributions",
+            type: "bar",
+            labelKey: "name",
+            data: userContributionData,
+            series: [
+              { key: "completed", label: "Completed", color: "#6BCB77" },
+              { key: "total", label: "Total", color: "#4D96FF" },
+            ],
+          },
+          {
+            title: "Progress Over Time",
+            type: "bar",
+            labelKey: "date",
+            data: summaryProgress,
+            series: [
+              { key: "pending", label: "Pending", color: "#FF6B6B" },
+              { key: "inProgress", label: "In Progress", color: "#FFA07A" },
+              { key: "completed", label: "Completed", color: "#98D8C8" },
+              { key: "approved", label: "Approved", color: "#6BCB77" },
+              { key: "rejected", label: "Rejected", color: "#FF5252" },
+            ],
+          },
+        ],
         kpis: [
           { label: "Total Image Sets", value: summary?.totalImageSets || 0 },
           { label: "Total Assigned", value: summary?.totalAssigned || 0 },
@@ -228,38 +305,23 @@ export const AnnotationSummaryReport = () => {
             />
           </div>
 
-          {/* Charts */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: "16px",
-            }}
-          >
-            {/* Pie Chart */}
+          <div className="charts-section">
             <div className="chart-container" style={{ margin: 0 }}>
-              <h4>Completed vs Pending</h4>
-              {summaryPie.length > 0 ? (
-                <ResponsiveContainer width="100%" height={240}>
-                  <PieChart>
-                    <Pie
-                      data={summaryPie}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={(entry) => `${entry.name}: ${entry.value}`}
-                      outerRadius={90}
-                      dataKey="value"
-                    >
-                      {summaryPie.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={summaryColors[index % summaryColors.length]}
-                        />
-                      ))}
-                    </Pie>
+              <h3>Progress Over Time</h3>
+              {summaryProgress.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={summaryProgress}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
                     <Tooltip />
-                  </PieChart>
+                    <Legend />
+                    <Line type="monotone" dataKey="pending" stroke="#FF6B6B" />
+                    <Line type="monotone" dataKey="inProgress" stroke="#FFA07A" />
+                    <Line type="monotone" dataKey="completed" stroke="#98D8C8" />
+                    <Line type="monotone" dataKey="approved" stroke="#6BCB77" />
+                    <Line type="monotone" dataKey="rejected" stroke="#FF5252" />
+                  </LineChart>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
@@ -268,20 +330,52 @@ export const AnnotationSummaryReport = () => {
               )}
             </div>
 
-            {/* Bar Chart */}
             <div className="chart-container" style={{ margin: 0 }}>
-              <h4>Performance by Annotator</h4>
-              {summaryPerf.length > 0 ? (
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={summaryPerf}>
+              <h3>User Contributions</h3>
+              {userContributionData.length > 0 ? (
+                <div style={{ width: "100%", overflowX: "auto" }}>
+                  <BarChart
+                    width={Math.max(700, userContributionData.length * 90)}
+                    height={300}
+                    data={userContributionData}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" angle={-20} textAnchor="end" height={60} />
+                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} interval={0} />
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="assigned" fill="#4D96FF" name="Assigned" />
                     <Bar dataKey="completed" fill="#6BCB77" name="Completed" />
+                    <Bar dataKey="total" fill="#4D96FF" name="Total" />
                   </BarChart>
+                </div>
+              ) : (
+                <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
+                  No data available
+                </div>
+              )}
+            </div>
+
+            <div className="chart-container" style={{ margin: 0 }}>
+              <h3>Image Status Distribution</h3>
+              {statusChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={statusChartData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={(entry) => `${entry.name}: ${entry.value}`}
+                      outerRadius={100}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {statusChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={summaryColors[index % summaryColors.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
                 </ResponsiveContainer>
               ) : (
                 <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>

@@ -51,14 +51,16 @@ export default function MelbourneAdminDashboard() {
     total: item.images_count || 0,
   })) || [];
 
-  const progressData = reports?.progressOverTime?.map((item) => ({
-    date: formatChartDate(item.date),
-    pending: item.pending || 0,
-    inProgress: item.in_progress || 0,
-    completed: item.completed || 0,
-    approved: item.approved || 0,
-    rejected: item.rejected || 0,
-  })) || [];
+  const progressData = [...(reports?.progressOverTime || [])]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map((item) => ({
+      date: formatChartDate(item.date),
+      pending: item.pending || 0,
+      inProgress: item.in_progress || 0,
+      completed: item.completed || 0,
+      approved: item.approved || 0,
+      rejected: item.rejected || 0,
+    }));
 
   return (
     <>
