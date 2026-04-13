@@ -113,6 +113,13 @@ export const AnnotationSummaryReport = () => {
     clearCache("annotation-summary");
   }, [clearCache]);
 
+  const handleResetFilters = useCallback(() => {
+    setStartDate("");
+    setEndDate("");
+    setRoleFilter("all");
+    clearCache("annotation-summary");
+  }, [clearCache]);
+
   const handleExportExcel = () => {
     const data = [
       {
@@ -241,6 +248,7 @@ export const AnnotationSummaryReport = () => {
       <FilterManager
         filters={{ roleFilter, startDate, endDate }}
         onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
         showDateFilters
         showRoleFilter
         showStatusFilter={false}
@@ -264,42 +272,36 @@ export const AnnotationSummaryReport = () => {
             <KPICard
               label="Total Image Sets"
               value={summary?.totalImageSets || 0}
-              icon="📦"
               color="#4D96FF"
               loading={loading}
             />
             <KPICard
               label="Total Assigned"
               value={summary?.totalAssigned || 0}
-              icon="📋"
               color="#FFA07A"
               loading={loading}
             />
             <KPICard
               label="Completed"
               value={summary?.completedAnnotations || 0}
-              icon="✓"
               color="#6BCB77"
               loading={loading}
             />
             <KPICard
               label="Pending"
               value={summary?.pendingAnnotations || 0}
-              icon="⏳"
               color="#FFB74D"
               loading={loading}
             />
             <KPICard
               label="Rejected"
               value={summary?.rejectedAnnotations || 0}
-              icon="✗"
               color="#FF6B6B"
               loading={loading}
             />
             <KPICard
               label="Approval Rate"
               value={`${(summary?.approvalRate || 0).toFixed(1)}%`}
-              icon="📊"
               color="#8B5CF6"
               loading={loading}
             />

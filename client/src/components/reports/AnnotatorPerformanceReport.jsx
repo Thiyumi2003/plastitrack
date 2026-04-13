@@ -20,40 +20,52 @@ import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./Filt
 export const AnnotatorPerformanceReport = () => {
   const { fetchData, loading, error, clearCache } = useReportsData();
   const [annotatorPerf, setAnnotatorPerf] = useState([]);
+  const [annotatorName, setAnnotatorName] = useState("");
   const [pageSize, setPageSize] = useState(20);
   const [sortConfig, setSortConfig] = useState({ key: "name", direction: "asc" });
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  const filteredAnnotatorPerf = useMemo(() => {
+    const needle = String(annotatorName || "").trim().toLowerCase();
+    if (!needle) return annotatorPerf;
+    return annotatorPerf.filter((row) => String(row.name || "").toLowerCase().includes(needle));
+  }, [annotatorPerf, annotatorName]);
+
+  const annotatorNameOptions = useMemo(() => {
+    return Array.from(new Set((annotatorPerf || []).map((row) => String(row.name || "").trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+  }, [annotatorPerf]);
+
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
-    annotatorPerf,
+    filteredAnnotatorPerf,
     pageSize
   );
 
   // Calculate summary statistics
   const stats = useMemo(() => {
-    if (annotatorPerf.length === 0) return null;
+    if (filteredAnnotatorPerf.length === 0) return null;
     return {
-      totalAnnotators: annotatorPerf.length,
+      totalAnnotators: filteredAnnotatorPerf.length,
       avgAccuracy: (
-        annotatorPerf.reduce((sum, row) => sum + Number(row.accuracyRate || 0), 0) /
-        annotatorPerf.length
+        filteredAnnotatorPerf.reduce((sum, row) => sum + Number(row.accuracyRate || 0), 0) /
+        filteredAnnotatorPerf.length
       ).toFixed(1),
-      totalAssigned: annotatorPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
-      totalCompleted: annotatorPerf.reduce((sum, row) => sum + Number(row.completed || 0), 0),
-      approvedObjects: annotatorPerf.reduce((sum, row) => sum + Number(row.approvedObjects || 0), 0),
+      totalAssigned: filteredAnnotatorPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
+      totalCompleted: filteredAnnotatorPerf.reduce((sum, row) => sum + Number(row.completed || 0), 0),
+      approvedObjects: filteredAnnotatorPerf.reduce((sum, row) => sum + Number(row.approvedObjects || 0), 0),
     };
-  }, [annotatorPerf]);
+  }, [filteredAnnotatorPerf]);
 
   const chartData = useMemo(() => {
-    return (annotatorPerf || []).map((row) => ({
+    return (filteredAnnotatorPerf || []).map((row) => ({
       name: row.name,
       assigned: Number(row.totalAssigned || 0),
       completed: Number(row.completed || 0),
       approved: Number(row.approved || 0),
       rejected: Number(row.rejected || 0),
     }));
-  }, [annotatorPerf]);
+  }, [filteredAnnotatorPerf]);
 
   const chartSeriesOrder = useMemo(
     () => ({ assigned: 0, completed: 1, approved: 2, rejected: 3 }),
@@ -82,6 +94,15 @@ export const AnnotatorPerformanceReport = () => {
   const handleFilterChange = useCallback((key, value) => {
     if (key === "startDate") setStartDate(value);
     if (key === "endDate") setEndDate(value);
+    if (key === "annotatorName") setAnnotatorName(value);
+    goToPage(1);
+    clearCache("annotator-performance");
+  }, [goToPage, clearCache]);
+
+  const handleResetFilters = useCallback(() => {
+    setStartDate("");
+    setEndDate("");
+    setAnnotatorName("");
     goToPage(1);
     clearCache("annotator-performance");
   }, [goToPage, clearCache]);
@@ -95,7 +116,7 @@ export const AnnotatorPerformanceReport = () => {
   };
 
   const sortedData = useMemo(() => {
-    let sorted = [...annotatorPerf];
+    let sorted = [...filteredAnnotatorPerf];
     if (sortConfig.key) {
       sorted.sort((a, b) => {
         const aValue = a[sortConfig.key];
@@ -106,7 +127,7 @@ export const AnnotatorPerformanceReport = () => {
       });
     }
     return sorted;
-  }, [annotatorPerf, sortConfig]);
+  }, [filteredAnnotatorPerf, sortConfig]);
 
   const displayData = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -114,7 +135,7 @@ export const AnnotatorPerformanceReport = () => {
   }, [sortedData, currentPage, pageSize]);
 
   const handleExportExcel = () => {
-    const data = annotatorPerf.map((row) => ({
+    const data = filteredAnnotatorPerf.map((row) => ({
       "Name": row.name,
       "Total Assigned": row.totalAssigned,
       "Completed": row.completed,
@@ -135,7 +156,7 @@ export const AnnotatorPerformanceReport = () => {
   };
 
   const handleExportPDF = async () => {
-    const tableRows = (annotatorPerf || []).map((row) => ({
+    const tableRows = (filteredAnnotatorPerf || []).map((row) => ({
       Name: row.name,
       "Total Assigned": row.totalAssigned,
       Completed: row.completed,
@@ -213,11 +234,22 @@ export const AnnotatorPerformanceReport = () => {
       />
 
       <FilterManager
-        filters={{ startDate, endDate }}
+        filters={{ startDate, endDate, annotatorName }}
         onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
         showDateFilters
         showRoleFilter={false}
         showStatusFilter={false}
+        customFilters={[
+          {
+            id: "annotatorName",
+            label: "Annotator",
+            type: "search-select",
+            placeholder: "Search/select annotator name",
+            options: annotatorNameOptions,
+            width: "240px",
+          },
+        ]}
       />
 
       {loading ? (
@@ -239,31 +271,26 @@ export const AnnotatorPerformanceReport = () => {
               <KPICard
                 label="Total Annotators"
                 value={stats.totalAnnotators}
-                icon="👥"
                 color="#4D96FF"
               />
               <KPICard
                 label="Avg Accuracy"
                 value={`${stats.avgAccuracy}%`}
-                icon="🎯"
                 color="#6BCB77"
               />
               <KPICard
                 label="Total Assigned"
                 value={stats.totalAssigned}
-                icon="📋"
                 color="#FFA07A"
               />
               <KPICard
                 label="Total Completed"
                 value={stats.totalCompleted}
-                icon="✓"
                 color="#8B5CF6"
               />
               <KPICard
                 label="Approved Objects"
                 value={stats.approvedObjects}
-                icon="🎨"
                 color="#FF6B9D"
               />
             </div>
@@ -309,7 +336,7 @@ export const AnnotatorPerformanceReport = () => {
           )}
 
           {/* Data Table */}
-          {annotatorPerf.length === 0 ? (
+          {filteredAnnotatorPerf.length === 0 ? (
             <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
               No performance data available for the selected date range
             </div>
@@ -399,7 +426,7 @@ export const AnnotatorPerformanceReport = () => {
                 onPageChange={goToPage}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
-                totalItems={annotatorPerf.length}
+                totalItems={filteredAnnotatorPerf.length}
               />
             </>
           )}

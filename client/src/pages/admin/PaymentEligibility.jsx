@@ -256,10 +256,10 @@ export default function PaymentEligibility() {
           marginBottom: "20px",
         }}
       >
-        <KPICard label="Total Records" value={summary.total} icon="📄" color="#4D96FF" loading={loading} />
-        <KPICard label="Eligible" value={summary.eligible} icon="✅" color="#22c55e" loading={loading} />
-        <KPICard label="Not Eligible" value={summary.notEligible} icon="❌" color="#ef4444" loading={loading} />
-        <KPICard label="Reassigned Cases" value={summary.reassigned} icon="🔁" color="#f59e0b" loading={loading} />
+        <KPICard label="Total Records" value={summary.total} color="#4D96FF" loading={loading} />
+        <KPICard label="Eligible" value={summary.eligible} color="#22c55e" loading={loading} />
+        <KPICard label="Not Eligible" value={summary.notEligible} color="#ef4444" loading={loading} />
+        <KPICard label="Reassigned Cases" value={summary.reassigned} color="#f59e0b" loading={loading} />
       </div>
 
       {filteredTasks.length === 0 ? (

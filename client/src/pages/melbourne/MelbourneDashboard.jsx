@@ -2,11 +2,12 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatChartDate } from "../../utils/dateUtils";
-import "../annotator/annotator.css";
+import "../admin/admin.css";
 
 export default function MelbourneDashboard() {
   const [adminKpis, setAdminKpis] = useState(null);
   const [adminReports, setAdminReports] = useState(null);
+  const [summaryProgress, setSummaryProgress] = useState([]);
   const [performance, setPerformance] = useState({ users: [], filters: {} });
   const [systemPerf, setSystemPerf] = useState(null);
   const [startDate, setStartDate] = useState("");
@@ -67,19 +68,30 @@ export default function MelbourneDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [adminKpiRes, adminReportRes] = await Promise.all([
+      const [adminKpiRes, adminReportRes, summaryRes] = await Promise.all([
         axios.get("http://localhost:5000/api/dashboard/kpis", {
           headers: getAuthHeader(),
         }),
         axios.get("http://localhost:5000/api/dashboard/admin/reports", {
           headers: getAuthHeader(),
         }),
+        axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", {
+          headers: getAuthHeader(),
+        }),
       ]);
-
-      console.log("Melbourne dashboard data loaded successfully");
       
       setAdminKpis(adminKpiRes.data);
       setAdminReports(adminReportRes.data);
+      setSummaryProgress(
+        (summaryRes?.data?.progressOverTime || []).map((item) => ({
+          date: formatChartDate(item.date),
+          pending: Number(item.pending || 0),
+          inProgress: Number(item.in_progress || 0),
+          completed: Number(item.completed || 0),
+          approved: Number(item.approved || 0),
+          rejected: Number(item.rejected || 0),
+        }))
+      );
     } catch (err) {
       console.error("Dashboard fetch error:", err);
       setError(err.response?.data?.error || "Failed to load dashboard");
@@ -105,16 +117,7 @@ export default function MelbourneDashboard() {
     total: item.images_count || 0,
   })) || [];
 
-  const progressData = [...(adminReports?.progressOverTime || [])]
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
-    .map((item) => ({
-      date: formatChartDate(item.date),
-      pending: item.pending || 0,
-      inProgress: item.in_progress || 0,
-      completed: item.completed || 0,
-      approved: item.approved || 0,
-      rejected: item.rejected || 0,
-    }));
+  const progressData = summaryProgress;
 
   return (
     <>
@@ -142,6 +145,14 @@ export default function MelbourneDashboard() {
           <div className="kpi-card">
             <div className="kpi-value">{adminKpis?.completed || 0}</div>
             <div className="kpi-label">Completed</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value">{adminKpis?.approve || 0}</div>
+            <div className="kpi-label">Approved</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value">{adminKpis?.rejected || 0}</div>
+            <div className="kpi-label">Rejected</div>
           </div>
         </div>
 

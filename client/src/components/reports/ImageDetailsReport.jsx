@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Cell,
   Legend,
@@ -23,9 +23,21 @@ export const ImageDetailsReport = () => {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [imageSetName, setImageSetName] = useState("");
+
+  const visibleImages = useMemo(() => {
+    const needle = String(imageSetName || "").trim().toLowerCase();
+    if (!needle) return images;
+    return (images || []).filter((img) => String(img.imageName || "").toLowerCase().includes(needle));
+  }, [images, imageSetName]);
+
+  const imageSetOptions = useMemo(() => {
+    return Array.from(new Set((images || []).map((img) => String(img.imageName || "").trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+  }, [images]);
 
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
-    images,
+    visibleImages,
     pageSize
   );
 
@@ -61,9 +73,21 @@ export const ImageDetailsReport = () => {
       case "status":
         setStatusFilter(value);
         break;
+      case "imageSetName":
+        setImageSetName(value);
+        break;
       default:
         break;
     }
+    goToPage(1);
+    clearCache("image-details");
+  }, [goToPage, clearCache]);
+
+  const handleResetFilters = useCallback(() => {
+    setStartDate("");
+    setEndDate("");
+    setStatusFilter("all");
+    setImageSetName("");
     goToPage(1);
     clearCache("image-details");
   }, [goToPage, clearCache]);
@@ -79,7 +103,7 @@ export const ImageDetailsReport = () => {
 
   const chartColors = ["#4D96FF", "#6BCB77", "#FFA07A", "#FF6B6B", "#9C27B0", "#00B8D9"];
   const statusChartData = Object.entries(
-    (images || []).reduce((counts, img) => {
+    (visibleImages || []).reduce((counts, img) => {
       const key = String(img.status || "unknown").replace(/_/g, " ");
       counts[key] = (counts[key] || 0) + 1;
       return counts;
@@ -87,7 +111,7 @@ export const ImageDetailsReport = () => {
   ).map(([name, value]) => ({ name, value }));
 
   const handleExportExcel = () => {
-    const data = images.map((img) => ({
+    const data = visibleImages.map((img) => ({
       "Image ID": img.id,
       "Image Name": img.imageName,
       "Model Type": img.modelType,
@@ -113,7 +137,7 @@ export const ImageDetailsReport = () => {
   };
 
   const handleExportPDF = async () => {
-    const coreRows = (images || []).map((img) => ({
+    const coreRows = (visibleImages || []).map((img) => ({
       "Image ID": img.id,
       "Image Name": img.imageName,
       Model: img.modelType,
@@ -124,7 +148,7 @@ export const ImageDetailsReport = () => {
       Melbourne: img.melbourneUserName,
     }));
 
-    const feedbackRows = (images || []).map((img) => ({
+    const feedbackRows = (visibleImages || []).map((img) => ({
       "Image ID": img.id,
       "Annotator Feedback": safeText(img.annotatorFeedback),
       "Tester Feedback": safeText(img.testerFeedback),
@@ -134,7 +158,7 @@ export const ImageDetailsReport = () => {
       "Previous Feedback": safeText(img.previousFeedback),
     }));
 
-    const timelineRows = (images || []).map((img) => ({
+    const timelineRows = (visibleImages || []).map((img) => ({
       "Image ID": img.id,
       Created: formatDate(img.createdAt),
       Updated: formatDate(img.updatedAt),
@@ -145,7 +169,7 @@ export const ImageDetailsReport = () => {
     }));
 
     const statusChartData = Object.entries(
-      (images || []).reduce((counts, img) => {
+      (visibleImages || []).reduce((counts, img) => {
         const key = String(img.status || "unknown").replace(/_/g, " ");
         counts[key] = (counts[key] || 0) + 1;
         return counts;
@@ -159,6 +183,7 @@ export const ImageDetailsReport = () => {
           startDate,
           endDate,
           status: statusFilter === "all" ? "All" : statusFilter,
+          imageSetName: imageSetName || "All",
         },
         charts: [
           {
@@ -234,12 +259,23 @@ export const ImageDetailsReport = () => {
       />
 
       <FilterManager
-        filters={{ startDate, endDate, statusFilter }}
+        filters={{ startDate, endDate, status: statusFilter, imageSetName }}
         onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
         showDateFilters
         showRoleFilter={false}
         showStatusFilter
         statusOptions={["pending", "in_progress", "completed", "pending_review", "approved", "rejected"]}
+        customFilters={[
+          {
+            id: "imageSetName",
+            label: "Image Set",
+            type: "search-select",
+            placeholder: "Search/select image set name",
+            options: imageSetOptions,
+            width: "260px",
+          },
+        ]}
       />
 
       {loading ? (
@@ -258,21 +294,19 @@ export const ImageDetailsReport = () => {
           >
             <KPICard
               label="Total Images"
-              value={summary.totalImages || 0}
-              icon="🖼"
+              value={visibleImages.length}
               color="#4D96FF"
               loading={loading}
             />
             <KPICard
               label="Total Objects"
-              value={summary.totalObjects || 0}
-              icon="🔢"
+              value={visibleImages.reduce((sum, img) => sum + Number(img.objectsCount || 0), 0)}
               color="#6BCB77"
               loading={loading}
             />
           </div>
 
-          {images.length === 0 ? (
+          {visibleImages.length === 0 ? (
             <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
               No image details found for selected filters
             </div>
@@ -363,7 +397,7 @@ export const ImageDetailsReport = () => {
                 onPageChange={goToPage}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
-                totalItems={images.length}
+                totalItems={visibleImages.length}
               />
             </>
           )}

@@ -129,37 +129,31 @@ export default function AnnotatorPayments() {
       {/* Payment Summary Cards */}
       <div className="kpi-section">
         <div className="kpi-card">
-          <div className="kpi-icon">⏳</div>
           <div className="kpi-label">Pending Approval</div>
           <div className="kpi-value">₨ {payments?.pendingApproval?.toLocaleString() || 0}</div>
         </div>
 
         <div className="kpi-card" style={{ borderTop: "3px solid #667eea" }}>
-          <div className="kpi-icon">✓</div>
           <div className="kpi-label">Approved Amount</div>
           <div className="kpi-value" style={{ color: "#667eea" }}>₨ {payments?.approvedAmount?.toLocaleString() || 0}</div>
         </div>
 
         <div className="kpi-card" style={{ borderTop: "3px solid #10b981" }}>
-          <div className="kpi-icon">💳</div>
           <div className="kpi-label">Paid Amount</div>
           <div className="kpi-value" style={{ color: "#10b981" }}>₨ {payments?.paidAmount?.toLocaleString() || 0}</div>
         </div>
 
         <div className="kpi-card">
-          <div className="kpi-icon">📊</div>
           <div className="kpi-label">Total Approved Image Sets</div>
           <div className="kpi-value">{payments?.totalApprovedImageSets || 0}</div>
         </div>
 
         <div className="kpi-card">
-          <div className="kpi-icon">📦</div>
           <div className="kpi-label">Total Approved Objects</div>
           <div className="kpi-value">{payments?.totalApprovedObjects || 0}</div>
         </div>
 
         <div className="kpi-card">
-          <div className="kpi-icon">💰</div>
           <div className="kpi-label">Current Rate</div>
           <div className="kpi-value">₨ {payments?.currentRate?.toLocaleString() || 0}/obj</div>
         </div>

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { AlertCircle, CheckCircle, Clock } from "lucide-react";
 import "./annotator.css";
 
 export default function AnnotatorDashboard() {
@@ -85,7 +84,7 @@ export default function AnnotatorDashboard() {
   return (
     <>
       <div className="dashboard-header">
-        <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! 👋</h1>
+        <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! </h1>
         <p>Track your work and tester reviews</p>
       </div>
 
@@ -94,27 +93,22 @@ export default function AnnotatorDashboard() {
       {/* Workflow Status Cards */}
       <div className="kpi-section">
         <div className="kpi-card">
-          <div className="kpi-icon">📦</div>
           <div className="kpi-value">{workflowStats?.assigned || 0}</div>
           <div className="kpi-label">Assigned Image Sets</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-icon">⚙️</div>
           <div className="kpi-value">{workflowStats?.inProgress || 0}</div>
           <div className="kpi-label">In Progress</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-icon">⏳</div>
           <div className="kpi-value">{workflowStats?.underReview || 0}</div>
           <div className="kpi-label">Under Review</div>
         </div>
         <div className="kpi-card" style={{ borderTop: "3px solid #10b981" }}>
-          <div className="kpi-icon">✓</div>
           <div className="kpi-value" style={{ color: "#10b981" }}>{workflowStats?.approved || 0}</div>
           <div className="kpi-label">Approved</div>
         </div>
         <div className="kpi-card" style={{ borderTop: "3px solid #ef4444" }}>
-          <div className="kpi-icon">✕</div>
           <div className="kpi-value" style={{ color: "#ef4444" }}>{workflowStats?.rejected || 0}</div>
           <div className="kpi-label">Rejected</div>
         </div>

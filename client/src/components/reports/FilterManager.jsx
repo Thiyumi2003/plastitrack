@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 
 /**
  * FilterManager Component
@@ -127,6 +127,26 @@ export const FilterManager = ({
                 </option>
               ))}
             </select>
+          ) : filter.type === "search-select" ? (
+            <>
+              <input
+                type="text"
+                list={`filter-list-${filter.id}`}
+                value={filters[filter.id] || ""}
+                onChange={(e) => handleSelectChange(filter.id, e.target.value)}
+                placeholder={filter.placeholder || `Search ${filter.label}`}
+                className="text-input"
+                style={{ padding: "6px 8px", fontSize: "13px", minWidth: filter.width || "220px" }}
+              />
+              <datalist id={`filter-list-${filter.id}`}>
+                {filter.options?.map((opt) => {
+                  const value = typeof opt === "string" ? opt : opt.value;
+                  return (
+                    <option key={`${filter.id}-${value}`} value={value} />
+                  );
+                })}
+              </datalist>
+            </>
           ) : filter.type === "date" ? (
             <input
               type="date"
@@ -191,6 +211,27 @@ export const ReportHeader = ({
   showExportButtons = true,
   children,
 }) => {
+  const [exportStatus, setExportStatus] = useState("");
+  const [exportStatusType, setExportStatusType] = useState("success");
+
+  const runExport = async (exportFn, label) => {
+    if (!exportFn) return;
+    setExportStatus(`${label} download started...`);
+    setExportStatusType("success");
+
+    try {
+      const result = await Promise.resolve(exportFn());
+      if (result && result.success === false) {
+        throw new Error(result.error || `${label} download failed`);
+      }
+      setExportStatus(`${label} downloaded successfully`);
+      setExportStatusType("success");
+    } catch (err) {
+      setExportStatus(err?.message || `${label} download failed`);
+      setExportStatusType("error");
+    }
+  };
+
   return (
     <div style={{ marginBottom: "16px" }}>
       <div style={{
@@ -212,7 +253,7 @@ export const ReportHeader = ({
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {onExportExcel && (
               <button
-                onClick={onExportExcel}
+                onClick={() => runExport(onExportExcel, "Excel")}
                 className="btn-primary"
                 title="Export to Excel"
                 style={{ padding: "6px 12px", fontSize: "13px" }}
@@ -222,7 +263,7 @@ export const ReportHeader = ({
             )}
             {onExportPDF && (
               <button
-                onClick={onExportPDF}
+                onClick={() => runExport(onExportPDF, "PDF")}
                 className="btn-primary"
                 title="Export to PDF"
                 style={{ padding: "6px 12px", fontSize: "13px" }}
@@ -232,7 +273,7 @@ export const ReportHeader = ({
             )}
             {onExportCSV && (
               <button
-                onClick={onExportCSV}
+                onClick={() => runExport(onExportCSV, "CSV")}
                 className="btn-primary"
                 title="Export to CSV"
                 style={{ padding: "6px 12px", fontSize: "13px" }}
@@ -243,6 +284,18 @@ export const ReportHeader = ({
           </div>
         )}
       </div>
+
+      {exportStatus && (
+        <div
+          style={{
+            marginBottom: "10px",
+            fontSize: "12px",
+            color: exportStatusType === "error" ? "#f87171" : "rgba(255, 255, 255, 0.8)",
+          }}
+        >
+          {exportStatus}
+        </div>
+      )}
 
       {children}
     </div>

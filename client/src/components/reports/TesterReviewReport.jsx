@@ -20,39 +20,51 @@ import { FilterManager, ReportHeader, PaginationControls, KPICard } from "./Filt
 export const TesterReviewReport = () => {
   const { fetchData, loading, error, clearCache } = useReportsData();
   const [testerPerf, setTesterPerf] = useState([]);
+  const [testerName, setTesterName] = useState("");
   const [pageSize, setPageSize] = useState(20);
   const [sortConfig, setSortConfig] = useState({ key: "name", direction: "asc" });
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  const filteredTesterPerf = useMemo(() => {
+    const needle = String(testerName || "").trim().toLowerCase();
+    if (!needle) return testerPerf;
+    return testerPerf.filter((row) => String(row.name || "").toLowerCase().includes(needle));
+  }, [testerPerf, testerName]);
+
+  const testerNameOptions = useMemo(() => {
+    return Array.from(new Set((testerPerf || []).map((row) => String(row.name || "").trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+  }, [testerPerf]);
+
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
-    testerPerf,
+    filteredTesterPerf,
     pageSize
   );
 
   // Calculate summary statistics
   const stats = useMemo(() => {
-    if (testerPerf.length === 0) return null;
+    if (filteredTesterPerf.length === 0) return null;
     return {
-      totalTesters: testerPerf.length,
+      totalTesters: filteredTesterPerf.length,
       avgAccuracy: (
-        testerPerf.reduce((sum, row) => sum + Number(row.accuracy || 0), 0) /
-        testerPerf.length
+        filteredTesterPerf.reduce((sum, row) => sum + Number(row.accuracy || 0), 0) /
+        filteredTesterPerf.length
       ).toFixed(1),
-      totalAssigned: testerPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
-      totalApproved: testerPerf.reduce((sum, row) => sum + Number(row.approved || 0), 0),
-      totalRejected: testerPerf.reduce((sum, row) => sum + Number(row.rejected || 0), 0),
+      totalAssigned: filteredTesterPerf.reduce((sum, row) => sum + Number(row.totalAssigned || 0), 0),
+      totalApproved: filteredTesterPerf.reduce((sum, row) => sum + Number(row.approved || 0), 0),
+      totalRejected: filteredTesterPerf.reduce((sum, row) => sum + Number(row.rejected || 0), 0),
     };
-  }, [testerPerf]);
+  }, [filteredTesterPerf]);
 
   const chartData = useMemo(() => {
-    return (testerPerf || []).map((row) => ({
+    return (filteredTesterPerf || []).map((row) => ({
       name: row.name,
       assigned: Number(row.totalAssigned || 0),
       approved: Number(row.approved || 0),
       rejected: Number(row.rejected || 0),
     }));
-  }, [testerPerf]);
+  }, [filteredTesterPerf]);
 
   const chartSeriesOrder = useMemo(
     () => ({ assigned: 0, approved: 1, rejected: 2 }),
@@ -81,6 +93,15 @@ export const TesterReviewReport = () => {
   const handleFilterChange = useCallback((key, value) => {
     if (key === "startDate") setStartDate(value);
     if (key === "endDate") setEndDate(value);
+    if (key === "testerName") setTesterName(value);
+    goToPage(1);
+    clearCache("tester-review");
+  }, [goToPage, clearCache]);
+
+  const handleResetFilters = useCallback(() => {
+    setStartDate("");
+    setEndDate("");
+    setTesterName("");
     goToPage(1);
     clearCache("tester-review");
   }, [goToPage, clearCache]);
@@ -94,7 +115,7 @@ export const TesterReviewReport = () => {
   };
 
   const sortedData = useMemo(() => {
-    let sorted = [...testerPerf];
+    let sorted = [...filteredTesterPerf];
     if (sortConfig.key) {
       sorted.sort((a, b) => {
         const aValue = a[sortConfig.key];
@@ -105,7 +126,7 @@ export const TesterReviewReport = () => {
       });
     }
     return sorted;
-  }, [testerPerf, sortConfig]);
+  }, [filteredTesterPerf, sortConfig]);
 
   const displayData = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -113,7 +134,7 @@ export const TesterReviewReport = () => {
   }, [sortedData, currentPage, pageSize]);
 
   const handleExportExcel = () => {
-    const data = testerPerf.map((row) => ({
+    const data = filteredTesterPerf.map((row) => ({
       "Name": row.name,
       "Total Assigned": row.totalAssigned,
       "Approved": row.approved,
@@ -131,7 +152,7 @@ export const TesterReviewReport = () => {
   };
 
   const handleExportPDF = async () => {
-    const tableRows = (testerPerf || []).map((row) => ({
+    const tableRows = (filteredTesterPerf || []).map((row) => ({
       Name: row.name,
       "Total Assigned": row.totalAssigned,
       Approved: row.approved,
@@ -202,11 +223,22 @@ export const TesterReviewReport = () => {
       />
 
       <FilterManager
-        filters={{ startDate, endDate }}
+        filters={{ startDate, endDate, testerName }}
         onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
         showDateFilters
         showRoleFilter={false}
         showStatusFilter={false}
+        customFilters={[
+          {
+            id: "testerName",
+            label: "Tester",
+            type: "search-select",
+            placeholder: "Search/select tester name",
+            options: testerNameOptions,
+            width: "240px",
+          },
+        ]}
       />
 
       {loading ? (
@@ -228,31 +260,26 @@ export const TesterReviewReport = () => {
               <KPICard
                 label="Total Testers"
                 value={stats.totalTesters}
-                icon="👥"
                 color="#4D96FF"
               />
               <KPICard
                 label="Avg Accuracy"
                 value={`${stats.avgAccuracy}%`}
-                icon="🎯"
                 color="#6BCB77"
               />
               <KPICard
                 label="Total Assigned"
                 value={stats.totalAssigned}
-                icon="📋"
                 color="#FFA07A"
               />
               <KPICard
                 label="Total Approved"
                 value={stats.totalApproved}
-                icon="✓"
                 color="#6BCB77"
               />
               <KPICard
                 label="Total Rejected"
                 value={stats.totalRejected}
-                icon="✗"
                 color="#FF6B6B"
               />
             </div>
@@ -295,7 +322,7 @@ export const TesterReviewReport = () => {
           )}
 
           {/* Data Table */}
-          {testerPerf.length === 0 ? (
+          {filteredTesterPerf.length === 0 ? (
             <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
               No performance data available for the selected date range
             </div>
@@ -377,7 +404,7 @@ export const TesterReviewReport = () => {
                 onPageChange={goToPage}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
-                totalItems={testerPerf.length}
+                totalItems={filteredTesterPerf.length}
               />
             </>
           )}

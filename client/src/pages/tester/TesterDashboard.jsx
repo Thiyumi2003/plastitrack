@@ -77,7 +77,7 @@ export default function TesterDashboard() {
   return (
     <>
       <div className="dashboard-header">
-        <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! 👋</h1>
+        <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! </h1>
         <div className="header-date">{new Date().toLocaleDateString()}</div>
       </div>
 
@@ -85,17 +85,14 @@ export default function TesterDashboard() {
 
         <div className="kpi-section">
           <div className="kpi-card">
-            <div className="kpi-icon">✓</div>
             <div className="kpi-value">{kpis?.approvedToday || 0}</div>
             <div className="kpi-label">Approved Today</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">✕</div>
             <div className="kpi-value">{kpis?.rejectedToday || 0}</div>
             <div className="kpi-label">Rejected Today</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">⏳</div>
             <div className="kpi-value">{kpis?.pendingReviews || 0}</div>
             <div className="kpi-label">Pending Reviews</div>
           </div>

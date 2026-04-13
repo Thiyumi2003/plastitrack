@@ -78,17 +78,14 @@ export default function AnnotatorReviewResults() {
       {/* Summary Cards */}
       <div className="kpi-section">
         <div className="kpi-card">
-          <div className="kpi-icon">⏳</div>
           <div className="kpi-value">{summary.underReview}</div>
           <div className="kpi-label">Under Review</div>
         </div>
         <div className="kpi-card" style={{ borderTop: "3px solid #10b981" }}>
-          <div className="kpi-icon">✓</div>
           <div className="kpi-value" style={{ color: "#10b981" }}>{summary.approved}</div>
           <div className="kpi-label">Approved</div>
         </div>
         <div className="kpi-card" style={{ borderTop: "3px solid #ef4444" }}>
-          <div className="kpi-icon">✕</div>
           <div className="kpi-value" style={{ color: "#ef4444" }}>{summary.rejected}</div>
           <div className="kpi-label">Rejected</div>
         </div>

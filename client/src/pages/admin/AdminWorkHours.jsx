@@ -353,22 +353,18 @@ export default function AdminWorkHours() {
         {/* Summary Cards */}
         <div className="kpi-section">
           <div className="kpi-card">
-            <div className="kpi-icon">⏳</div>
             <div className="kpi-value">{formatMinutes(summary.pending_minutes || 0)}</div>
             <div className="kpi-label">Pending Hours</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">✅</div>
             <div className="kpi-value">{formatMinutes(summary.approved_minutes || 0)}</div>
             <div className="kpi-label">Approved Hours</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">💰</div>
             <div className="kpi-value">{formatMinutes(summary.paid_minutes || 0)}</div>
             <div className="kpi-label">Paid Hours</div>
           </div>
           <div className="kpi-card">
-            <div className="kpi-icon">⚡</div>
             <div className="kpi-value">
               {currentSession?.status === "active"
                 ? formatMinutes(currentSession.active_minutes || 0)

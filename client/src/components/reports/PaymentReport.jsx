@@ -23,11 +23,31 @@ export const PaymentReport = () => {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [userName, setUserName] = useState("");
+
+  const filteredPayments = useMemo(() => {
+    const needle = String(userName || "").trim().toLowerCase();
+    if (!needle) return payments;
+    return (payments || []).filter((payment) => {
+      const name = payment.userName || payment.annotatorName || "";
+      return String(name).toLowerCase().includes(needle);
+    });
+  }, [payments, userName]);
+
+  const userNameOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        (payments || [])
+          .map((payment) => String(payment.userName || payment.annotatorName || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [payments]);
 
   const chartColors = ["#6BCB77", "#4D96FF", "#FFB74D", "#FF6B6B", "#9C27B0", "#00B8D9"];
 
   const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
-    payments,
+    filteredPayments,
     pageSize
   );
 
@@ -63,9 +83,21 @@ export const PaymentReport = () => {
       case "status":
         setStatusFilter(value);
         break;
+      case "userName":
+        setUserName(value);
+        break;
       default:
         break;
     }
+    goToPage(1);
+    clearCache("payment-report");
+  }, [goToPage, clearCache]);
+
+  const handleResetFilters = useCallback(() => {
+    setStartDate("");
+    setEndDate("");
+    setStatusFilter("all");
+    setUserName("");
     goToPage(1);
     clearCache("payment-report");
   }, [goToPage, clearCache]);
@@ -91,7 +123,7 @@ export const PaymentReport = () => {
   const formatDate = (value) => (value ? new Date(value).toLocaleString() : "-");
 
   const paymentStatusData = useMemo(() => {
-    const statusCounts = payments.reduce((accumulator, payment) => {
+    const statusCounts = filteredPayments.reduce((accumulator, payment) => {
       const rawStatus = String(payment.status || "unknown");
       const normalizedStatus = rawStatus.replace(/_/g, " ");
       accumulator[normalizedStatus] = (accumulator[normalizedStatus] || 0) + 1;
@@ -101,10 +133,10 @@ export const PaymentReport = () => {
     return Object.entries(statusCounts)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [payments]);
+  }, [filteredPayments]);
 
   const handleExportExcel = () => {
-    const data = payments.map((payment, index) => ({
+    const data = filteredPayments.map((payment, index) => ({
       "Payment ID": index + 1,
       "User Name": payment.userName || payment.annotatorName,
       Role: payment.userRole || "-",
@@ -128,7 +160,7 @@ export const PaymentReport = () => {
   };
 
   const handleExportPDF = async () => {
-    const rows = (payments || []).map((payment, index) => ({
+    const rows = (filteredPayments || []).map((payment, index) => ({
       "Payment ID": index + 1,
       "User Name": payment.userName || payment.annotatorName,
       Role: payment.userRole || "-",
@@ -156,6 +188,7 @@ export const PaymentReport = () => {
           startDate,
           endDate,
           status: statusFilter === "all" ? "All" : statusFilter,
+          userName: userName || "All",
         },
         charts: [
           {
@@ -219,8 +252,9 @@ export const PaymentReport = () => {
       />
 
       <FilterManager
-        filters={{ startDate, endDate, statusFilter }}
+        filters={{ startDate, endDate, status: statusFilter, userName }}
         onFilterChange={handleFilterChange}
+        onReset={handleResetFilters}
         showDateFilters
         showRoleFilter={false}
         showStatusFilter
@@ -232,6 +266,16 @@ export const PaymentReport = () => {
           "ready_to_pay",
           "paid",
           "rejected",
+        ]}
+        customFilters={[
+          {
+            id: "userName",
+            label: "User",
+            type: "search-select",
+            placeholder: "Search/select user name",
+            options: userNameOptions,
+            width: "240px",
+          },
         ]}
       />
 
@@ -253,42 +297,36 @@ export const PaymentReport = () => {
             <KPICard
               label="Total Payments"
               value={summary.totalPayments || 0}
-              icon="💰"
               color="#4D96FF"
               loading={loading}
             />
             <KPICard
               label="Total Amount (Rs)"
               value={(summary.totalAmount || 0).toLocaleString("en-IN")}
-              icon="💵"
               color="#6BCB77"
               loading={loading}
             />
             <KPICard
               label="Pending"
               value={summary.pendingCount || 0}
-              icon="⏳"
               color="#FFB74D"
               loading={loading}
             />
             <KPICard
               label="Approved"
               value={summary.approvedCount || 0}
-              icon="✓"
               color="#4D96FF"
               loading={loading}
             />
             <KPICard
               label="Paid"
               value={summary.paidCount || 0}
-              icon="💳"
               color="#6BCB77"
               loading={loading}
             />
             <KPICard
               label="Rejected"
               value={summary.rejectedCount || 0}
-              icon="✗"
               color="#FF6B6B"
               loading={loading}
             />
@@ -322,7 +360,7 @@ export const PaymentReport = () => {
           )}
 
           {/* Payment Table */}
-          {payments.length === 0 ? (
+          {filteredPayments.length === 0 ? (
             <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
               No payment data available for the selected filters
             </div>
@@ -406,7 +444,7 @@ export const PaymentReport = () => {
                 onPageChange={goToPage}
                 pageSize={pageSize}
                 onPageSizeChange={setPageSize}
-                totalItems={payments.length}
+                totalItems={filteredPayments.length}
               />
             </>
           )}
