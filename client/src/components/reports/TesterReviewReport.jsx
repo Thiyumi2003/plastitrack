@@ -37,7 +37,7 @@ export const TesterReviewReport = () => {
       .sort((a, b) => a.localeCompare(b));
   }, [testerPerf]);
 
-  const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
+  const { currentPage, totalPages, goToPage } = usePaginatedData(
     filteredTesterPerf,
     pageSize
   );

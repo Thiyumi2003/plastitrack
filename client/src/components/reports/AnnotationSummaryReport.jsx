@@ -14,7 +14,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { useReportsData, usePaginatedData } from "../../hooks/useReportsData";
+import { useReportsData } from "../../hooks/useReportsData";
 import { ExportService } from "../../services/ExportService";
 import { FilterManager, ReportHeader, KPICard } from "./FilterManager";
 import { formatChartDate } from "../../utils/dateUtils";

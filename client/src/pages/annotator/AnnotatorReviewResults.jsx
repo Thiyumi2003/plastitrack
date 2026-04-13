@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { Eye, RefreshCw, Calendar, User, MessageSquare } from "lucide-react";
+import { RefreshCw, Calendar, User, MessageSquare } from "lucide-react";
 import "./annotator.css";
 
 export default function AnnotatorReviewResults() {

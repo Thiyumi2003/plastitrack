@@ -37,7 +37,7 @@ export const AnnotatorPerformanceReport = () => {
       .sort((a, b) => a.localeCompare(b));
   }, [annotatorPerf]);
 
-  const { paginatedData, currentPage, totalPages, goToPage } = usePaginatedData(
+  const { currentPage, totalPages, goToPage } = usePaginatedData(
     filteredAnnotatorPerf,
     pageSize
   );
