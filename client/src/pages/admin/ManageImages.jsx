@@ -538,8 +538,6 @@ export default function ManageImages() {
     setCurrentPage(1);
   }, [searchQuery, statusFilter, annotatorFilter, testerFilter, ownerFilter]);
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -548,6 +546,8 @@ export default function ManageImages() {
           + Add Image
         </button>
       </div>
+
+        {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading images...</div>}
 
         {error && <div style={{ padding: "12px", backgroundColor: "#fee2e2", borderLeft: "4px solid #ef4444", color: "#991b1b", marginBottom: "20px", borderRadius: "4px" }}>{error}</div>}
 

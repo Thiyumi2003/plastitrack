@@ -77,8 +77,6 @@ export default function AnnotatorDashboard() {
     setShowStatusModal(true);
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   const activeTasks = tasks.filter(t => t.status === "pending" || t.status === "in_progress");
 
   return (
@@ -89,6 +87,7 @@ export default function AnnotatorDashboard() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading dashboard data...</div>}
 
       {/* Workflow Status Cards */}
       <div className="kpi-section">

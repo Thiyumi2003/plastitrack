@@ -58,8 +58,6 @@ export default function AdminUsers() {
     return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
   };
 
-  if (loading) return <div className="dashboard-loading">Loading users...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -87,6 +85,7 @@ export default function AdminUsers() {
       </div>
 
         {error && <div className="error-message">{error}</div>}
+        {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading users...</div>}
 
       <div className="users-table">
         <table>

@@ -307,8 +307,6 @@ export default function AdminWorkHours() {
     );
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -341,6 +339,7 @@ export default function AdminWorkHours() {
       </div>
 
         {error && <div className="dashboard-error">{error}</div>}
+        {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading work hours...</div>}
 
         {/* Info Banner */}
         {autoTrackEnabled && (

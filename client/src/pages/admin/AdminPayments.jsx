@@ -159,8 +159,6 @@ export default function AdminPayments() {
     }
   };
 
-  if (loading) return <div className="dashboard-loading">Loading payments...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -168,6 +166,7 @@ export default function AdminPayments() {
       </div>
 
         {error && <div className="error-message">{error}</div>}
+        {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading payment data...</div>}
 
       {paymentData && (
         <>

@@ -72,8 +72,6 @@ export default function TesterDashboard() {
     setShowReviewModal(true);
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -82,6 +80,7 @@ export default function TesterDashboard() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading dashboard data...</div>}
 
         <div className="kpi-section">
           <div className="kpi-card">

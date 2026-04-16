@@ -7315,6 +7315,21 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
       `SELECT
         p.id,
         p.model_type,
+        COALESCE(
+          NULLIF(p.model_type, ''),
+          (
+            SELECT i2.model_type
+            FROM images i2
+            WHERE i2.annotator_id = ?
+              AND i2.status = 'approved'
+              AND i2.updated_at <= COALESCE(p.payment_date, p.created_at)
+              AND i2.model_type IS NOT NULL
+              AND i2.model_type <> ''
+            ORDER BY i2.updated_at DESC
+            LIMIT 1
+          ),
+          'Unknown Model'
+        ) as model_name,
         p.amount,
         p.status as payment_status,
         p.rate_used as rate_per_object,
@@ -7335,7 +7350,7 @@ router.get("/annotator/payments", verifyToken, async (req, res) => {
        WHERE p.user_id = ?
        ORDER BY p.created_at DESC
        LIMIT 25`,
-      [userId, userId]
+      [userId, userId, userId]
     );
 
     const currentRate = await getRoleRate(connection, userId, "annotator");

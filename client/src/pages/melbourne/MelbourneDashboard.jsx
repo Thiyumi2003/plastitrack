@@ -100,10 +100,6 @@ export default function MelbourneDashboard() {
     }
   };
 
-
-
-  if (loading) return <div className="dashboard-loading">Loading dashboard...</div>;
-
   const COLORS = ["#8B0000", "#FF6B6B", "#FFA07A", "#FFB6C1", "#DDA0DD", "#FF69B4"];
 
   const statusChartData = adminReports?.statusDistribution?.map((item) => ({
@@ -127,6 +123,7 @@ export default function MelbourneDashboard() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading dashboard data...</div>}
 
         {/* KPI Cards - Admin Overview + Review Stats */}
         <div className="kpi-section">

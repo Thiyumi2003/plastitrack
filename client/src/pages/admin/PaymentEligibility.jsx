@@ -174,14 +174,13 @@ export default function PaymentEligibility() {
     );
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   if (error) {
     return <div style={{ color: "#d32f2f", padding: "16px" }}>Error: {error}</div>;
   }
 
   return (
     <div id="payment-eligibility-report">
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading eligibility data...</div>}
       <ReportHeader
         title="Payment Eligible Report"
         description="Eligibility view by image assignment history, reviewer outcome, and reassignment"

@@ -73,8 +73,6 @@ export default function ManageAdminWorkHours() {
     );
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   // Ensure adminSummary is an array
   const adminSummaryArray = Array.isArray(adminSummary) ? adminSummary : [];
   const totalPaymentDue = adminSummaryArray.reduce((sum, admin) => sum + (Number(admin.total_payment_due) || 0), 0);
@@ -86,6 +84,7 @@ export default function ManageAdminWorkHours() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading admin work hours...</div>}
 
         {/* Summary Cards */}
         <div className="payment-cards-section">

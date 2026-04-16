@@ -53,8 +53,6 @@ export default function AnnotatorReviewResults() {
     setShowFeedbackModal(true);
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   const summary = {
     underReview: reviews.filter((r) => r.review_status === "pending").length,
     approved: reviews.filter((r) => r.review_status === "approved").length,
@@ -74,6 +72,7 @@ export default function AnnotatorReviewResults() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading review results...</div>}
 
       {/* Summary Cards */}
       <div className="kpi-section">

@@ -167,8 +167,6 @@ export default function ManageRates() {
     return () => clearTimeout(timer);
   }, [error, success]);
 
-  if (loading) return <div className="dashboard-loading">Loading rate management...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -177,6 +175,7 @@ export default function ManageRates() {
 
       {error && <div className="dashboard-error">{error}</div>}
       {success && <div className="dashboard-success">{success}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading rate management...</div>}
 
         <div className="tabs-section">
           <div className="tabs">

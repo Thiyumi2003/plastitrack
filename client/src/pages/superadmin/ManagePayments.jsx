@@ -755,8 +755,6 @@ export default function ManagePayments() {
     }
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   const modelSummary = eligibleUsers?.modelSummary;
   const isModelComplete = modelSummary?.isComplete || false;
   const availableUsers =
@@ -1459,6 +1457,8 @@ export default function ManagePayments() {
       <div className="dashboard-header">
         <h1>Manage Payments</h1>
       </div>
+
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading payment data...</div>}
 
       <div className="form-hint" style={{ marginBottom: 14 }}>
         Role-based payroll workflow: users provide bank details, payments are calculated by approved work (annotator/tester by objects, admin by approved hours), Super Admin approves, performs manual bank transfer, then marks as paid.

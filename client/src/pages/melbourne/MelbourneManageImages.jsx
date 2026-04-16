@@ -76,8 +76,6 @@ export default function MelbourneManageImages() {
     }
   };
 
-  if (loading) return <div className="dashboard-loading">Loading images...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -86,6 +84,7 @@ export default function MelbourneManageImages() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading images...</div>}
 
         {/* Filter Section */}
         <div className="filter-section">

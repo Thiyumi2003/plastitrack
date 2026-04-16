@@ -87,8 +87,6 @@ export default function TesterTaskHistory() {
     setDateTo("");
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -97,6 +95,7 @@ export default function TesterTaskHistory() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading task history...</div>}
 
         <div
           className="filter-section tester-task-history-filters"

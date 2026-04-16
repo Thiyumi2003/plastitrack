@@ -128,8 +128,6 @@ export default function ManageAdmins() {
     setFormData({ name: "", email: "", password: "", hourly_rate: "" });
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -141,6 +139,7 @@ export default function ManageAdmins() {
 
       {error && <div className="dashboard-error">{error}</div>}
       {success && <div className="dashboard-success">{success}</div>}
+      {loading && <div style={{ color: "rgba(255,255,255,0.72)", marginBottom: 16 }}>Loading admins...</div>}
 
         {showForm && (
           <div className="form-card">

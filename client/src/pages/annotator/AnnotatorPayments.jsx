@@ -115,8 +115,6 @@ export default function AnnotatorPayments() {
     }
   };
 
-  if (loading) return <div className="dashboard-loading">Loading...</div>;
-
   return (
     <>
       <div className="dashboard-header">
@@ -125,6 +123,7 @@ export default function AnnotatorPayments() {
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
+      {loading && <div className="message" style={{ color: "rgba(255,255,255,0.75)" }}>Loading payment data...</div>}
 
       {/* Payment Summary Cards */}
       <div className="kpi-section">
@@ -302,7 +301,7 @@ export default function AnnotatorPayments() {
                     <td>{m.bank_name || "-"}</td>
                     <td>{m.branch_name || "-"}</td>
                     <td>{m.card_holder_name || "-"}</td>
-                    <td>{m.masked_card_number}</td>
+                    <td>{m.account_number || m.masked_card_number || "-"}</td>
                     <td>{m.is_default ? "Yes" : "No"}</td>
                     <td>
                       {!m.is_default && (
