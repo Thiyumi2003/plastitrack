@@ -57,7 +57,7 @@ export default function Notifications() {
   const fetchNotifications = async () => {
     try {
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/notifications",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/notifications`,
         { headers: getAuthHeader() }
       );
       setNotifications(response.data.notifications);
@@ -70,7 +70,7 @@ export default function Notifications() {
   const handleMarkAsRead = async (notificationId) => {
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/notifications/${notificationId}/read`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/notifications/${notificationId}/read`,
         {},
         { headers: getAuthHeader() }
       );
@@ -85,7 +85,7 @@ export default function Notifications() {
   const handleMarkAllAsRead = async () => {
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/notifications/mark-all-read",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/notifications/mark-all-read`,
         {},
         { headers: getAuthHeader() }
       );
@@ -101,7 +101,7 @@ export default function Notifications() {
     if (!notification.read_status) {
       try {
         await axios.put(
-          `http://localhost:5000/api/dashboard/notifications/${notification.id}/read`,
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/notifications/${notification.id}/read`,
           {},
           { headers: getAuthHeader() }
         );

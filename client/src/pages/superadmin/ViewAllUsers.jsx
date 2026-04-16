@@ -10,9 +10,9 @@ const getProfileSrc = (profilePicture) => {
     return profilePicture;
   }
   if (profilePicture.startsWith("/")) {
-    return `http://localhost:5000${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
   }
-  return `http://localhost:5000/${profilePicture}`;
+  return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
 };
 
 const getAvatarText = (name) => {
@@ -51,7 +51,7 @@ export default function ViewAllUsers() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get("http://localhost:5000/api/dashboard/users", {
+      const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users`, {
         headers: getAuthHeader(),
       });
       setUsers(response.data);
@@ -102,7 +102,7 @@ export default function ViewAllUsers() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/users/${selectedUser.id}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users/${selectedUser.id}`,
         editForm,
         { headers: getAuthHeader() }
       );
@@ -124,7 +124,7 @@ export default function ViewAllUsers() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/users/${user.id}/status`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users/${user.id}/status`,
         { is_active: newStatus },
         { headers: getAuthHeader() }
       );
@@ -142,7 +142,7 @@ export default function ViewAllUsers() {
 
     try {
       await axios.delete(
-        `http://localhost:5000/api/dashboard/users/${user.id}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users/${user.id}`,
         { headers: getAuthHeader() }
       );
       fetchUsers();

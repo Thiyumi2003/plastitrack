@@ -61,7 +61,7 @@ export default function OtpVerify() {
 
     try {
       // Call verify-otp endpoint
-      await axios.post("http://localhost:5000/api/auth/verify-otp", {
+      await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/auth/verify-otp`, {
         email: resetEmail,
         otp_code: otpCode,
         newPassword: resetPassword,

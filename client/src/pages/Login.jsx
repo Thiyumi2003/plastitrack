@@ -52,7 +52,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post("http://localhost:5000/api/auth/login", {
+      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/auth/login`, {
         email: formData.email,
         password: formData.password,
       });
@@ -95,7 +95,7 @@ export default function Login() {
     try {
       console.log("🔵 Starting Google login with credential");
       
-      const response = await axios.post("http://localhost:5000/api/auth/google-login", {
+      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/auth/google-login`, {
         credential: credentialResponse.credential,
       });
 

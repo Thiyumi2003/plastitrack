@@ -26,7 +26,7 @@ export default function MelbourneManageImages() {
   const fetchImages = async () => {
     try {
       setLoading(true);
-      const response = await axios.get("http://localhost:5000/api/dashboard/admin/images", {
+      const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images`, {
         headers: getAuthHeader(),
       });
       console.log("Images data:", response.data); // Debug log
@@ -58,7 +58,7 @@ export default function MelbourneManageImages() {
     try {
       setSubmitting(true);
       await axios.put(
-        `http://localhost:5000/api/dashboard/melbourne/datasets/${selectedImage.id}/review`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/melbourne/datasets/${selectedImage.id}/review`,
         {
           status: reviewForm.status,
           feedback: reviewForm.feedback.trim() || null

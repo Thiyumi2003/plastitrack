@@ -69,7 +69,7 @@ export default function AdminPayments() {
     const fetchPayments = async () => {
       try {
         setLoading(true);
-        const response = await axios.get("http://localhost:5000/api/dashboard/admin/payments", {
+        const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/payments`, {
           headers: getAuthHeader(),
         });
         setPaymentData(response.data);
@@ -88,7 +88,7 @@ export default function AdminPayments() {
   const fetchMethods = async () => {
     try {
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/payment-methods",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`,
         { headers: getAuthHeader() }
       );
       setMethods(response.data || []);
@@ -119,13 +119,13 @@ export default function AdminPayments() {
 
       if (methods.length) {
         await axios.put(
-          `http://localhost:5000/api/dashboard/payment-methods/${methods[0].id}`,
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods/${methods[0].id}`,
           payload,
           { headers: getAuthHeader() }
         );
       } else {
         await axios.post(
-          "http://localhost:5000/api/dashboard/payment-methods",
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`,
           payload,
           { headers: getAuthHeader() }
         );
@@ -149,7 +149,7 @@ export default function AdminPayments() {
   const setDefaultMethod = async (methodId) => {
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/payment-methods/${methodId}/default`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods/${methodId}/default`,
         {},
         { headers: getAuthHeader() }
       );

@@ -30,7 +30,7 @@ export default function TesterPayments() {
     try {
       setLoading(true);
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/tester/payments",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/payments`,
         { headers: getAuthHeader() }
       );
       setPayments(response.data);
@@ -44,7 +44,7 @@ export default function TesterPayments() {
   const fetchMethods = async () => {
     try {
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/payment-methods",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`,
         { headers: getAuthHeader() }
       );
       setMethods(response.data || []);
@@ -75,13 +75,13 @@ export default function TesterPayments() {
 
       if (methods.length) {
         await axios.put(
-          `http://localhost:5000/api/dashboard/payment-methods/${methods[0].id}`,
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods/${methods[0].id}`,
           payload,
           { headers: getAuthHeader() }
         );
       } else {
         await axios.post(
-          "http://localhost:5000/api/dashboard/payment-methods",
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`,
           payload,
           { headers: getAuthHeader() }
         );
@@ -105,7 +105,7 @@ export default function TesterPayments() {
   const setDefaultMethod = async (methodId) => {
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/payment-methods/${methodId}/default`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods/${methodId}/default`,
         {},
         { headers: getAuthHeader() }
       );

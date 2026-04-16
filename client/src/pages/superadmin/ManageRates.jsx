@@ -47,9 +47,9 @@ export default function ManageRates() {
       setLoading(true);
       setError("");
       const [roleRatesRes, userRatesRes, usersRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/role-rates", { headers: getAuthHeader() }),
-        axios.get("http://localhost:5000/api/dashboard/user-rates", { headers: getAuthHeader() }),
-        axios.get("http://localhost:5000/api/dashboard/users", { headers: getAuthHeader() }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/role-rates`, { headers: getAuthHeader() }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/user-rates`, { headers: getAuthHeader() }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users`, { headers: getAuthHeader() }),
       ]);
 
       setRoleRates(roleRatesRes.data || []);
@@ -75,7 +75,7 @@ export default function ManageRates() {
       }
 
       await axios.put(
-        `http://localhost:5000/api/dashboard/role-rates/${rate.id}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/role-rates/${rate.id}`,
         { default_rate: Number(value) },
         { headers: getAuthHeader() }
       );
@@ -97,7 +97,7 @@ export default function ManageRates() {
       }
 
       await axios.put(
-        `http://localhost:5000/api/dashboard/user-rates/by-user/${rate.user_id}/${rate.payment_type}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/user-rates/by-user/${rate.user_id}/${rate.payment_type}`,
         { custom_rate: Number(value) },
         { headers: getAuthHeader() }
       );
@@ -115,7 +115,7 @@ export default function ManageRates() {
 
     try {
       await axios.delete(
-        `http://localhost:5000/api/dashboard/user-rates/by-user/${rate.user_id}/${rate.payment_type}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/user-rates/by-user/${rate.user_id}/${rate.payment_type}`,
         { headers: getAuthHeader() }
       );
 
@@ -141,7 +141,7 @@ export default function ManageRates() {
 
     try {
       await axios.post(
-        "http://localhost:5000/api/dashboard/user-rates",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/user-rates`,
         {
           user_id: Number(selectedUser.id),
           payment_type: selectedUserPaymentType,

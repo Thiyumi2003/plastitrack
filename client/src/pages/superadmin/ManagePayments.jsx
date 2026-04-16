@@ -106,7 +106,7 @@ export default function ManagePayments() {
   const fetchPendingWorkHours = async () => {
     try {
       const res = await axios.get(
-        "http://localhost:5000/api/dashboard/superadmin/work-hours",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/superadmin/work-hours`,
         {
           headers: getAuthHeader(),
           params: { status: "pending" },
@@ -121,7 +121,7 @@ export default function ManagePayments() {
 
   const fetchAdminWorkSummary = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/dashboard/superadmin/work-hours", {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/superadmin/work-hours`, {
         headers: getAuthHeader(),
       });
 
@@ -146,23 +146,23 @@ export default function ManagePayments() {
       setLoading(true);
       setError("");
       const [historyRes, modelRes, modelsRes, adminsRes, modelDetailsRes, adminDetailsRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/payment-history", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-history`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/model-payments", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/model-payments`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/payments/eligible-models", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/eligible-models`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/users", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users`, {
           headers: getAuthHeader(),
           params: { role: "admin" },
         }),
-        axios.get("http://localhost:5000/api/dashboard/reports/model-payment-details", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/model-payment-details`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/reports/admin-payment-details", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/admin-payment-details`, {
           headers: getAuthHeader(),
         }),
       ]);
@@ -196,7 +196,7 @@ export default function ManagePayments() {
   const fetchSuperAdminMethods = async () => {
     try {
       if (!currentUser?.id) return;
-      const res = await axios.get("http://localhost:5000/api/dashboard/payment-methods", {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`, {
         headers: getAuthHeader(),
         params: { user_id: currentUser.id },
       });
@@ -237,7 +237,7 @@ export default function ManagePayments() {
     try {
       setSavingMethod(true);
       await axios.post(
-        "http://localhost:5000/api/dashboard/payment-methods",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`,
         methodForm.paymentType === "bank"
           ? {
               user_id: Number(currentUser.id),
@@ -282,7 +282,7 @@ export default function ManagePayments() {
     try {
       setMethodStatus("");
       await axios.put(
-        `http://localhost:5000/api/dashboard/payment-methods/${methodId}/default`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods/${methodId}/default`,
         {},
         { headers: getAuthHeader() }
       );
@@ -314,7 +314,7 @@ export default function ManagePayments() {
       }
 
       try {
-        const res = await axios.get("http://localhost:5000/api/dashboard/payments/eligible-users", {
+        const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/eligible-users`, {
           headers: getAuthHeader(),
           params: { modelType: createForm.modelType },
         });
@@ -338,7 +338,7 @@ export default function ManagePayments() {
 
       try {
         setAdminEligibilityLoading(true);
-        const res = await axios.get(`http://localhost:5000/api/dashboard/admin-payments/eligibility/${createForm.userId}`, {
+        const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin-payments/eligibility/${createForm.userId}`, {
           headers: getAuthHeader(),
         });
         setAdminEligibility(res.data);
@@ -418,7 +418,7 @@ export default function ManagePayments() {
         }
 
         await axios.post(
-          "http://localhost:5000/api/dashboard/admin-payments",
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin-payments`,
           {
             admin_id: Number(createForm.userId),
             pay_minutes: payMinutes,
@@ -435,7 +435,7 @@ export default function ManagePayments() {
           model_type: createForm.modelType,
         };
 
-        await axios.post("http://localhost:5000/api/dashboard/payments", payload, {
+        await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments`, payload, {
           headers: getAuthHeader(),
         });
 
@@ -467,7 +467,7 @@ export default function ManagePayments() {
       setCreateSuccess("");
 
       const res = await axios.post(
-        "http://localhost:5000/api/dashboard/payments/auto-generate",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/auto-generate`,
         {},
         { headers: getAuthHeader() }
       );
@@ -507,7 +507,7 @@ export default function ManagePayments() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/payments/${approvalDialog.payment.id}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/${approvalDialog.payment.id}`,
         {
           status,
           approved_date: status === "approved" ? new Date().toISOString() : null,
@@ -537,7 +537,7 @@ export default function ManagePayments() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/superadmin/work-hours/${workHourId}/status`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/superadmin/work-hours/${workHourId}/status`,
         { status },
         { headers: getAuthHeader() }
       );
@@ -581,7 +581,7 @@ export default function ManagePayments() {
         submitting: false,
       });
 
-      const res = await axios.get("http://localhost:5000/api/dashboard/payment-methods", {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payment-methods`, {
         headers: getAuthHeader(),
         params: { user_id: payment.user_id },
       });
@@ -659,7 +659,7 @@ export default function ManagePayments() {
       setPayingPaymentId(payDialog.payment.id);
       setPayDialog((prev) => ({ ...prev, submitting: true }));
       const res = await axios.post(
-        `http://localhost:5000/api/dashboard/payments/${payDialog.payment.id}/pay`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/${payDialog.payment.id}/pay`,
         {
           source_payment_method_id: sourceMethodId,
           payment_method_id: payDialog.selectedRecipientMethodId ? Number(payDialog.selectedRecipientMethodId) : null,
@@ -696,7 +696,7 @@ export default function ManagePayments() {
     try {
       setSendingNotificationId(paymentId);
       const res = await axios.post(
-        `http://localhost:5000/api/dashboard/payments/${paymentId}/send-notification`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/${paymentId}/send-notification`,
         {},
         { headers: getAuthHeader() }
       );
@@ -731,7 +731,7 @@ export default function ManagePayments() {
     try {
       setPayingPaymentId(payment.id);
       await axios.post(
-        `http://localhost:5000/api/dashboard/payments/${payment.id}/pay`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/${payment.id}/pay`,
         {
           payment_method_id: payment.recipient_payment_method_id ? Number(payment.recipient_payment_method_id) : null,
           payment_method: "manual_bank_transfer",
@@ -1191,7 +1191,7 @@ export default function ManagePayments() {
 
     try {
       setDownloadingReceiptId(paymentId);
-      const res = await axios.get(`http://localhost:5000/api/dashboard/payments/${paymentId}/receipt`, {
+      const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/payments/${paymentId}/receipt`, {
         headers: getAuthHeader(),
       });
       const receipt = res.data?.receipt;

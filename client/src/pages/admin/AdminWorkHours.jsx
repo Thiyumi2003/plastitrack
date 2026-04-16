@@ -87,7 +87,7 @@ export default function AdminWorkHours() {
   const startWorkSession = async () => {
     try {
       await axios.post(
-        "http://localhost:5000/api/dashboard/admin/work-sessions/start",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-sessions/start`,
         {},
         { headers: getAuthHeader() }
       );
@@ -102,7 +102,7 @@ export default function AdminWorkHours() {
     if (trackingStateRef.current !== "active") return;
     try {
       await axios.post(
-        "http://localhost:5000/api/dashboard/admin/work-sessions/pause",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-sessions/pause`,
         {},
         { headers: getAuthHeader() }
       );
@@ -120,7 +120,7 @@ export default function AdminWorkHours() {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/dashboard/admin/work-sessions/heartbeat",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-sessions/heartbeat`,
         {
           user_active: userActive,
           tab_visible: tabVisible,
@@ -148,7 +148,7 @@ export default function AdminWorkHours() {
     try {
       setLoading(true);
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/admin/work-hours",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-hours`,
         { headers: getAuthHeader() }
       );
       setWorkHours(response.data.workHours);
@@ -227,7 +227,7 @@ export default function AdminWorkHours() {
     try {
       const newStatus = !autoTrackEnabled;
       await axios.put(
-        "http://localhost:5000/api/dashboard/admin/toggle-auto-tracking",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/toggle-auto-tracking`,
         { auto_track_hours: newStatus },
         { headers: getAuthHeader() }
       );
@@ -258,7 +258,7 @@ export default function AdminWorkHours() {
 
     try {
       await axios.post(
-        "http://localhost:5000/api/dashboard/admin/work-hours",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-hours`,
         {
           ...formData,
           hours_worked: Number((parsedMinutes / 60).toFixed(2)),
@@ -283,7 +283,7 @@ export default function AdminWorkHours() {
 
     try {
       await axios.delete(
-        `http://localhost:5000/api/dashboard/admin/work-hours/${id}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/work-hours/${id}`,
         { headers: getAuthHeader() }
       );
       fetchWorkHours();

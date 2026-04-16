@@ -23,7 +23,7 @@ export default function AnnotatorReviewResults() {
     try {
       setLoading(true);
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/annotator/review-results",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/review-results`,
         { headers: getAuthHeader() }
       );
       setReviews(response.data || []);
@@ -37,7 +37,7 @@ export default function AnnotatorReviewResults() {
   const handleReworkTask = async (taskId) => {
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/annotator/tasks/${taskId}/rework`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/tasks/${taskId}/rework`,
         { status: "in_progress" },
         { headers: getAuthHeader() }
       );

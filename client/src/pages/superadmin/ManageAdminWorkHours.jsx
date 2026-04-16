@@ -25,7 +25,7 @@ export default function ManageAdminWorkHours() {
       setLoading(true);
       setError("");
       const response = await axios.get(
-        "http://localhost:5000/api/dashboard/superadmin/work-hours",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/superadmin/work-hours`,
         { headers: getAuthHeader() }
       );
       console.log("Work hours response:", response.data);
@@ -48,7 +48,7 @@ export default function ManageAdminWorkHours() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/superadmin/work-hours/${id}/status`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/superadmin/work-hours/${id}/status`,
         { status },
         { headers: getAuthHeader() }
       );

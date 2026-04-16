@@ -17,9 +17,9 @@ export default function AdminSidebar() {
       return profilePicture;
     }
     if (profilePicture.startsWith("/")) {
-      return `http://localhost:5000${profilePicture}`;
+      return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
     }
-    return `http://localhost:5000/${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
   };
 
   const profileSrc = getProfileSrc(user.profile_picture);
@@ -30,7 +30,7 @@ export default function AdminSidebar() {
     try {
       if (token) {
         await axios.post(
-          "http://localhost:5000/api/auth/logout",
+          `${import.meta.env.VITE_API_BASE_URL}/api/auth/logout`,
           {},
           {
             headers: {

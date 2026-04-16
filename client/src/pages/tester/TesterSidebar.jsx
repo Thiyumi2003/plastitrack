@@ -16,9 +16,9 @@ export default function TesterSidebar() {
       return profilePicture;
     }
     if (profilePicture.startsWith("/")) {
-      return `http://localhost:5000${profilePicture}`;
+      return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
     }
-    return `http://localhost:5000/${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
   };
 
   const profileSrc = getProfileSrc(user.profile_picture);

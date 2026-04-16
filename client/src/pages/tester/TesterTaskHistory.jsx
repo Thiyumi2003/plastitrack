@@ -56,7 +56,7 @@ export default function TesterTaskHistory() {
         params.append("dateTo", dateTo);
       }
 
-      const url = `http://localhost:5000/api/dashboard/tester/task-history${params.toString() ? "?" + params.toString() : ""}`;
+      const url = `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/task-history${params.toString() ? "?" + params.toString() : ""}`;
       const response = await axios.get(url, { headers: getAuthHeader() });
       setTasks(response.data);
       setError("");

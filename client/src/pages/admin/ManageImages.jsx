@@ -44,8 +44,8 @@ export default function ManageImages() {
     try {
       setLoading(true);
       const [imagesRes, usersRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/admin/images", { headers: getAuthHeader() }),
-        axios.get("http://localhost:5000/api/dashboard/admin/users-filtered", { headers: getAuthHeader() }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images`, { headers: getAuthHeader() }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/users-filtered`, { headers: getAuthHeader() }),
       ]);
       console.log("Admin manage images - Fetched data:", imagesRes.data);
       setImages(imagesRes.data);
@@ -89,7 +89,7 @@ export default function ManageImages() {
       ));
       
       await axios.put(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}/assign`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}/assign`,
         { 
           annotatorId: userId, 
           status: "in_progress",
@@ -125,7 +125,7 @@ export default function ManageImages() {
       ));
       
       await axios.put(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}/assign`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}/assign`,
         { testerId: userId, status: "pending_review" },
         { headers: getAuthHeader() }
       );
@@ -145,7 +145,7 @@ export default function ManageImages() {
       }
 
       await axios.put(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}/approve-rework`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}/approve-rework`,
         { annotatorId: image.annotator_id },
         { headers: getAuthHeader() }
       );
@@ -169,7 +169,7 @@ export default function ManageImages() {
       ));
       
       await axios.put(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}/assign`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}/assign`,
         { melbourneUserId: userId, status: "approved" },
         { headers: getAuthHeader() }
       );
@@ -187,7 +187,7 @@ export default function ManageImages() {
 
     try {
       await axios.delete(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}`,
         { headers: getAuthHeader() }
       );
       fetchData();
@@ -292,9 +292,9 @@ export default function ManageImages() {
       return profilePicture;
     }
     if (profilePicture.startsWith("/")) {
-      return `http://localhost:5000${profilePicture}`;
+      return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
     }
-    return `http://localhost:5000/${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
   };
 
   const findProfilePictureByName = (userList, name) => {
@@ -333,7 +333,7 @@ export default function ManageImages() {
       setIsLoadingDetails(true);
       setDetailsMode(mode);
       const { data } = await axios.get(
-        `http://localhost:5000/api/dashboard/admin/images/${imageId}/details`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/${imageId}/details`,
         { headers: getAuthHeader() }
       );
       setSelectedImageDetails(data.image);
@@ -365,7 +365,7 @@ export default function ManageImages() {
     try {
       setIsUploading(true);
       await axios.post(
-        "http://localhost:5000/api/dashboard/admin/images/add",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/images/add`,
         { 
           filename: newImageName.trim(),
           objectsCount: objectCount

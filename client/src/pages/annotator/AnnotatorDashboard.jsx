@@ -27,13 +27,13 @@ export default function AnnotatorDashboard() {
     try {
       setLoading(true);
       const [statsRes, reviewsRes, tasksRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/annotator/workflow-stats", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/workflow-stats`, {
           headers: getAuthHeader(),
         }).catch(() => ({ data: { assigned: 0, inProgress: 0, underReview: 0, approved: 0, rejected: 0 } })),
-        axios.get("http://localhost:5000/api/dashboard/annotator/recent-reviews", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/recent-reviews`, {
           headers: getAuthHeader(),
         }).catch(() => ({ data: [] })),
-        axios.get("http://localhost:5000/api/dashboard/annotator/tasks", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/tasks`, {
           headers: getAuthHeader(),
         }).catch(() => ({ data: [] })),
       ]);
@@ -52,7 +52,7 @@ export default function AnnotatorDashboard() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/annotator/tasks/${selectedTask.id}/status`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/tasks/${selectedTask.id}/status`,
         {
           status: statusForm.status,
           notes: statusForm.notes,

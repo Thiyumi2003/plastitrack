@@ -83,7 +83,7 @@ export default function TesterProfile() {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/dashboard/profile-picture",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/profile-picture`,
         formData,
         {
           headers: {
@@ -118,7 +118,7 @@ export default function TesterProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/tester/profile",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/profile`,
         {
           name: `${profile.firstName} ${profile.lastName}`.trim(),
           email: profile.email,
@@ -175,7 +175,7 @@ export default function TesterProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/tester/change-password",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/change-password`,
         {
           currentPassword: password.current,
           newPassword: password.new,
@@ -224,7 +224,7 @@ export default function TesterProfile() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {profile.profilePicture ? (
               <img
-                src={`http://localhost:5000${profile.profilePicture}`}
+                src={`${import.meta.env.VITE_API_BASE_URL}${profile.profilePicture}`}
                 alt="Profile"
                 style={{
                   width: "150px",

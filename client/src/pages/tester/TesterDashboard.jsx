@@ -26,10 +26,10 @@ export default function TesterDashboard() {
     try {
       setLoading(true);
       const [kpisRes, tasksRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/tester/dashboard", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/dashboard`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/tester/tasks", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/tasks`, {
           headers: getAuthHeader(),
         }),
       ]);
@@ -47,7 +47,7 @@ export default function TesterDashboard() {
 
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/tester/tasks/${selectedTask.id}/review`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/tester/tasks/${selectedTask.id}/review`,
         {
           status: reviewForm.status,
           feedback: reviewForm.feedback,

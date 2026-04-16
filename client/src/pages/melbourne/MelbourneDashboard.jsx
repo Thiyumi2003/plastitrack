@@ -36,11 +36,11 @@ export default function MelbourneDashboard() {
           endDate: endDate || undefined,
           period,
         };
-        const perfRes = await axios.get("http://localhost:5000/api/dashboard/performance/users", {
+        const perfRes = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/performance/users`, {
           headers: getAuthHeader(),
           params,
         });
-        const systemRes = await axios.get("http://localhost:5000/api/dashboard/performance/system", {
+        const systemRes = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/performance/system`, {
           headers: getAuthHeader(),
         });
         setPerformance(perfRes.data);
@@ -62,20 +62,20 @@ export default function MelbourneDashboard() {
     if (startDate) params.append("startDate", startDate);
     if (endDate) params.append("endDate", endDate);
     if (period) params.append("period", period);
-    window.open(`http://localhost:5000/api/dashboard/performance/users/export?${params.toString()}`, "_blank");
+    window.open(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/performance/users/export?${params.toString()}`, "_blank");
   };
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       const [adminKpiRes, adminReportRes, summaryRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/kpis", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/kpis`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/admin/reports", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/reports`, {
           headers: getAuthHeader(),
         }),
-        axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", {
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotation-summary`, {
           headers: getAuthHeader(),
         }),
       ]);

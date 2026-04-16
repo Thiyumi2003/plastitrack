@@ -36,7 +36,7 @@ export default function AnnotatorTaskHistory() {
         params.append("dateTo", dateTo);
       }
 
-      const url = `http://localhost:5000/api/dashboard/annotator/task-history${params.toString() ? "?" + params.toString() : ""}`;
+      const url = `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/task-history${params.toString() ? "?" + params.toString() : ""}`;
       const response = await axios.get(url, { headers: getAuthHeader() });
       setTasks(response.data);
       setError("");
@@ -50,7 +50,7 @@ export default function AnnotatorTaskHistory() {
   const handleReworkTask = async (taskId) => {
     try {
       await axios.put(
-        `http://localhost:5000/api/dashboard/annotator/tasks/${taskId}/rework`,
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/tasks/${taskId}/rework`,
         { status: "in_progress" },
         { headers: getAuthHeader() }
       );

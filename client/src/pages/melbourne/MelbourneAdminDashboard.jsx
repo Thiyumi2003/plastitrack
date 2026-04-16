@@ -19,8 +19,8 @@ export default function MelbourneAdminDashboard() {
       try {
         setLoading(true);
         const [kpiRes, reportRes] = await Promise.all([
-          axios.get("http://localhost:5000/api/dashboard/kpis", { headers: getAuthHeader() }),
-          axios.get("http://localhost:5000/api/dashboard/admin/reports", { headers: getAuthHeader() }),
+          axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/kpis`, { headers: getAuthHeader() }),
+          axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/reports`, { headers: getAuthHeader() }),
         ]);
 
         setKpis(kpiRes.data);

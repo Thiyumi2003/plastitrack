@@ -10,9 +10,9 @@ const getProfileSrc = (profilePicture) => {
     return profilePicture;
   }
   if (profilePicture.startsWith("/")) {
-    return `http://localhost:5000${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
   }
-  return `http://localhost:5000/${profilePicture}`;
+  return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
 };
 
 const getAvatarText = (name) => {
@@ -38,7 +38,7 @@ export default function ManageAdmins() {
   const fetchAdmins = async () => {
     try {
       setLoading(true);
-      const response = await axios.get("http://localhost:5000/api/dashboard/admins", {
+      const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admins`, {
         headers: getAuthHeader(),
       });
       setAdmins(response.data);
@@ -61,7 +61,7 @@ export default function ManageAdmins() {
     if (editingAdminId) {
       try {
         await axios.put(
-          `http://localhost:5000/api/dashboard/users/${editingAdminId}`,
+          `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users/${editingAdminId}`,
           {
             name: formData.name,
             email: formData.email,
@@ -82,7 +82,7 @@ export default function ManageAdmins() {
     }
 
     try {
-      await axios.post("http://localhost:5000/api/dashboard/admins", formData, {
+      await axios.post(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admins`, formData, {
         headers: getAuthHeader(),
       });
       setSuccess("Admin added successfully");
@@ -99,7 +99,7 @@ export default function ManageAdmins() {
     setError("");
     setSuccess("");
     try {
-      await axios.delete(`http://localhost:5000/api/dashboard/users/${id}`, {
+      await axios.delete(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/users/${id}`, {
         headers: getAuthHeader(),
       });
       setSuccess("Admin deleted successfully");

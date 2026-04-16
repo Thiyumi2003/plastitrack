@@ -65,12 +65,12 @@ export default function Reports() {
     try {
       setIsDownloadingAll(true);
       const [summaryRes, annotatorRes, testerRes, imageRes, paymentEligibilityRes, paymentRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/dashboard/reports/annotation-summary", { headers }),
-        axios.get("http://localhost:5000/api/dashboard/reports/annotator-performance", { headers }),
-        axios.get("http://localhost:5000/api/dashboard/reports/tester-review", { headers }),
-        axios.get("http://localhost:5000/api/dashboard/reports/image-details", { headers }),
-        axios.get("http://localhost:5000/api/dashboard/admin/payment-eligibility", { headers }),
-        axios.get("http://localhost:5000/api/dashboard/reports/payment-report", { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotation-summary`, { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotator-performance`, { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/tester-review`, { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/image-details`, { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/payment-eligibility`, { headers }),
+        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/payment-report`, { headers }),
       ]);
 
       const summaryData = summaryRes.data || {};

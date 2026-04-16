@@ -84,7 +84,7 @@ export default function AnnotatorProfile() {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/dashboard/profile-picture",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/profile-picture`,
         formData,
         {
           headers: {
@@ -119,7 +119,7 @@ export default function AnnotatorProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/annotator/profile",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/profile`,
         {
           name: `${profile.firstName} ${profile.lastName}`,
           email: profile.email,
@@ -171,7 +171,7 @@ export default function AnnotatorProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/annotator/change-password",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/annotator/change-password`,
         {
           currentPassword: password.current,
           newPassword: password.new,
@@ -220,7 +220,7 @@ export default function AnnotatorProfile() {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {profile.profilePicture ? (
               <img
-                src={`http://localhost:5000${profile.profilePicture}`}
+                src={`${import.meta.env.VITE_API_BASE_URL}${profile.profilePicture}`}
                 alt="Profile"
                 style={{
                   width: "150px",

@@ -83,7 +83,7 @@ export default function MelbourneProfile() {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/dashboard/profile-picture",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/profile-picture`,
         formData,
         {
           headers: {
@@ -118,7 +118,7 @@ export default function MelbourneProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/melbourne/profile",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/melbourne/profile`,
         {
           name: `${profile.firstName} ${profile.lastName}`.trim(),
           email: profile.email,
@@ -175,7 +175,7 @@ export default function MelbourneProfile() {
     setLoading(true);
     try {
       await axios.put(
-        "http://localhost:5000/api/dashboard/melbourne/change-password",
+        `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/melbourne/change-password`,
         {
           currentPassword: password.current,
           newPassword: password.new,
@@ -224,7 +224,7 @@ export default function MelbourneProfile() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {profile.profilePicture ? (
               <img
-                src={`http://localhost:5000${profile.profilePicture}`}
+                src={`${import.meta.env.VITE_API_BASE_URL}${profile.profilePicture}`}
                 alt="Profile"
                 style={{
                   width: "150px",

@@ -19,7 +19,7 @@ export default function AdminUsers() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get("http://localhost:5000/api/dashboard/admin/users-filtered", {
+      const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/users-filtered`, {
         headers: getAuthHeader(),
       });
       // Combine annotators and testers
@@ -46,9 +46,9 @@ export default function AdminUsers() {
       return profilePicture;
     }
     if (profilePicture.startsWith("/")) {
-      return `http://localhost:5000${profilePicture}`;
+      return `${import.meta.env.VITE_API_BASE_URL}${profilePicture}`;
     }
-    return `http://localhost:5000/${profilePicture}`;
+    return `${import.meta.env.VITE_API_BASE_URL}/${profilePicture}`;
   };
 
   const getAvatarText = (name) => {
