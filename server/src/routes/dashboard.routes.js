@@ -469,9 +469,12 @@ const createReceiptAccessToken = (paymentId, userId) => {
   );
 };
 
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://lemon-sand-00cd61800.6.azurestaticapps.net";
+
 const buildReceiptViewUrl = (paymentId, userId) => {
   const token = createReceiptAccessToken(paymentId, userId);
-  return `${SERVER_PUBLIC_URL}/api/dashboard/payments/${paymentId}/receipt-view?token=${encodeURIComponent(token)}`;
+  return `${FRONTEND_URL}/receipt-view/${paymentId}?token=${encodeURIComponent(token)}`;
 };
 
 const sendPaymentEmailNotification = async ({ recipientEmail, recipientName, payment, receiptUrl }) => {
