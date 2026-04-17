@@ -443,7 +443,6 @@ export default function AdminReports() {
             >
               {isDownloadingAll ? "Preparing PDF..." : "Download All PDF"}
             </button>
-          <div className="header-date">{new Date().toLocaleDateString()}</div>
         </div>
       </div>
 
