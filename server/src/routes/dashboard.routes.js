@@ -470,8 +470,6 @@ const createReceiptAccessToken = (paymentId, userId) => {
   );
 };
 
-const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://lemon-sand-00cd61800.6.azurestaticapps.net";
 
 const buildReceiptViewUrl = (paymentId, userId) => {
   const token = createReceiptAccessToken(paymentId, userId);
