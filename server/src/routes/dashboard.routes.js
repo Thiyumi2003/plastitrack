@@ -50,7 +50,8 @@ const PAYMENT_STATUS = {
 
 const PAYMENT_STATUSES = Object.values(PAYMENT_STATUS);
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret123";
-const SERVER_PUBLIC_URL = process.env.SERVER_PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://lemon-sand-00cd61800.6.azurestaticapps.net";
 const validateStrongPassword = (password) => {
   const value = String(password || "");
   if (value.length < 6) {
