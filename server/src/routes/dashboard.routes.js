@@ -469,29 +469,12 @@ const createReceiptAccessToken = (paymentId, userId) => {
   );
 };
 
-const trimTrailingSlashes = (value) => String(value || "").replace(/\/+$/, "");
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://lemon-sand-00cd61800.6.azurestaticapps.net";
 
-const resolveServerPublicUrl = (request) => {
-  const fallback = trimTrailingSlashes(SERVER_PUBLIC_URL);
-  if (!request) return fallback;
-
-  const forwardedProto = String(request.headers["x-forwarded-proto"] || "")
-    .split(",")[0]
-    .trim();
-  const forwardedHost = String(request.headers["x-forwarded-host"] || "")
-    .split(",")[0]
-    .trim();
-  const host = forwardedHost || request.get?.("host") || request.headers.host;
-  const protocol = forwardedProto || request.protocol || "https";
-
-  if (!host) return fallback;
-  return `${protocol}://${host}`;
-};
-
-const buildReceiptViewUrl = (paymentId, userId, request) => {
+const buildReceiptViewUrl = (paymentId, userId) => {
   const token = createReceiptAccessToken(paymentId, userId);
-  const serverPublicUrl = resolveServerPublicUrl(request);
-  return `${serverPublicUrl}/api/dashboard/payments/${Number(paymentId)}/receipt-view?token=${encodeURIComponent(token)}`;
+  return `${FRONTEND_URL}/receipt-view/${paymentId}?token=${encodeURIComponent(token)}`;
 };
 
 const sendPaymentEmailNotification = async ({ recipientEmail, recipientName, payment, receiptUrl }) => {
@@ -602,7 +585,6 @@ const sendPaymentSmsNotification = async ({ phone, recipientName, payment, recei
 const dispatchPaymentNotifications = async ({
   paymentId,
   userId,
-  request,
   recipientName,
   recipientEmail,
   recipientPhone,
@@ -611,7 +593,7 @@ const dispatchPaymentNotifications = async ({
   modelType,
   paymentDate,
 }) => {
-  const receiptUrl = buildReceiptViewUrl(paymentId, userId, request);
+  const receiptUrl = buildReceiptViewUrl(paymentId, userId);
   const receiptNumber = `PTR-${String(paymentId).padStart(6, "0")}`;
   const notificationPayload = {
     receiptNumber,
@@ -3654,7 +3636,6 @@ router.post("/payments/:id/pay", verifyToken, async (req, res) => {
     const { receiptUrl, notificationResults } = await dispatchPaymentNotifications({
       paymentId: payment.id,
       userId: payment.user_id,
-      request: req,
       recipientName: payment.name,
       recipientEmail: payment.email,
       recipientPhone: payment.phone,
@@ -3720,7 +3701,6 @@ router.post("/payments/:id/send-notification", verifyToken, async (req, res) => 
     const { receiptUrl, notificationResults } = await dispatchPaymentNotifications({
       paymentId: payment.id,
       userId: payment.user_id,
-      request: req,
       recipientName: payment.name,
       recipientEmail: payment.email,
       recipientPhone: payment.phone,
