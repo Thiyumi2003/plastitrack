@@ -4,7 +4,7 @@ const app = require("./app.js");
 const PORT = process.env.PORT || 5000;
 
 // Import init for DB bootstrap side effects.
-require("./db/init.js");
+//require("./db/init.js");
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
