@@ -76,7 +76,6 @@ export default function TesterDashboard() {
     <>
       <div className="dashboard-header">
         <h1>Welcome back, {JSON.parse(localStorage.getItem("user") || "{}").name}! </h1>
-        <div className="header-date">{new Date().toLocaleDateString()}</div>
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}

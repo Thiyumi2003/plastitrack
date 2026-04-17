@@ -91,7 +91,6 @@ export default function TesterTaskHistory() {
     <>
       <div className="dashboard-header">
         <h1>Task History</h1>
-        <div className="header-date">{new Date().toLocaleDateString()}</div>
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
