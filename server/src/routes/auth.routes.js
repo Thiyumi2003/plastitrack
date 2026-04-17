@@ -9,6 +9,10 @@ const router = express.Router();
 const allowSelfSignedMailTls =
   process.env.MAIL_ALLOW_SELF_SIGNED === "true" ||
   (process.env.NODE_ENV !== "production" && process.env.MAIL_ALLOW_SELF_SIGNED !== "false");
+const isProduction = process.env.NODE_ENV === "production";
+const hasMailCredentials = Boolean(
+  String(process.env.MAIL_USER || "").trim() && String(process.env.MAIL_PASS || "").trim()
+);
 
 const validateStrongPassword = (password) => {
   const value = String(password || "");
@@ -338,10 +342,16 @@ router.post("/logout", async (req, res) => {
 router.post("/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
-    console.log("Forgot password request for email:", email);
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    console.log("Forgot password request for email:", normalizedEmail);
 
-    if (!email) {
+    if (!normalizedEmail) {
       return res.status(400).json({ error: "Email is required" });
+    }
+
+    if (!hasMailCredentials) {
+      console.error("Forgot password blocked: MAIL_USER/MAIL_PASS are not configured");
+      return res.status(500).json({ error: "Email service is not configured on server" });
     }
 
     const connection = await pool.getConnection();
@@ -349,7 +359,7 @@ router.post("/forgot-password", async (req, res) => {
     // Check if user exists
     const [users] = await connection.execute(
       "SELECT id, name FROM users WHERE email = ?",
-      [email]
+      [normalizedEmail]
     );
 
     console.log("Users found:", users.length);
@@ -376,7 +386,7 @@ router.post("/forgot-password", async (req, res) => {
     try {
       await connection.execute(
         "INSERT INTO otp_codes (email, otp_code, purpose, expires_at) VALUES (?, ?, ?, ?)",
-        [email, otp, "password_reset", expiresAt]
+        [normalizedEmail, otp, "password_reset", expiresAt]
       );
       console.log("OTP stored successfully");
     } catch (dbError) {
@@ -390,8 +400,8 @@ router.post("/forgot-password", async (req, res) => {
     // Send OTP email
     try {
       const mailOptions = {
-        from: process.env.MAIL_USER,
-        to: email,
+        from: process.env.MAIL_FROM || process.env.MAIL_USER,
+        to: normalizedEmail,
         subject: "PlastiTrack - Password Reset OTP",
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -420,21 +430,45 @@ router.post("/forgot-password", async (req, res) => {
       };
 
       await transporter.sendMail(mailOptions);
-      console.log(`✓ OTP sent to ${email}`);
+      console.log(`✓ OTP sent to ${normalizedEmail}`);
 
       res.json({
         message: "OTP sent to your email",
-        email: email,
+        email: normalizedEmail,
       });
     } catch (emailError) {
       console.error("✗ Email send failed:", emailError.message);
-      console.log(`⚠ OTP (fallback): ${otp}`);
-      // Return success with OTP code as fallback
-      res.json({
-        message: "OTP generated (Email failed, OTP shown here for testing)",
-        email: email,
-        otp: otp,
-        warning: "Email could not be sent. Use the OTP code above for testing."
+      console.error("✗ Email send code:", emailError.code || "n/a");
+      if (emailError.response) {
+        console.error("✗ Email send response:", emailError.response);
+      }
+
+      // OTP should only be usable when mail was actually delivered.
+      // Remove the generated OTP if sending fails.
+      try {
+        const cleanupConnection = await pool.getConnection();
+        await cleanupConnection.execute(
+          "DELETE FROM otp_codes WHERE email = ? AND otp_code = ? AND purpose = 'password_reset' AND verified = FALSE",
+          [normalizedEmail, otp]
+        );
+        await cleanupConnection.release();
+      } catch (cleanupErr) {
+        console.error("Failed to cleanup unsent OTP:", cleanupErr.message);
+      }
+
+      if (isProduction) {
+        return res.status(502).json({
+          error: "Failed to send OTP email. Please try again later.",
+        });
+      }
+
+      // Non-production fallback for testing only.
+      console.log(`⚠ OTP (dev fallback): ${otp}`);
+      res.status(202).json({
+        message: "OTP generated (email failed in non-production)",
+        email: normalizedEmail,
+        otp,
+        warning: "Email could not be sent. Use OTP only for local testing.",
       });
     }
   } catch (err) {
