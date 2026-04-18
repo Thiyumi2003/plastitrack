@@ -119,7 +119,6 @@ export default function MelbourneDashboard() {
     <>
       <div className="dashboard-header">
         <h1>Melbourne User Dashboard</h1>
-        <div className="header-date">{new Date().toLocaleDateString()}</div>
       </div>
 
       {error && <div className="dashboard-error">{error}</div>}
