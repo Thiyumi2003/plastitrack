@@ -38,6 +38,7 @@ import MelbourneAdminDashboard from "./pages/melbourne/MelbourneAdminDashboard";
 import MelbourneManageImages from "./pages/melbourne/MelbourneManageImages";
 import MelbourneReports from "./pages/melbourne/MelbourneReports";
 import MelbourneLayout from "./pages/melbourne/MelbourneLayout";
+import ReceiptViewRedirect from "./pages/ReceiptViewRedirect";
 import SystemMessages from "./components/SystemMessages";
 
 // Protected Route Component
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot" element={<ForgotPassword />} />
         <Route path="/otp" element={<OtpVerify />} />
+        <Route path="/receipt-view/:id" element={<ReceiptViewRedirect />} />
 
         {/* Super Admin Dashboard Routes (Nested Layout) */}
         <Route
