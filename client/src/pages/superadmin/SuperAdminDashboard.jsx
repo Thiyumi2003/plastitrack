@@ -22,7 +22,7 @@ export default function SuperAdminDashboard() {
         const [kpiRes, reportRes, summaryRes] = await Promise.all([
           axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/kpis`, { headers: getAuthHeader() }),
           axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports`, { headers: getAuthHeader() }),
-          axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotation-summary`, { headers: getAuthHeader() }),
+          axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/image-progress`, { headers: getAuthHeader() }),
         ]);
 
         setKpis(kpiRes.data);
