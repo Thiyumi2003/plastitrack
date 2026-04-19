@@ -168,21 +168,21 @@ export default function Login() {
           <div className="login-card">
             <h2 className="login-card-title">Welcome Back</h2>
             <p className="login-card-subtitle">
-              Enter your user name and password to access your panel.
+              Enter your email and password to access your panel.
             </p>
 
             {error && <div className="auth-error">{error}</div>}
             {success && <div className="auth-success">{success}</div>}
 
             <form onSubmit={handleLogin} className="login-form">
-              <label className="login-label" htmlFor="email">Email or Username</label>
+              <label className="login-label" htmlFor="email">Email </label>
               <div className="login-input">
                 <Mail className="login-input-icon" size={18} />
                 <input
                   id="email"
                   type="email"
                   name="email"
-                  placeholder="Email or username"
+                  placeholder="Email"
                   value={formData.email}
                   onChange={handleChange}
                   disabled={loading}
