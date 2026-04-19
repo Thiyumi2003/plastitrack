@@ -68,17 +68,26 @@ export default function MelbourneDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [adminKpiRes, adminReportRes, summaryRes] = await Promise.all([
+      const [adminKpiRes, adminReportRes] = await Promise.all([
         axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/kpis`, {
           headers: getAuthHeader(),
         }),
         axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/reports`, {
           headers: getAuthHeader(),
         }),
-        axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotation-summary`, {
-          headers: getAuthHeader(),
-        }),
       ]);
+
+      let summaryRes = null;
+      try {
+        summaryRes = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/image-progress`, {
+          headers: getAuthHeader(),
+        });
+      } catch (progressErr) {
+        console.warn("Image progress endpoint failed, falling back to annotation summary:", progressErr?.response?.status || progressErr?.message);
+        summaryRes = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/dashboard/reports/annotation-summary`, {
+          headers: getAuthHeader(),
+        });
+      }
       
       setAdminKpis(adminKpiRes.data);
       setAdminReports(adminReportRes.data);

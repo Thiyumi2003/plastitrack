@@ -45,7 +45,18 @@ export const AnnotationSummaryReport = () => {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
         });
-        const progressSource = Array.isArray(data.progressOverTime) ? data.progressOverTime : [];
+        let progressData = null;
+        try {
+          progressData = await fetchData("/api/dashboard/reports/image-progress");
+        } catch (progressErr) {
+          console.warn("Image progress endpoint failed, falling back to annotation summary:", progressErr);
+        }
+
+        const progressSource = Array.isArray(progressData?.progressOverTime)
+          ? progressData.progressOverTime
+          : Array.isArray(data.progressOverTime)
+          ? data.progressOverTime
+          : [];
         
           let dashboardData = null;
           try {
