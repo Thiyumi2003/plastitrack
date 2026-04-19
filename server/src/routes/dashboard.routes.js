@@ -1291,17 +1291,21 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
 
     const [progressRows] = await connection.execute(
       `SELECT
-        DATE(t.assigned_date) as date,
-        SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN t.status IN ('in_progress', 'pending_review') THEN 1 ELSE 0 END) as in_progress,
-        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected
-       FROM tasks t
-       LEFT JOIN users u ON t.user_id = u.id
-       ${whereClause}
-       GROUP BY DATE(t.assigned_date)
-       ORDER BY DATE(t.assigned_date) ASC`,
+        DATE(COALESCE(i.updated_at, i.created_at)) as date,
+        SUM(CASE WHEN i.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN i.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM images i
+       INNER JOIN (
+         SELECT DISTINCT t.image_id
+         FROM tasks t
+         LEFT JOIN users u ON t.user_id = u.id
+         ${whereClause}
+       ) x ON x.image_id = i.id
+       GROUP BY DATE(COALESCE(i.updated_at, i.created_at))
+       ORDER BY DATE(COALESCE(i.updated_at, i.created_at)) ASC`,
       params
     );
 
