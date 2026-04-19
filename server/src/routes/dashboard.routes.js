@@ -1357,6 +1357,61 @@ router.get("/reports/annotation-summary", verifyToken, async (req, res) => {
   }
 });
 
+// GET Dashboard image progress over time
+router.get("/reports/image-progress", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin", "melbourne_user"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { startDate, endDate } = req.query;
+    const connection = await pool.getConnection();
+
+    let whereClause = "WHERE 1=1";
+    const params = [];
+    if (startDate) {
+      whereClause += " AND i.updated_at >= ?";
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += " AND i.updated_at <= ?";
+      params.push(endDate);
+    }
+
+    const [progressRows] = await connection.execute(
+      `SELECT
+        DATE(COALESCE(i.updated_at, i.created_at)) as date,
+        SUM(CASE WHEN i.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN i.status IN ('in_progress', 'pending_review') THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN i.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN i.status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM images i
+       ${whereClause}
+       GROUP BY DATE(COALESCE(i.updated_at, i.created_at))
+       ORDER BY DATE(COALESCE(i.updated_at, i.created_at)) ASC`,
+      params
+    );
+
+    await connection.release();
+
+    res.json({
+      progressOverTime: progressRows.map((row) => ({
+        date: row.date,
+        pending: Number(row.pending || 0),
+        in_progress: Number(row.in_progress || 0),
+        completed: Number(row.completed || 0),
+        approved: Number(row.approved || 0),
+        rejected: Number(row.rejected || 0),
+      })),
+    });
+  } catch (err) {
+    console.error("Image progress error:", err.message, err.stack);
+    res.status(500).json({ error: "Failed to fetch image progress", details: err.message });
+  }
+});
+
 // GET Annotator Performance Report with date filters
 router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
   try {
