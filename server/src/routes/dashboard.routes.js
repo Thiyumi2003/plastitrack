@@ -1443,11 +1443,11 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
         -- Total unique images ever assigned (historical + current)
         COUNT(DISTINCT t.image_id) as total_assigned,
         -- Completed tasks
-        COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.image_id ELSE NULL END) as completed,
+        SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed,
         -- Current in progress
-        COUNT(DISTINCT CASE WHEN t.status IN ('pending', 'in_progress') THEN t.image_id ELSE NULL END) as in_progress,
+        SUM(CASE WHEN t.status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) as in_progress,
         -- Tasks marked as rejected
-        COUNT(DISTINCT CASE WHEN t.status = 'rejected' THEN t.image_id ELSE NULL END) as rejected_tasks,
+        SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected_tasks,
         -- Average completion time
         AVG(CASE 
           WHEN t.status = 'completed' AND t.completed_date IS NOT NULL 
@@ -1461,8 +1461,8 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
       taskParams
     );
 
-    // Get "under review" count - images where annotator completed work and now waiting in pending review
-    let underReviewWhere = "WHERE ann_task.user_id IS NOT NULL AND ann_task.task_type = 'annotation' AND ann_task.status = 'completed' AND test_task.task_type = 'testing' AND test_task.status = 'pending_review'";
+    // Get "under review" count - images where annotator completed work and now being tested
+    let underReviewWhere = "WHERE ann_task.user_id IS NOT NULL AND ann_task.task_type = 'annotation' AND ann_task.status = 'completed' AND test_task.task_type = 'testing' AND test_task.status IN ('pending', 'in_progress', 'pending_review')";
     const underReviewParams = [];
     if (startDate) {
       underReviewWhere += " AND ann_task.assigned_date >= ?";
@@ -1607,7 +1607,7 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
         inProgress: Number(row.in_progress || 0),
         underReview: underReviewCount,
         approved: approved,
-        rejected: Math.max(currentlyRejected, rejectedTasks),
+        rejected: currentlyRejected + rejectedTasks,
         reassigned: reassignedCount,
         approvedObjects: approvedObjects,
         accuracyRate: Number(accuracyRate.toFixed(2)),
