@@ -256,15 +256,6 @@ export const AnnotationSummaryReport = () => {
         onExportPDF={handleExportPDF}
       />
 
-      <FilterManager
-        filters={{ roleFilter, startDate, endDate }}
-        onFilterChange={handleFilterChange}
-        onReset={handleResetFilters}
-        showDateFilters
-        showRoleFilter
-        showStatusFilter={false}
-      />
-
       {loading ? (
         <div style={{ textAlign: "center", padding: "20px", color: "#666" }}>
           Loading summary data...
