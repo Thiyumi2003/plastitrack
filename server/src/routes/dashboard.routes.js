@@ -1461,8 +1461,8 @@ router.get("/reports/annotator-performance", verifyToken, async (req, res) => {
       taskParams
     );
 
-    // Get "under review" count - images where annotator completed work and now being tested
-    let underReviewWhere = "WHERE ann_task.user_id IS NOT NULL AND ann_task.task_type = 'annotation' AND ann_task.status = 'completed' AND test_task.task_type = 'testing' AND test_task.status IN ('pending', 'in_progress', 'pending_review')";
+    // Get "under review" count - images where annotator completed work and testing is pending review
+    let underReviewWhere = "WHERE ann_task.user_id IS NOT NULL AND ann_task.task_type = 'annotation' AND ann_task.status = 'completed' AND test_task.task_type = 'testing' AND test_task.status = 'pending_review'";
     const underReviewParams = [];
     if (startDate) {
       underReviewWhere += " AND ann_task.assigned_date >= ?";
