@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock, CheckCircle } from "lucide-react";
+import { Mail, Lock, CheckCircle, Eye, EyeOff } from "lucide-react";
 import "./auth.css";
 import logo from "../images/logo (2).png";
 import forgotImg from "../images/home.png";
@@ -22,6 +22,8 @@ export default function ForgotPassword() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -144,7 +146,7 @@ export default function ForgotPassword() {
 
             {error && <div className="auth-error">{error}</div>}
 
-            <form onSubmit={handleForgotPassword} className="login-form">
+            <form onSubmit={handleForgotPassword} className="login-form" autoComplete="off" data-lpignore="true">
               <label className="login-label" htmlFor="email">Email</label>
               <div className="login-input">
                 <Mail className="login-input-icon" size={18} />
@@ -152,6 +154,10 @@ export default function ForgotPassword() {
                   id="email"
                   type="email"
                   name="email"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  data-lpignore="true"
                   placeholder="Email address"
                   value={formData.email}
                   onChange={handleChange}
@@ -164,13 +170,23 @@ export default function ForgotPassword() {
                 <Lock className="login-input-icon" size={18} />
                 <input
                   id="newPassword"
-                  type="password"
+                  type={showNewPassword ? "text" : "password"}
                   name="newPassword"
+                  autoComplete="new-password"
                   placeholder="New password"
                   value={formData.newPassword}
                   onChange={handleChange}
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  className="auth-password-toggle-btn"
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                  aria-label={showNewPassword ? "Hide password" : "Show password"}
+                  disabled={loading}
+                >
+                  {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
               {formData.newPassword && (
@@ -204,13 +220,23 @@ export default function ForgotPassword() {
                 <Lock className="login-input-icon" size={18} />
                 <input
                   id="confirmPassword"
-                  type="password"
+                  type={showConfirmPassword ? "text" : "password"}
                   name="confirmPassword"
+                  autoComplete="new-password"
                   placeholder="Confirm password"
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  className="auth-password-toggle-btn"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  disabled={loading}
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
               <button

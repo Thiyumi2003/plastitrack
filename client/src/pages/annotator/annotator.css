@@ -664,6 +664,33 @@ select.text-input:disabled {
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 
+.profile-password-input-wrapper {
+  position: relative;
+}
+
+.profile-password-input-wrapper .text-input {
+  padding-right: 44px;
+}
+
+.profile-password-toggle-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.profile-password-toggle-btn:hover {
+  color: #ffffff;
+}
+
 .button-group {
   display: flex;
   gap: 10px;

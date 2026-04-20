@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import { Eye, EyeOff } from "lucide-react";
 import "../annotator/annotator.css";
 
 export default function TesterProfile() {
@@ -23,6 +24,7 @@ export default function TesterProfile() {
     hasNumber: false,
     hasSpecialChar: false,
   });
+  const [showPassword, setShowPassword] = useState({ current: false, new: false, confirm: false });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -376,27 +378,47 @@ export default function TesterProfile() {
         <h2>Change Password</h2>
         <div className="form-group">
           <label className="input-label">Current Password</label>
-          <input
-            type="password"
-            className="text-input"
-            name="current"
-            value={password.current}
-            onChange={handlePasswordChange}
-            placeholder="Enter your current password"
-          />
+          <div className="profile-password-input-wrapper">
+            <input
+              type={showPassword.current ? "text" : "password"}
+              className="text-input"
+              name="current"
+              value={password.current}
+              onChange={handlePasswordChange}
+              placeholder="Enter your current password"
+            />
+            <button
+              type="button"
+              className="profile-password-toggle-btn"
+              onClick={() => setShowPassword((prev) => ({ ...prev, current: !prev.current }))}
+              aria-label={showPassword.current ? "Hide password" : "Show password"}
+            >
+              {showPassword.current ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
         </div>
 
         <div className="form-row">
           <div className="form-group">
             <label className="input-label">New Password</label>
-            <input
-              type="password"
-              className="text-input"
-              name="new"
-              value={password.new}
-              onChange={handlePasswordChange}
-              placeholder="Enter new password"
-            />
+            <div className="profile-password-input-wrapper">
+              <input
+                type={showPassword.new ? "text" : "password"}
+                className="text-input"
+                name="new"
+                value={password.new}
+                onChange={handlePasswordChange}
+                placeholder="Enter new password"
+              />
+              <button
+                type="button"
+                className="profile-password-toggle-btn"
+                onClick={() => setShowPassword((prev) => ({ ...prev, new: !prev.new }))}
+                aria-label={showPassword.new ? "Hide password" : "Show password"}
+              >
+                {showPassword.new ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
 
             {password.new && (
               <div className="profile-password-hints">
@@ -426,14 +448,24 @@ export default function TesterProfile() {
           </div>
           <div className="form-group">
             <label className="input-label">Confirm New Password</label>
-            <input
-              type="password"
-              className="text-input"
-              name="confirm"
-              value={password.confirm}
-              onChange={handlePasswordChange}
-              placeholder="Confirm new password"
-            />
+            <div className="profile-password-input-wrapper">
+              <input
+                type={showPassword.confirm ? "text" : "password"}
+                className="text-input"
+                name="confirm"
+                value={password.confirm}
+                onChange={handlePasswordChange}
+                placeholder="Confirm new password"
+              />
+              <button
+                type="button"
+                className="profile-password-toggle-btn"
+                onClick={() => setShowPassword((prev) => ({ ...prev, confirm: !prev.confirm }))}
+                aria-label={showPassword.confirm ? "Hide password" : "Show password"}
+              >
+                {showPassword.confirm ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
         </div>
 

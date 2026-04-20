@@ -15,6 +15,29 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.auth-password-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  padding: 4px;
+  margin-left: 8px;
+}
+
+.auth-password-toggle-btn:hover:not(:disabled) {
+  color: #ffffff;
+}
+
+.auth-password-toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+
+
 /* ============ REGISTER & FORGOT PASSWORD (Card Layout) ============ */
 
 .pt-container {

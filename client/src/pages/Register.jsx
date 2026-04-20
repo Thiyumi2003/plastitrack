@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock, User, Shield, CheckCircle } from "lucide-react";
+import { Mail, Lock, User, Shield, CheckCircle, Eye, EyeOff } from "lucide-react";
 import "./auth.css";
 import logo from "../images/logo (2).png";
 import registerImg from "../images/home.png";
@@ -24,6 +24,8 @@ export default function Register() {
     hasNumber: false,
     hasSpecialChar: false,
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -142,7 +144,7 @@ export default function Register() {
 
             {error && <div className="auth-error">{error}</div>}
 
-            <form onSubmit={handleRegister} className="login-form">
+            <form onSubmit={handleRegister} className="login-form" autoComplete="off" data-lpignore="true">
               <label className="login-label" htmlFor="name">Full Name</label>
               <div className="login-input">
                 <User className="login-input-icon" size={18} />
@@ -150,6 +152,7 @@ export default function Register() {
                   id="name"
                   type="text"
                   name="name"
+                  autoComplete="off"
                   placeholder="Full Name"
                   value={formData.name}
                   onChange={handleChange}
@@ -164,6 +167,10 @@ export default function Register() {
                   id="email"
                   type="email"
                   name="email"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  data-lpignore="true"
                   placeholder="Email Address"
                   value={formData.email}
                   onChange={handleChange}
@@ -193,13 +200,23 @@ export default function Register() {
                 <Lock className="login-input-icon" size={18} />
                 <input
                   id="password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   name="password"
+                  autoComplete="new-password"
                   placeholder="Password"
                   value={formData.password}
                   onChange={handleChange}
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  className="auth-password-toggle-btn"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  disabled={loading}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
               {formData.password && (
@@ -233,13 +250,23 @@ export default function Register() {
                 <Lock className="login-input-icon" size={18} />
                 <input
                   id="confirmPassword"
-                  type="password"
+                  type={showConfirmPassword ? "text" : "password"}
                   name="confirmPassword"
+                  autoComplete="new-password"
                   placeholder="Confirm Password"
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  className="auth-password-toggle-btn"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  disabled={loading}
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
           {/* Terms Checkbox */}

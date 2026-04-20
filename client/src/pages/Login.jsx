@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { Mail, Lock, CheckCircle } from "lucide-react";
+import { Mail, Lock, CheckCircle, Eye, EyeOff } from "lucide-react";
 import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import "./auth.css";
 import logo from "../images/logo (2).png";
@@ -18,6 +18,7 @@ export default function Login() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(location.state?.message || "");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const normalizeRole = (role) => {
     if (role === "superadmin") return "super_admin";
@@ -182,6 +183,7 @@ export default function Login() {
                   id="email"
                   type="email"
                   name="email"
+                  autoComplete="username"
                   placeholder="Email"
                   value={formData.email}
                   onChange={handleChange}
@@ -194,13 +196,23 @@ export default function Login() {
                 <Lock className="login-input-icon" size={18} />
                 <input
                   id="password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   name="password"
+                  autoComplete="current-password"
                   placeholder="Password"
                   value={formData.password}
                   onChange={handleChange}
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  className="auth-password-toggle-btn"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  disabled={loading}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
               <div className="login-meta">
