@@ -39,7 +39,6 @@ export default function SystemMessages() {
         confirmText: payload.confirmText || "Confirm",
         cancelText: payload.cancelText || "Cancel",
         tone: payload.tone || "warning",
-        details: Array.isArray(payload.details) ? payload.details : [],
         onResolve: payload.onResolve,
       });
     };
@@ -93,16 +92,6 @@ export default function SystemMessages() {
             <div className={`system-confirm-badge ${confirmDialog.tone}`}>Confirmation</div>
             <h3>Please confirm this action</h3>
             <p>{confirmDialog.message}</p>
-            {confirmDialog.details.length > 0 && (
-              <div className="system-confirm-details">
-                {confirmDialog.details.map((detail) => (
-                  <div key={detail.label} className="system-confirm-detail-row">
-                    <span className="system-confirm-detail-label">{detail.label}</span>
-                    <span className="system-confirm-detail-value">{detail.value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
             <div className="system-confirm-actions">
               <button type="button" className="system-btn neutral" onClick={() => closeConfirm(false)}>
                 {confirmDialog.cancelText}

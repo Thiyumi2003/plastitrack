@@ -148,20 +148,12 @@ export default function ManageImages() {
     }
 
     try {
-
+      const testerSummaryText = Number.isFinite(Number(testerSummary.toReview))
+        ? `This tester currently has ${testerSummary.toReview} to review, ${testerSummary.approved} approved, ${testerSummary.rejected} rejected, and ${testerSummary.totalAssigned} total assigned. `
+        : "";
       const confirmed = await showAppConfirm(
-        `Assign "${image?.image_name || `Image #${imageId}`}" to ${selectedUser.name}?`,
-        {
-          confirmText: "Continue Assignment",
-          cancelText: "Cancel",
-          tone: "warning",
-          details: [
-            { label: "To review", value: testerSummary.toReview ?? "Unavailable" },
-            { label: "Approved", value: testerSummary.approved ?? "Unavailable" },
-            { label: "Rejected", value: testerSummary.rejected ?? "Unavailable" },
-            { label: "Total assigned", value: testerSummary.totalAssigned ?? "Unavailable" },
-          ],
-        }
+        `${testerSummaryText}Assign "${image?.image_name || `Image #${imageId}`}" to ${selectedUser.name}?`,
+        { confirmText: "Continue Assignment", cancelText: "Cancel", tone: "warning" }
       );
 
       if (!confirmed) {
