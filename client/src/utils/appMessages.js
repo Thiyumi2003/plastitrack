@@ -29,6 +29,7 @@ export function showAppConfirm(message, options = {}) {
           confirmText: options.confirmText || "Confirm",
           cancelText: options.cancelText || "Cancel",
           tone: options.tone || "warning",
+          details: Array.isArray(options.details) ? options.details : [],
           onResolve: resolve,
         },
       })
