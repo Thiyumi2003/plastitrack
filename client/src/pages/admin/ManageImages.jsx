@@ -58,6 +58,14 @@ export default function ManageImages() {
     }
   };
 
+  const fetchTesterSummary = async (testerId) => {
+    const { data } = await axios.get(
+      `${import.meta.env.VITE_API_BASE_URL}/api/dashboard/admin/testers/${testerId}/summary`,
+      { headers: getAuthHeader() }
+    );
+    return data;
+  };
+
   const handleAssignAnnotator = async (imageId, userId) => {
     if (!userId) return;
       const image = images.find(img => img.id === imageId);
@@ -113,10 +121,42 @@ export default function ManageImages() {
     }
   };
 
-  const handleAssignTester = async (imageId, userId) => {
+  const handleAssignTester = async (imageId, userId, selectElement) => {
     if (!userId) return;
+
+    const image = images.find((img) => img.id === imageId);
+    const selectedUser = users.testers.find((u) => u.id.toString() === userId.toString());
+
+    if (!selectedUser) {
+      if (selectElement) selectElement.value = "";
+      alert("Selected tester not found");
+      return;
+    }
+
     try {
-      const selectedUser = users.testers.find(u => u.id.toString() === userId.toString());
+      const testerSummaryData = await fetchTesterSummary(userId);
+      const testerSummary = testerSummaryData?.summary || {};
+
+      const confirmed = await showAppConfirm(
+        `Assign "${image?.image_name || `Image #${imageId}`}" to ${selectedUser.name}?`,
+        {
+          confirmText: "Continue Assignment",
+          cancelText: "Cancel",
+          tone: "warning",
+          details: [
+            { label: "To review", value: testerSummary.toReview ?? 0 },
+            { label: "Approved", value: testerSummary.approved ?? 0 },
+            { label: "Rejected", value: testerSummary.rejected ?? 0 },
+            { label: "Total assigned", value: testerSummary.totalAssigned ?? 0 },
+          ],
+        }
+      );
+
+      if (!confirmed) {
+        if (selectElement) selectElement.value = "";
+        return;
+      }
+
       // Optimistically update UI
       setImages(images.map(img => 
         img.id === imageId 
@@ -131,6 +171,7 @@ export default function ManageImages() {
       );
       fetchData();
     } catch (err) {
+      if (selectElement) selectElement.value = "";
       alert(err.response?.data?.error || "Failed to assign tester");
       fetchData();
     }
@@ -738,7 +779,7 @@ export default function ManageImages() {
                   <div className="image-actions">
                     <select
                       className="assign-select"
-                      onChange={(e) => handleAssignTester(img.id, e.target.value)}
+                      onChange={(e) => handleAssignTester(img.id, e.target.value, e.target)}
                       defaultValue=""
                     >
                       <option value="">Assign Tester...</option>

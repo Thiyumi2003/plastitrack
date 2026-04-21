@@ -135,6 +135,35 @@
   line-height: 1.5;
 }
 
+.system-confirm-details {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.system-confirm-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.system-confirm-detail-label {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.system-confirm-detail-value {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .system-confirm-actions {
   margin-top: 20px;
   display: flex;

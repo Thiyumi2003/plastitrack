@@ -5966,6 +5966,68 @@ router.get("/admin/users-filtered", verifyToken, async (req, res) => {
   }
 });
 
+// GET Tester workload summary for assignment confirmation
+router.get("/admin/testers/:id/summary", verifyToken, async (req, res) => {
+  try {
+    const allowedRoles = ["admin", "super_admin"];
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const testerId = Number(req.params.id);
+    if (!Number.isFinite(testerId) || testerId <= 0) {
+      return res.status(400).json({ error: "Invalid tester id" });
+    }
+
+    const connection = await pool.getConnection();
+
+    const [testerRows] = await connection.execute(
+      `SELECT id, name, role
+       FROM users
+       WHERE id = ? AND role = 'tester'
+       LIMIT 1`,
+      [testerId]
+    );
+
+    if (testerRows.length === 0) {
+      await connection.release();
+      return res.status(404).json({ error: "Tester not found" });
+    }
+
+    const [summaryRows] = await connection.execute(
+      `SELECT
+        COUNT(*) as total_assigned,
+        SUM(CASE WHEN status IN ('pending', 'pending_review', 'in_progress', 'completed') THEN 1 ELSE 0 END) as to_review,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+       FROM tasks
+       WHERE user_id = ?
+         AND task_type = 'testing'`,
+      [testerId]
+    );
+
+    await connection.release();
+
+    const summary = summaryRows[0] || {};
+    res.json({
+      tester: {
+        id: testerRows[0].id,
+        name: testerRows[0].name,
+        role: testerRows[0].role,
+      },
+      summary: {
+        totalAssigned: Number(summary.total_assigned || 0),
+        toReview: Number(summary.to_review || 0),
+        approved: Number(summary.approved || 0),
+        rejected: Number(summary.rejected || 0),
+      },
+    });
+  } catch (err) {
+    console.error("Tester summary error:", err);
+    res.status(500).json({ error: "Failed to fetch tester summary" });
+  }
+});
+
 // PUT Assign image to users
 router.put("/admin/images/:id/assign", verifyToken, async (req, res) => {
   try {
