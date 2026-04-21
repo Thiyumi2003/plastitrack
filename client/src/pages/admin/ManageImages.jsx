@@ -133,9 +133,21 @@ export default function ManageImages() {
       return;
     }
 
+    let testerSummary = {
+      toReview: null,
+      approved: null,
+      rejected: null,
+      totalAssigned: null,
+    };
+
     try {
       const testerSummaryData = await fetchTesterSummary(userId);
-      const testerSummary = testerSummaryData?.summary || {};
+      testerSummary = testerSummaryData?.summary || testerSummary;
+    } catch (summaryErr) {
+      console.error("Failed to load tester summary before assignment:", summaryErr);
+    }
+
+    try {
 
       const confirmed = await showAppConfirm(
         `Assign "${image?.image_name || `Image #${imageId}`}" to ${selectedUser.name}?`,
@@ -144,10 +156,10 @@ export default function ManageImages() {
           cancelText: "Cancel",
           tone: "warning",
           details: [
-            { label: "To review", value: testerSummary.toReview ?? 0 },
-            { label: "Approved", value: testerSummary.approved ?? 0 },
-            { label: "Rejected", value: testerSummary.rejected ?? 0 },
-            { label: "Total assigned", value: testerSummary.totalAssigned ?? 0 },
+            { label: "To review", value: testerSummary.toReview ?? "Unavailable" },
+            { label: "Approved", value: testerSummary.approved ?? "Unavailable" },
+            { label: "Rejected", value: testerSummary.rejected ?? "Unavailable" },
+            { label: "Total assigned", value: testerSummary.totalAssigned ?? "Unavailable" },
           ],
         }
       );
@@ -172,7 +184,8 @@ export default function ManageImages() {
       fetchData();
     } catch (err) {
       if (selectElement) selectElement.value = "";
-      alert(err.response?.data?.error || "Failed to assign tester");
+      const errorMessage = err.response?.data?.error || err.message || "Failed to assign tester";
+      alert(errorMessage);
       fetchData();
     }
   };
